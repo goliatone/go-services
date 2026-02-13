@@ -14,6 +14,7 @@ type ServiceDependencies = core.ServiceDependencies
 type OAuthStateStore = core.OAuthStateStore
 type ConnectionLocker = core.ConnectionLocker
 type RefreshBackoffScheduler = core.RefreshBackoffScheduler
+type MetricsRecorder = core.MetricsRecorder
 type RefreshRunOptions = core.RefreshRunOptions
 type RefreshRunResult = core.RefreshRunResult
 type GrantStore = core.GrantStore
@@ -34,6 +35,7 @@ type InvokeCapabilityRequest = core.InvokeCapabilityRequest
 var (
 	WithLogger                  = core.WithLogger
 	WithLoggerProvider          = core.WithLoggerProvider
+	WithMetricsRecorder         = core.WithMetricsRecorder
 	WithErrorFactory            = core.WithErrorFactory
 	WithErrorMapper             = core.WithErrorMapper
 	WithPersistenceClient       = core.WithPersistenceClient
