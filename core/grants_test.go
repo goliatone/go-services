@@ -45,6 +45,7 @@ func TestCompleteCallback_PersistsGrantSnapshotAndEvent(t *testing.T) {
 		WithRegistry(registry),
 		WithConnectionStore(connectionStore),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 		WithGrantStore(grantStore),
 		WithOAuthStateStore(NewMemoryOAuthStateStore(time.Minute)),
 	)
@@ -128,6 +129,7 @@ func TestRefresh_PersistsGrantDeltaEvent(t *testing.T) {
 		WithRegistry(registry),
 		WithConnectionStore(connectionStore),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 		WithGrantStore(grantStore),
 		WithOAuthStateStore(NewMemoryOAuthStateStore(time.Minute)),
 		WithRefreshBackoffScheduler(ExponentialBackoffScheduler{Initial: 0, Max: 0}),

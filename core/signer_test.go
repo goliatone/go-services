@@ -1,9 +1,12 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestSignRequest_UsesDefaultBearerSigner(t *testing.T) {
@@ -14,9 +17,13 @@ func TestSignRequest_UsesDefaultBearerSigner(t *testing.T) {
 	}
 
 	credentialStore := newMemoryCredentialStore()
+	encryptedToken, err := testSecretProvider{}.Encrypt(ctx, []byte("token-123"))
+	if err != nil {
+		t.Fatalf("encrypt seed credential: %v", err)
+	}
 	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
 		ConnectionID:     "conn_1",
-		EncryptedPayload: []byte("token-123"),
+		EncryptedPayload: encryptedToken,
 		TokenType:        "bearer",
 		Status:           CredentialStatusActive,
 	}); err != nil {
@@ -26,6 +33,7 @@ func TestSignRequest_UsesDefaultBearerSigner(t *testing.T) {
 	svc, err := NewService(Config{},
 		WithRegistry(registry),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 	)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -68,6 +76,95 @@ func TestSignRequest_UsesProviderSignerOverride(t *testing.T) {
 	}
 	if got := req.Header.Get("X-Signed-By"); got != "provider" {
 		t.Fatalf("expected provider signer header, got %q", got)
+	}
+}
+
+func TestAPIKeySigner_SetsHeaderAndQuery(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.example/resource", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	signer := APIKeySigner{
+		Header:     "X-API-Key",
+		QueryParam: "api_key",
+	}
+	if err := signer.Sign(context.Background(), req, ActiveCredential{AccessToken: "k_test"}); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if got := req.Header.Get("X-API-Key"); got != "k_test" {
+		t.Fatalf("expected api key header, got %q", got)
+	}
+	if got := req.URL.Query().Get("api_key"); got != "k_test" {
+		t.Fatalf("expected api key query param, got %q", got)
+	}
+}
+
+func TestPATSigner_SetsAuthorizationHeader(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.example/resource", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if err := (PATSigner{}).Sign(context.Background(), req, ActiveCredential{AccessToken: "pat_123"}); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "token pat_123" {
+		t.Fatalf("expected pat authorization header, got %q", got)
+	}
+}
+
+func TestHMACSigner_SetsSignatureHeadersAndPreservesBody(t *testing.T) {
+	body := []byte(`{"ok":true}`)
+	req, err := http.NewRequest(http.MethodPost, "https://api.example/resource", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	signer := HMACSigner{
+		SignatureHeader: "X-Signature",
+		TimestampHeader: "X-Timestamp",
+		Now: func() time.Time {
+			return time.Unix(1739443200, 0).UTC()
+		},
+	}
+	if err := signer.Sign(context.Background(), req, ActiveCredential{AccessToken: "secret"}); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if req.Header.Get("X-Timestamp") == "" {
+		t.Fatalf("expected timestamp header")
+	}
+	if req.Header.Get("X-Signature") == "" {
+		t.Fatalf("expected signature header")
+	}
+
+	restoredBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read restored body: %v", err)
+	}
+	if string(restoredBody) != string(body) {
+		t.Fatalf("expected body to be preserved after signing")
+	}
+}
+
+func TestBasicAuthSigner_SetsAuthorizationHeader(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.example/resource", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if err := (BasicAuthSigner{}).Sign(context.Background(), req, ActiveCredential{AccessToken: "dXNlcjpwYXNz"}); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Basic dXNlcjpwYXNz" {
+		t.Fatalf("expected basic auth header, got %q", got)
+	}
+}
+
+func TestMTLSSigner_NoOp(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.example/resource", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if err := (MTLSSigner{}).Sign(context.Background(), req, ActiveCredential{}); err != nil {
+		t.Fatalf("sign: %v", err)
 	}
 }
 

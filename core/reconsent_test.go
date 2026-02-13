@@ -91,6 +91,7 @@ func TestCompleteReconsent_RecoversExistingConnectionState(t *testing.T) {
 		WithRegistry(registry),
 		WithConnectionStore(connectionStore),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 		WithGrantStore(grantStore),
 		WithOAuthStateStore(NewMemoryOAuthStateStore(time.Minute)),
 	)

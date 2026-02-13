@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -126,4 +127,70 @@ func TestInvokeCapability_DegradesWhenOptionalGrantMissing(t *testing.T) {
 	if result.Mode != CapabilityDeniedBehaviorDegrade {
 		t.Fatalf("expected degrade mode, got %q", result.Mode)
 	}
+}
+
+func TestInvokeCapability_FailsClosedOnGrantStoreError(t *testing.T) {
+	ctx := context.Background()
+
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{
+		id: "github",
+		capabilities: []CapabilityDescriptor{{
+			Name:           "repo.write",
+			RequiredGrants: []string{"repo:write"},
+			DeniedBehavior: CapabilityDeniedBehaviorBlock,
+		}},
+	}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	connectionStore := newMemoryConnectionStore()
+	connection, err := connectionStore.Create(ctx, CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             ScopeRef{Type: "user", ID: "u3"},
+		ExternalAccountID: "acct_3",
+		Status:            ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	grantStore := &errorGrantStore{err: errors.New("store unavailable")}
+	svc, err := NewService(Config{},
+		WithRegistry(registry),
+		WithConnectionStore(connectionStore),
+		WithGrantStore(grantStore),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	_, err = svc.InvokeCapability(ctx, InvokeCapabilityRequest{
+		ProviderID: "github",
+		Scope:      ScopeRef{Type: "user", ID: "u3"},
+		Capability: "repo.write",
+	})
+	if err == nil {
+		t.Fatalf("expected capability evaluation to fail on grant store error")
+	}
+	if !errors.Is(err, grantStore.err) {
+		t.Fatalf("expected grant store error, got %v", err)
+	}
+	_ = connection
+}
+
+type errorGrantStore struct {
+	err error
+}
+
+func (s *errorGrantStore) SaveSnapshot(context.Context, SaveGrantSnapshotInput) error {
+	return s.err
+}
+
+func (s *errorGrantStore) GetLatestSnapshot(context.Context, string) (GrantSnapshot, bool, error) {
+	return GrantSnapshot{}, false, s.err
+}
+
+func (s *errorGrantStore) AppendEvent(context.Context, AppendGrantEventInput) error {
+	return s.err
 }

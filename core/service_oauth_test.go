@@ -21,6 +21,7 @@ func TestConnectAndCompleteCallback_ConsumesOAuthState(t *testing.T) {
 		WithOAuthStateStore(stateStore),
 		WithConnectionStore(newMemoryConnectionStore()),
 		WithCredentialStore(newMemoryCredentialStore()),
+		WithSecretProvider(testSecretProvider{}),
 	)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -102,6 +103,46 @@ func TestCompleteCallback_RejectsMismatchedStateContextBeforeProviderCall(t *tes
 	}
 	if provider.completeCalls != 0 {
 		t.Fatalf("expected provider callback not to be called on state mismatch")
+	}
+}
+
+func TestCompleteCallback_RequiresSecretProviderForCredentialPersistence(t *testing.T) {
+	ctx := context.Background()
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "github"}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	stateStore := NewMemoryOAuthStateStore(time.Minute)
+	svc, err := NewService(
+		Config{},
+		WithRegistry(registry),
+		WithOAuthStateStore(stateStore),
+		WithConnectionStore(newMemoryConnectionStore()),
+		WithCredentialStore(newMemoryCredentialStore()),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	connectResp, err := svc.Connect(ctx, ConnectRequest{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "user", ID: "u2"},
+		RedirectURI: "https://app.example/callback",
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	_, err = svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "user", ID: "u2"},
+		Code:        "code",
+		State:       connectResp.State,
+		RedirectURI: "https://app.example/callback",
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "secret provider is required") {
+		t.Fatalf("expected secret provider enforcement error, got %v", err)
 	}
 }
 

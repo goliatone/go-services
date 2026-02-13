@@ -52,6 +52,7 @@ func TestRunRefreshWithRetry_RetriesAndSucceeds(t *testing.T) {
 		WithRegistry(registry),
 		WithConnectionStore(connectionStore),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 		WithRefreshBackoffScheduler(ExponentialBackoffScheduler{Initial: 0, Max: 0}),
 	)
 	if err != nil {
@@ -111,6 +112,7 @@ func TestRunRefreshWithRetry_TransitionsPendingReauthOnUnrecoverableError(t *tes
 		WithRegistry(registry),
 		WithConnectionStore(connectionStore),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 	)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -194,9 +196,13 @@ func TestRefresh_IdempotentCredentialRotationUnderConcurrentExecution(t *testing
 		t.Fatalf("create connection: %v", err)
 	}
 	credentialStore := newMemoryCredentialStore()
+	encryptedToken, err := testSecretProvider{}.Encrypt(ctx, []byte("token-1"))
+	if err != nil {
+		t.Fatalf("encrypt seed credential: %v", err)
+	}
 	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
 		ConnectionID:     connection.ID,
-		EncryptedPayload: []byte("token-1"),
+		EncryptedPayload: encryptedToken,
 		TokenType:        "bearer",
 		RequestedScopes:  []string{"repo:read"},
 		GrantedScopes:    []string{"repo:read"},
@@ -212,6 +218,7 @@ func TestRefresh_IdempotentCredentialRotationUnderConcurrentExecution(t *testing
 		WithRegistry(registry),
 		WithConnectionStore(connectionStore),
 		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
 		WithConnectionLocker(NewMemoryConnectionLocker()),
 		WithRefreshBackoffScheduler(ExponentialBackoffScheduler{Initial: 0, Max: 0}),
 	)

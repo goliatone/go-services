@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -44,6 +45,32 @@ func (p testProvider) CompleteAuth(context.Context, CompleteAuthRequest) (Comple
 func (p testProvider) Refresh(context.Context, ActiveCredential) (RefreshResult, error) {
 	now := time.Now().UTC().Add(1 * time.Hour)
 	return RefreshResult{Credential: ActiveCredential{TokenType: "bearer", ExpiresAt: &now, Refreshable: true}}, nil
+}
+
+type testSecretProvider struct{}
+
+func (testSecretProvider) Encrypt(_ context.Context, plaintext []byte) ([]byte, error) {
+	if len(plaintext) == 0 {
+		return nil, fmt.Errorf("test secret provider: plaintext is required")
+	}
+	encoded := base64.StdEncoding.EncodeToString(plaintext)
+	return []byte("enc:" + encoded), nil
+}
+
+func (testSecretProvider) Decrypt(_ context.Context, ciphertext []byte) ([]byte, error) {
+	value := strings.TrimSpace(string(ciphertext))
+	if value == "" || !strings.HasPrefix(value, "enc:") {
+		return nil, fmt.Errorf("test secret provider: invalid ciphertext")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(value, "enc:"))
+	if err != nil {
+		return nil, fmt.Errorf("test secret provider: decode ciphertext: %w", err)
+	}
+	return decoded, nil
+}
+
+func (testSecretProvider) Metadata() (string, int) {
+	return "test-key", 1
 }
 
 type memoryConnectionStore struct {
@@ -132,11 +159,19 @@ func (s *memoryCredentialStore) SaveNewVersion(_ context.Context, in SaveCredent
 		ConnectionID:     in.ConnectionID,
 		Version:          s.next,
 		EncryptedPayload: append([]byte(nil), in.EncryptedPayload...),
+		PayloadFormat:    in.PayloadFormat,
+		PayloadVersion:   in.PayloadVersion,
 		TokenType:        in.TokenType,
 		RequestedScopes:  append([]string(nil), in.RequestedScopes...),
 		GrantedScopes:    append([]string(nil), in.GrantedScopes...),
 		Status:           in.Status,
 		Refreshable:      in.Refreshable,
+	}
+	if credential.PayloadFormat == "" {
+		credential.PayloadFormat = CredentialPayloadFormatLegacyToken
+	}
+	if credential.PayloadVersion <= 0 {
+		credential.PayloadVersion = CredentialPayloadVersionV1
 	}
 	if in.ExpiresAt != nil {
 		credential.ExpiresAt = *in.ExpiresAt
@@ -198,14 +233,14 @@ func (s *memoryGrantStore) SaveSnapshot(_ context.Context, in SaveGrantSnapshotI
 	return nil
 }
 
-func (s *memoryGrantStore) GetLatestSnapshot(_ context.Context, connectionID string) (GrantSnapshot, error) {
+func (s *memoryGrantStore) GetLatestSnapshot(_ context.Context, connectionID string) (GrantSnapshot, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := s.snapshots[connectionID]
 	if len(items) == 0 {
-		return GrantSnapshot{}, fmt.Errorf("missing grant snapshot")
+		return GrantSnapshot{}, false, nil
 	}
-	return items[len(items)-1], nil
+	return items[len(items)-1], true, nil
 }
 
 func (s *memoryGrantStore) AppendEvent(_ context.Context, in AppendGrantEventInput) error {
@@ -220,6 +255,38 @@ func (s *memoryGrantStore) AppendEvent(_ context.Context, in AppendGrantEventInp
 		Metadata:     copyAnyMap(in.Metadata),
 	}
 	s.events[in.ConnectionID] = append(s.events[in.ConnectionID], record)
+	return nil
+}
+
+func (s *memoryGrantStore) SaveSnapshotAndEvent(
+	_ context.Context,
+	snapshot SaveGrantSnapshotInput,
+	event *AppendGrantEventInput,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record := GrantSnapshot{
+		ConnectionID: snapshot.ConnectionID,
+		Version:      snapshot.Version,
+		Requested:    append([]string(nil), snapshot.Requested...),
+		Granted:      append([]string(nil), snapshot.Granted...),
+		CapturedAt:   snapshot.CapturedAt,
+		Metadata:     copyAnyMap(snapshot.Metadata),
+	}
+	s.snapshots[snapshot.ConnectionID] = append(s.snapshots[snapshot.ConnectionID], record)
+
+	if event != nil {
+		appended := AppendGrantEventInput{
+			ConnectionID: event.ConnectionID,
+			EventType:    event.EventType,
+			Added:        append([]string(nil), event.Added...),
+			Removed:      append([]string(nil), event.Removed...),
+			OccurredAt:   event.OccurredAt,
+			Metadata:     copyAnyMap(event.Metadata),
+		}
+		s.events[event.ConnectionID] = append(s.events[event.ConnectionID], appended)
+	}
 	return nil
 }
 

@@ -15,6 +15,7 @@ import (
 	persistence "github.com/goliatone/go-persistence-bun"
 	"github.com/goliatone/go-services/core"
 	servicemigrations "github.com/goliatone/go-services/migrations"
+	servicessecurity "github.com/goliatone/go-services/security"
 	sqlstore "github.com/goliatone/go-services/store/sql"
 	servicesync "github.com/goliatone/go-services/sync"
 	serviceswebhooks "github.com/goliatone/go-services/webhooks"
@@ -115,10 +116,18 @@ func TestConnectionAndCredentialStores_EnforceVersioningAndUniqueness(t *testing
 	if firstCredential.Version != 1 {
 		t.Fatalf("expected first credential version=1, got %d", firstCredential.Version)
 	}
+	if firstCredential.PayloadFormat != core.CredentialPayloadFormatLegacyToken {
+		t.Fatalf("expected legacy payload format default, got %q", firstCredential.PayloadFormat)
+	}
+	if firstCredential.PayloadVersion != core.CredentialPayloadVersionV1 {
+		t.Fatalf("expected payload version=1, got %d", firstCredential.PayloadVersion)
+	}
 
 	secondCredential, err := credentialStore.SaveNewVersion(ctx, core.SaveCredentialInput{
 		ConnectionID:      connection.ID,
 		EncryptedPayload:  []byte("cipher-v2"),
+		PayloadFormat:     core.CredentialPayloadFormatJSONV1,
+		PayloadVersion:    core.CredentialPayloadVersionV1,
 		TokenType:         "bearer",
 		RequestedScopes:   []string{"repo:read"},
 		GrantedScopes:     []string{"repo:read"},
@@ -132,6 +141,9 @@ func TestConnectionAndCredentialStores_EnforceVersioningAndUniqueness(t *testing
 	}
 	if secondCredential.Version != 2 {
 		t.Fatalf("expected second credential version=2, got %d", secondCredential.Version)
+	}
+	if secondCredential.PayloadFormat != core.CredentialPayloadFormatJSONV1 {
+		t.Fatalf("expected explicit payload format persisted, got %q", secondCredential.PayloadFormat)
 	}
 
 	activeCredential, err := credentialStore.GetActiveByConnection(ctx, connection.ID)
@@ -311,6 +323,104 @@ func TestAuditAndGrantStores_RedactSensitiveMetadata(t *testing.T) {
 	if !strings.Contains(grantMetadata, "[REDACTED]") {
 		t.Fatalf("expected redaction marker in grant metadata")
 	}
+
+	var snapshotMetadata string
+	if err := client.DB().NewRaw(
+		"SELECT metadata FROM service_grant_snapshots WHERE connection_id = ? ORDER BY created_at DESC LIMIT 1",
+		connection.ID,
+	).Scan(ctx, &snapshotMetadata); err != nil {
+		t.Fatalf("load grant snapshot metadata: %v", err)
+	}
+	if strings.Contains(snapshotMetadata, "plain-refresh") {
+		t.Fatalf("expected redacted grant snapshot metadata")
+	}
+	if !strings.Contains(snapshotMetadata, "[REDACTED]") {
+		t.Fatalf("expected redaction marker in grant snapshot metadata")
+	}
+}
+
+func TestGrantStore_GetLatestSnapshotNotFound(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	grantStore, err := sqlstore.NewGrantStore(client.DB())
+	if err != nil {
+		t.Fatalf("new grant store: %v", err)
+	}
+
+	snapshot, found, err := grantStore.GetLatestSnapshot(ctx, "missing-connection")
+	if err != nil {
+		t.Fatalf("get latest snapshot: %v", err)
+	}
+	if found {
+		t.Fatalf("expected no snapshot for missing connection, got %+v", snapshot)
+	}
+}
+
+func TestGrantStore_SaveSnapshotAndEvent_RollsBackOnEventValidationFailure(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	connection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_tx"},
+		ExternalAccountID: "acct_tx",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	grantStore, err := sqlstore.NewGrantStore(client.DB())
+	if err != nil {
+		t.Fatalf("new grant store: %v", err)
+	}
+
+	err = grantStore.SaveSnapshotAndEvent(ctx, core.SaveGrantSnapshotInput{
+		ConnectionID: connection.ID,
+		Version:      1,
+		Requested:    []string{"repo:read"},
+		Granted:      []string{"repo:read"},
+		CapturedAt:   time.Now().UTC(),
+		Metadata:     map[string]any{"source": "test"},
+	}, &core.AppendGrantEventInput{
+		ConnectionID: connection.ID,
+		EventType:    "",
+		Added:        []string{"repo:read"},
+		OccurredAt:   time.Now().UTC(),
+		Metadata:     map[string]any{"source": "test"},
+	})
+	if err == nil {
+		t.Fatalf("expected transactional save to fail when event type is invalid")
+	}
+
+	var snapshotCount int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_grant_snapshots WHERE connection_id = ?",
+		connection.ID,
+	).Scan(ctx, &snapshotCount); err != nil {
+		t.Fatalf("count snapshots: %v", err)
+	}
+	if snapshotCount != 0 {
+		t.Fatalf("expected snapshot insert to roll back, found %d", snapshotCount)
+	}
+
+	var eventCount int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_grant_events WHERE connection_id = ?",
+		connection.ID,
+	).Scan(ctx, &eventCount); err != nil {
+		t.Fatalf("count grant events: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("expected no grant event rows after rollback, found %d", eventCount)
+	}
 }
 
 func TestNewService_WiresStoresFromPersistenceAndRepositoryFactory(t *testing.T) {
@@ -361,7 +471,7 @@ func TestNewService_WiresStoresFromPersistenceAndRepositoryFactory(t *testing.T)
 	_ = ctx
 }
 
-func TestWebhookDeliveryStore_DedupeAndRetryLedger(t *testing.T) {
+func TestWebhookDeliveryStore_ClaimLifecycle(t *testing.T) {
 	ctx := context.Background()
 	client, cleanup := newSQLiteClient(t)
 	defer cleanup()
@@ -371,31 +481,50 @@ func TestWebhookDeliveryStore_DedupeAndRetryLedger(t *testing.T) {
 		t.Fatalf("new webhook delivery store: %v", err)
 	}
 
-	record, deduped, err := deliveryStore.Reserve(ctx, "github", "delivery-1", []byte(`{"ok":true}`))
+	record, claimed, err := deliveryStore.Claim(
+		ctx,
+		"github",
+		"delivery-1",
+		[]byte(`{"ok":true}`),
+		time.Minute,
+	)
 	if err != nil {
-		t.Fatalf("reserve initial delivery: %v", err)
+		t.Fatalf("claim initial delivery: %v", err)
 	}
-	if deduped {
-		t.Fatalf("expected initial reserve to not be deduped")
+	if !claimed {
+		t.Fatalf("expected initial delivery to be claimable")
 	}
-	if record.Status != "pending" {
-		t.Fatalf("expected pending status, got %q", record.Status)
+	if record.Status != "processing" {
+		t.Fatalf("expected processing status after claim, got %q", record.Status)
 	}
+	if record.ClaimID == "" {
+		t.Fatalf("expected claim id on claimed delivery")
+	}
+	firstClaimID := record.ClaimID
 
-	record, deduped, err = deliveryStore.Reserve(ctx, "github", "delivery-1", []byte(`{"ok":true}`))
+	record, claimed, err = deliveryStore.Claim(
+		ctx,
+		"github",
+		"delivery-1",
+		[]byte(`{"ok":true}`),
+		time.Minute,
+	)
 	if err != nil {
-		t.Fatalf("reserve duplicate delivery: %v", err)
+		t.Fatalf("claim duplicate in-flight delivery: %v", err)
 	}
-	if !deduped {
-		t.Fatalf("expected duplicate reserve to be deduped")
+	if claimed {
+		t.Fatalf("expected duplicate in-flight delivery to not be claimable")
 	}
 	if record.Attempts != 1 {
-		t.Fatalf("expected attempts to remain 1 before retry, got %d", record.Attempts)
+		t.Fatalf("expected attempts to remain 1 while in-flight, got %d", record.Attempts)
+	}
+	if record.Status != "processing" {
+		t.Fatalf("expected in-flight status processing, got %q", record.Status)
 	}
 
 	nextAttempt := time.Now().UTC().Add(2 * time.Minute)
-	if err := deliveryStore.MarkRetry(ctx, "github", "delivery-1", fmt.Errorf("transient"), nextAttempt); err != nil {
-		t.Fatalf("mark retry: %v", err)
+	if err := deliveryStore.Fail(ctx, firstClaimID, fmt.Errorf("transient"), nextAttempt, 3); err != nil {
+		t.Fatalf("fail claimed delivery: %v", err)
 	}
 
 	retried, err := deliveryStore.Get(ctx, "github", "delivery-1")
@@ -405,15 +534,57 @@ func TestWebhookDeliveryStore_DedupeAndRetryLedger(t *testing.T) {
 	if retried.Status != "retry_ready" {
 		t.Fatalf("expected retry_ready status, got %q", retried.Status)
 	}
-	if retried.Attempts != 2 {
-		t.Fatalf("expected retry attempts=2, got %d", retried.Attempts)
+	if retried.Attempts != 1 {
+		t.Fatalf("expected attempts to remain 1 after first failure, got %d", retried.Attempts)
 	}
 	if retried.NextAttemptAt == nil {
 		t.Fatalf("expected next attempt timestamp to be set")
 	}
 
-	if err := deliveryStore.MarkProcessed(ctx, "github", "delivery-1"); err != nil {
-		t.Fatalf("mark processed: %v", err)
+	record, claimed, err = deliveryStore.Claim(
+		ctx,
+		"github",
+		"delivery-1",
+		[]byte(`{"ok":true}`),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("claim before retry window should not error: %v", err)
+	}
+	if claimed {
+		t.Fatalf("expected retry-ready delivery to remain unavailable until retry window")
+	}
+
+	if err := deliveryStore.Fail(ctx, retried.ProviderID+":delivery-1:invalid", fmt.Errorf("bad"), time.Now().UTC(), 3); err == nil {
+		t.Fatalf("expected invalid claim id to fail")
+	}
+	if _, err := client.DB().NewRaw(
+		"UPDATE service_webhook_deliveries SET next_attempt_at = ? WHERE provider_id = ? AND delivery_id = ?",
+		time.Now().UTC().Add(-time.Second),
+		"github",
+		"delivery-1",
+	).Exec(ctx); err != nil {
+		t.Fatalf("set retry-ready window to elapsed: %v", err)
+	}
+
+	record, claimed, err = deliveryStore.Claim(
+		ctx,
+		"github",
+		"delivery-1",
+		[]byte(`{"ok":true}`),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("claim with expired lease window: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("expected retry-ready delivery to be claimable after retry window")
+	}
+	if record.Attempts != 2 {
+		t.Fatalf("expected attempts to increment on re-claim, got %d", record.Attempts)
+	}
+	if err := deliveryStore.Complete(ctx, record.ClaimID); err != nil {
+		t.Fatalf("complete delivery: %v", err)
 	}
 
 	processed, err := deliveryStore.Get(ctx, "github", "delivery-1")
@@ -425,6 +596,97 @@ func TestWebhookDeliveryStore_DedupeAndRetryLedger(t *testing.T) {
 	}
 	if processed.NextAttemptAt != nil {
 		t.Fatalf("expected next attempt timestamp to be cleared")
+	}
+}
+
+func TestWebhookDeliveryStore_MarksDeadAfterMaxAttempts(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	deliveryStore, err := sqlstore.NewWebhookDeliveryStore(client.DB())
+	if err != nil {
+		t.Fatalf("new webhook delivery store: %v", err)
+	}
+
+	first, claimed, err := deliveryStore.Claim(ctx, "github", "delivery-dead", []byte(`{"ok":true}`), time.Minute)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("expected first claim to succeed")
+	}
+	if err := deliveryStore.Fail(ctx, first.ClaimID, fmt.Errorf("temporary"), time.Now().UTC().Add(-time.Second), 2); err != nil {
+		t.Fatalf("first fail: %v", err)
+	}
+
+	second, claimed, err := deliveryStore.Claim(ctx, "github", "delivery-dead", []byte(`{"ok":true}`), time.Minute)
+	if err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("expected second claim to succeed")
+	}
+	if err := deliveryStore.Fail(ctx, second.ClaimID, fmt.Errorf("terminal"), time.Now().UTC(), 2); err != nil {
+		t.Fatalf("second fail: %v", err)
+	}
+
+	dead, err := deliveryStore.Get(ctx, "github", "delivery-dead")
+	if err != nil {
+		t.Fatalf("get dead delivery: %v", err)
+	}
+	if dead.Status != "dead" {
+		t.Fatalf("expected dead delivery status, got %q", dead.Status)
+	}
+	if dead.Attempts != 2 {
+		t.Fatalf("expected attempts=2 at dead state, got %d", dead.Attempts)
+	}
+
+	_, claimed, err = deliveryStore.Claim(ctx, "github", "delivery-dead", []byte(`{"ok":true}`), time.Minute)
+	if err != nil {
+		t.Fatalf("claim dead delivery: %v", err)
+	}
+	if claimed {
+		t.Fatalf("expected dead delivery to remain non-claimable")
+	}
+}
+
+func TestWebhookDeliveryStore_ReclaimsExpiredProcessingLease(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	deliveryStore, err := sqlstore.NewWebhookDeliveryStore(client.DB())
+	if err != nil {
+		t.Fatalf("new webhook delivery store: %v", err)
+	}
+
+	first, claimed, err := deliveryStore.Claim(ctx, "github", "delivery-lease", []byte(`{"ok":true}`), 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("expected first claim to succeed")
+	}
+
+	_, claimed, err = deliveryStore.Claim(ctx, "github", "delivery-lease", []byte(`{"ok":true}`), time.Minute)
+	if err != nil {
+		t.Fatalf("claim during active lease: %v", err)
+	}
+	if claimed {
+		t.Fatalf("expected active processing lease to block re-claim")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	second, claimed, err := deliveryStore.Claim(ctx, "github", "delivery-lease", []byte(`{"ok":true}`), time.Minute)
+	if err != nil {
+		t.Fatalf("claim after lease expiry: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("expected lease-expired processing delivery to be re-claimable")
+	}
+	if second.Attempts != first.Attempts+1 {
+		t.Fatalf("expected attempts to increment on lease-recovery claim, got %d", second.Attempts)
 	}
 }
 
@@ -585,6 +847,19 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new activity store: %v", err)
 	}
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	filterConnection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_activity"},
+		ExternalAccountID: "acct_activity",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create filter connection: %v", err)
+	}
 
 	baseMeta := map[string]any{
 		"provider_id": "github",
@@ -622,6 +897,9 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 			},
 			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Minute),
 		}
+		if i == 1 {
+			entry.Metadata["connection_id"] = filterConnection.ID
+		}
 		if err := activityStore.Record(ctx, entry); err != nil {
 			t.Fatalf("record new entry %d: %v", i, err)
 		}
@@ -639,6 +917,21 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 	}
 	if page.Total != 6 {
 		t.Fatalf("expected total=6 before prune, got %d", page.Total)
+	}
+
+	connectionPage, err := activityStore.List(ctx, core.ServicesActivityFilter{
+		ProviderID:  "github",
+		ScopeType:   "user",
+		ScopeID:     "usr_activity",
+		Connections: []string{filterConnection.ID},
+		Page:        1,
+		PerPage:     10,
+	})
+	if err != nil {
+		t.Fatalf("list activity entries by connection: %v", err)
+	}
+	if connectionPage.Total != 1 {
+		t.Fatalf("expected total=1 when filtering by connection, got %d", connectionPage.Total)
 	}
 
 	deleted, err := activityStore.Prune(ctx, core.ActivityRetentionPolicy{
@@ -1229,6 +1522,7 @@ func TestService_GrantLifecyclePermissionAndRefreshIdempotency_Integration(t *te
 		core.WithRegistry(registry),
 		core.WithConnectionStore(repoFactory.ConnectionStore()),
 		core.WithCredentialStore(repoFactory.CredentialStore()),
+		core.WithSecretProvider(newServiceSecretProvider(t)),
 		core.WithGrantStore(grantStore),
 		core.WithOAuthStateStore(core.NewMemoryOAuthStateStore(time.Minute)),
 		core.WithConnectionLocker(core.NewMemoryConnectionLocker()),
@@ -1554,4 +1848,17 @@ func (h webhookSyncHandler) Handle(ctx context.Context, req core.InboundRequest)
 func ptrTime(value time.Time) *time.Time {
 	out := value.UTC()
 	return &out
+}
+
+func newServiceSecretProvider(t *testing.T) core.SecretProvider {
+	t.Helper()
+	provider, err := servicessecurity.NewAppKeySecretProviderFromString(
+		"integration-test-secret-key",
+		servicessecurity.WithKeyID("integration-test-key"),
+		servicessecurity.WithVersion(1),
+	)
+	if err != nil {
+		t.Fatalf("new secret provider: %v", err)
+	}
+	return provider
 }
