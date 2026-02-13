@@ -347,6 +347,14 @@ type ConnectRequest struct {
 	Metadata        map[string]any
 }
 
+type ReconsentRequest struct {
+	ConnectionID    string
+	RedirectURI     string
+	State           string
+	RequestedGrants []string
+	Metadata        map[string]any
+}
+
 type CallbackCompletion struct {
 	Connection Connection
 	Credential Credential
@@ -402,6 +410,15 @@ type CredentialStore interface {
 	SaveNewVersion(ctx context.Context, in SaveCredentialInput) (Credential, error)
 	GetActiveByConnection(ctx context.Context, connectionID string) (Credential, error)
 	RevokeActive(ctx context.Context, connectionID string, reason string) error
+}
+
+type StoreProvider interface {
+	ConnectionStore() ConnectionStore
+	CredentialStore() CredentialStore
+}
+
+type RepositoryStoreFactory interface {
+	BuildStores(persistenceClient any) (StoreProvider, error)
 }
 
 type SecretProvider interface {
@@ -609,8 +626,11 @@ type GrantAwareProvider interface {
 
 type IntegrationService interface {
 	Connect(ctx context.Context, req ConnectRequest) (BeginAuthResponse, error)
+	StartReconsent(ctx context.Context, req ReconsentRequest) (BeginAuthResponse, error)
+	CompleteReconsent(ctx context.Context, req CompleteAuthRequest) (CallbackCompletion, error)
 	CompleteCallback(ctx context.Context, req CompleteAuthRequest) (CallbackCompletion, error)
 	Refresh(ctx context.Context, req RefreshRequest) (RefreshResult, error)
 	Revoke(ctx context.Context, connectionID string, reason string) error
 	InvokeCapability(ctx context.Context, req InvokeCapabilityRequest) (CapabilityResult, error)
+	SignRequest(ctx context.Context, providerID string, connectionID string, req *http.Request, cred *ActiveCredential) error
 }

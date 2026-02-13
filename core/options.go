@@ -37,10 +37,16 @@ type serviceBuilder struct {
 	repositoryFactory any
 	configProvider    ConfigProvider
 	optionsResolver   OptionsResolver
+	oauthStateStore   OAuthStateStore
+	connectionLocker  ConnectionLocker
+	refreshScheduler  RefreshBackoffScheduler
+	signer            Signer
 	inheritancePolicy InheritancePolicy
 	registry          Registry
 	connectionStore   ConnectionStore
 	credentialStore   CredentialStore
+	grantStore        GrantStore
+	permissionEvaluator PermissionEvaluator
 }
 
 type Option func(*serviceBuilder)
@@ -93,6 +99,30 @@ func WithOptionsResolver(resolver OptionsResolver) Option {
 	}
 }
 
+func WithOAuthStateStore(store OAuthStateStore) Option {
+	return func(b *serviceBuilder) {
+		b.oauthStateStore = store
+	}
+}
+
+func WithConnectionLocker(locker ConnectionLocker) Option {
+	return func(b *serviceBuilder) {
+		b.connectionLocker = locker
+	}
+}
+
+func WithRefreshBackoffScheduler(scheduler RefreshBackoffScheduler) Option {
+	return func(b *serviceBuilder) {
+		b.refreshScheduler = scheduler
+	}
+}
+
+func WithSigner(signer Signer) Option {
+	return func(b *serviceBuilder) {
+		b.signer = signer
+	}
+}
+
 func WithInheritancePolicy(policy InheritancePolicy) Option {
 	return func(b *serviceBuilder) {
 		b.inheritancePolicy = policy
@@ -114,6 +144,18 @@ func WithConnectionStore(store ConnectionStore) Option {
 func WithCredentialStore(store CredentialStore) Option {
 	return func(b *serviceBuilder) {
 		b.credentialStore = store
+	}
+}
+
+func WithGrantStore(store GrantStore) Option {
+	return func(b *serviceBuilder) {
+		b.grantStore = store
+	}
+}
+
+func WithPermissionEvaluator(evaluator PermissionEvaluator) Option {
+	return func(b *serviceBuilder) {
+		b.permissionEvaluator = evaluator
 	}
 }
 

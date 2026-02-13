@@ -168,6 +168,95 @@ func (s *memoryCredentialStore) RevokeActive(_ context.Context, connectionID str
 	return nil
 }
 
+type memoryGrantStore struct {
+	mu        sync.Mutex
+	snapshots map[string][]GrantSnapshot
+	events    map[string][]AppendGrantEventInput
+}
+
+func newMemoryGrantStore() *memoryGrantStore {
+	return &memoryGrantStore{
+		snapshots: map[string][]GrantSnapshot{},
+		events:    map[string][]AppendGrantEventInput{},
+	}
+}
+
+func (s *memoryGrantStore) SaveSnapshot(_ context.Context, in SaveGrantSnapshotInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record := GrantSnapshot{
+		ConnectionID: in.ConnectionID,
+		Version:      in.Version,
+		Requested:    append([]string(nil), in.Requested...),
+		Granted:      append([]string(nil), in.Granted...),
+		CapturedAt:   in.CapturedAt,
+		Metadata:     copyAnyMap(in.Metadata),
+	}
+	s.snapshots[in.ConnectionID] = append(s.snapshots[in.ConnectionID], record)
+	return nil
+}
+
+func (s *memoryGrantStore) GetLatestSnapshot(_ context.Context, connectionID string) (GrantSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := s.snapshots[connectionID]
+	if len(items) == 0 {
+		return GrantSnapshot{}, fmt.Errorf("missing grant snapshot")
+	}
+	return items[len(items)-1], nil
+}
+
+func (s *memoryGrantStore) AppendEvent(_ context.Context, in AppendGrantEventInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record := AppendGrantEventInput{
+		ConnectionID: in.ConnectionID,
+		EventType:    in.EventType,
+		Added:        append([]string(nil), in.Added...),
+		Removed:      append([]string(nil), in.Removed...),
+		OccurredAt:   in.OccurredAt,
+		Metadata:     copyAnyMap(in.Metadata),
+	}
+	s.events[in.ConnectionID] = append(s.events[in.ConnectionID], record)
+	return nil
+}
+
+func (s *memoryGrantStore) Snapshots(connectionID string) []GrantSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := s.snapshots[connectionID]
+	out := make([]GrantSnapshot, 0, len(items))
+	for _, item := range items {
+		out = append(out, GrantSnapshot{
+			ConnectionID: item.ConnectionID,
+			Version:      item.Version,
+			Requested:    append([]string(nil), item.Requested...),
+			Granted:      append([]string(nil), item.Granted...),
+			CapturedAt:   item.CapturedAt,
+			Metadata:     copyAnyMap(item.Metadata),
+		})
+	}
+	return out
+}
+
+func (s *memoryGrantStore) Events(connectionID string) []AppendGrantEventInput {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := s.events[connectionID]
+	out := make([]AppendGrantEventInput, 0, len(items))
+	for _, item := range items {
+		out = append(out, AppendGrantEventInput{
+			ConnectionID: item.ConnectionID,
+			EventType:    item.EventType,
+			Added:        append([]string(nil), item.Added...),
+			Removed:      append([]string(nil), item.Removed...),
+			OccurredAt:   item.OccurredAt,
+			Metadata:     copyAnyMap(item.Metadata),
+		})
+	}
+	return out
+}
+
 func scopeKey(providerID string, scope ScopeRef) string {
 	return providerID + ":" + scope.Type + ":" + scope.ID
 }
