@@ -15,6 +15,8 @@ import (
 
 const KindREST = "rest"
 
+const defaultRESTClientTimeout = 30 * time.Second
+
 type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -26,7 +28,7 @@ type RESTAdapter struct {
 
 func NewRESTAdapter(client HTTPDoer) *RESTAdapter {
 	if client == nil {
-		client = &http.Client{}
+		client = &http.Client{Timeout: defaultRESTClientTimeout}
 	}
 	return &RESTAdapter{
 		Client:         client,
