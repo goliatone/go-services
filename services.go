@@ -19,6 +19,8 @@ type RefreshRunResult = core.RefreshRunResult
 type GrantStore = core.GrantStore
 type PermissionEvaluator = core.PermissionEvaluator
 type Signer = core.Signer
+type SubscriptionStore = core.SubscriptionStore
+type SyncCursorStore = core.SyncCursorStore
 
 type ConnectRequest = core.ConnectRequest
 type ReconsentRequest = core.ReconsentRequest
@@ -45,6 +47,8 @@ var (
 	WithRegistry                = core.WithRegistry
 	WithConnectionStore         = core.WithConnectionStore
 	WithCredentialStore         = core.WithCredentialStore
+	WithSubscriptionStore       = core.WithSubscriptionStore
+	WithSyncCursorStore         = core.WithSyncCursorStore
 	WithGrantStore              = core.WithGrantStore
 	WithPermissionEvaluator     = core.WithPermissionEvaluator
 	WithSigner                  = core.WithSigner
