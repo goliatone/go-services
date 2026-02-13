@@ -444,10 +444,7 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		err = s.mapError(err)
 		return CallbackCompletion{}, err
 	}
-	externalAccountID := strings.TrimSpace(result.ExternalAccountID)
-	if externalAccountID == "" {
-		externalAccountID = fmt.Sprintf("%s:%s:%s", req.ProviderID, req.Scope.Type, req.Scope.ID)
-	}
+	externalAccountID := resolveExternalAccountID(req.ProviderID, req.Scope, result.ExternalAccountID)
 
 	connection := Connection{
 		ProviderID:        req.ProviderID,
@@ -481,7 +478,7 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 			connection, err = s.connectionStore.Create(ctx, CreateConnectionInput{
 				ProviderID:        req.ProviderID,
 				Scope:             req.Scope,
-				ExternalAccountID: result.ExternalAccountID,
+				ExternalAccountID: externalAccountID,
 				Status:            ConnectionStatusActive,
 			})
 			if err != nil {
@@ -905,6 +902,19 @@ func findCapabilityDescriptor(capabilities []CapabilityDescriptor, capability st
 		}
 	}
 	return CapabilityDescriptor{}, false
+}
+
+func resolveExternalAccountID(providerID string, scope ScopeRef, externalAccountID string) string {
+	resolved := strings.TrimSpace(externalAccountID)
+	if resolved != "" {
+		return resolved
+	}
+	return fmt.Sprintf(
+		"%s:%s:%s",
+		strings.TrimSpace(providerID),
+		strings.TrimSpace(scope.Type),
+		strings.TrimSpace(scope.ID),
+	)
 }
 
 func (s *Service) credentialToActive(ctx context.Context, credential Credential) (ActiveCredential, error) {
