@@ -51,6 +51,13 @@ func (a *RegistryAdapter) RegisterCommand(cmd any) error {
 	return a.registry.RegisterCommand(cmd)
 }
 
+func (a *RegistryAdapter) RegisterQuery(qry any) error {
+	if a == nil || a.registry == nil {
+		return fmt.Errorf("gocommand: registry is not configured")
+	}
+	return a.registry.RegisterCommand(qry)
+}
+
 func (a *RegistryAdapter) AddResolver(key string, resolver command.Resolver) error {
 	if a == nil || a.registry == nil {
 		return fmt.Errorf("gocommand: registry is not configured")
@@ -87,8 +94,20 @@ func SubscribeCommandFunc[T any](handler command.CommandFunc[T], runnerOpts ...r
 	return commanddispatcher.SubscribeCommand(handler, runnerOpts...)
 }
 
+func SubscribeQuery[T any, R any](qry command.Querier[T, R], runnerOpts ...runner.Option) commanddispatcher.Subscription {
+	return commanddispatcher.SubscribeQuery(qry, runnerOpts...)
+}
+
+func SubscribeQueryFunc[T any, R any](qry command.QueryFunc[T, R], runnerOpts ...runner.Option) commanddispatcher.Subscription {
+	return commanddispatcher.SubscribeQuery(qry, runnerOpts...)
+}
+
 func Dispatch[T any](ctx context.Context, msg T) error {
 	return commanddispatcher.Dispatch(ctx, msg)
+}
+
+func Query[T any, R any](ctx context.Context, msg T) (R, error) {
+	return commanddispatcher.Query[T, R](ctx, msg)
 }
 
 func RegisterAndSubscribe[T any](
@@ -104,6 +123,27 @@ func RegisterAndSubscribe[T any](
 	}
 	subscription := SubscribeCommand(cmd, runnerOpts...)
 	if err := adapter.RegisterCommand(cmd); err != nil {
+		if subscription != nil {
+			subscription.Unsubscribe()
+		}
+		return nil, err
+	}
+	return subscription, nil
+}
+
+func RegisterAndSubscribeQuery[T any, R any](
+	adapter *RegistryAdapter,
+	qry command.Querier[T, R],
+	runnerOpts ...runner.Option,
+) (commanddispatcher.Subscription, error) {
+	if adapter == nil || adapter.registry == nil {
+		return nil, fmt.Errorf("gocommand: registry is not configured")
+	}
+	if qry == nil {
+		return nil, fmt.Errorf("gocommand: query is required")
+	}
+	subscription := SubscribeQuery(qry, runnerOpts...)
+	if err := adapter.RegisterQuery(qry); err != nil {
 		if subscription != nil {
 			subscription.Unsubscribe()
 		}
