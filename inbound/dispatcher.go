@@ -187,6 +187,7 @@ type claimEntry struct {
 	Status         claimStatus
 	ClaimID        string
 	Attempts       int
+	KeyTTL         time.Duration
 	LeaseExpiresAt time.Time
 	RetryAt        time.Time
 }
@@ -234,6 +235,7 @@ func (s *InMemoryClaimStore) Claim(
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.evictExpiredLocked(now)
 	entry, exists := s.entries[key]
 	if !exists {
 		claimID := s.nextClaimID()
@@ -242,6 +244,7 @@ func (s *InMemoryClaimStore) Claim(
 			Status:         claimStatusProcessing,
 			ClaimID:        claimID,
 			Attempts:       1,
+			KeyTTL:         lease,
 			LeaseExpiresAt: now.Add(lease),
 		}
 		s.claims[claimID] = key
@@ -250,7 +253,9 @@ func (s *InMemoryClaimStore) Claim(
 
 	switch entry.Status {
 	case claimStatusComplete:
-		return "", false, nil
+		if !entry.LeaseExpiresAt.IsZero() && now.Before(entry.LeaseExpiresAt) {
+			return "", false, nil
+		}
 	case claimStatusProcessing:
 		if now.Before(entry.LeaseExpiresAt) {
 			return "", false, nil
@@ -268,6 +273,7 @@ func (s *InMemoryClaimStore) Claim(
 	entry.Status = claimStatusProcessing
 	entry.ClaimID = claimID
 	entry.Attempts++
+	entry.KeyTTL = lease
 	entry.LeaseExpiresAt = now.Add(lease)
 	entry.RetryAt = time.Time{}
 	s.entries[key] = entry
@@ -295,8 +301,13 @@ func (s *InMemoryClaimStore) Complete(_ context.Context, claimID string) error {
 		delete(s.claims, claimID)
 		return nil
 	}
+	ttl := entry.KeyTTL
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	now := s.now()
 	entry.Status = claimStatusComplete
-	entry.LeaseExpiresAt = time.Time{}
+	entry.LeaseExpiresAt = now.Add(ttl)
 	entry.RetryAt = time.Time{}
 	s.entries[key] = entry
 	delete(s.claims, claimID)
@@ -349,6 +360,20 @@ func (s *InMemoryClaimStore) now() time.Time {
 func (s *InMemoryClaimStore) nextClaimID() string {
 	s.nextID++
 	return fmt.Sprintf("claim_%d", s.nextID)
+}
+
+func (s *InMemoryClaimStore) evictExpiredLocked(now time.Time) {
+	for key, entry := range s.entries {
+		if entry.Status != claimStatusComplete {
+			continue
+		}
+		if entry.LeaseExpiresAt.IsZero() || !now.Before(entry.LeaseExpiresAt) {
+			if entry.ClaimID != "" {
+				delete(s.claims, entry.ClaimID)
+			}
+			delete(s.entries, key)
+		}
+	}
 }
 
 func (d *Dispatcher) keyTTL() time.Duration {
