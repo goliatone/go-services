@@ -2,6 +2,10 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"strings"
 	"testing"
 	"time"
@@ -11,13 +15,15 @@ import (
 
 func TestServiceAccountJWTStrategy_CompleteAndRefresh(t *testing.T) {
 	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
+	privateKeyPEM := generateTestRSAPrivateKeyPEM(t)
 	strategy := NewServiceAccountJWTStrategy(ServiceAccountJWTStrategyConfig{
-		Issuer:     "svc@example.iam.gserviceaccount.com",
-		Audience:   "https://oauth2.googleapis.com/token",
-		Subject:    "svc@example.iam.gserviceaccount.com",
-		PrivateKey: "secret_signing_key",
-		KeyID:      "kid-1",
-		TokenTTL:   30 * time.Minute,
+		Issuer:           "svc@example.iam.gserviceaccount.com",
+		Audience:         "https://oauth2.googleapis.com/token",
+		Subject:          "svc@example.iam.gserviceaccount.com",
+		SigningAlgorithm: "RS256",
+		SigningKey:       privateKeyPEM,
+		KeyID:            "kid-1",
+		TokenTTL:         30 * time.Minute,
 		Now: func() time.Time {
 			return now
 		},
@@ -66,4 +72,41 @@ func TestServiceAccountJWTStrategy_CompleteRequiresConfig(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected required config error")
 	}
+}
+
+func TestServiceAccountJWTStrategy_CompleteRejectsUnsupportedAlgorithm(t *testing.T) {
+	strategy := NewServiceAccountJWTStrategy(ServiceAccountJWTStrategyConfig{
+		Issuer:     "svc@example.iam.gserviceaccount.com",
+		Audience:   "https://oauth2.googleapis.com/token",
+		Subject:    "svc@example.iam.gserviceaccount.com",
+		SigningKey: generateTestRSAPrivateKeyPEM(t),
+	})
+
+	_, err := strategy.Complete(context.Background(), core.AuthCompleteRequest{
+		Scope: core.ScopeRef{Type: "org", ID: "org_1"},
+		Metadata: map[string]any{
+			"signing_algorithm": "ES256",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported algorithm error")
+	}
+}
+
+func generateTestRSAPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	encoded := x509.MarshalPKCS1PrivateKey(privateKey)
+	pemBlock := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: encoded,
+	})
+	if len(pemBlock) == 0 {
+		t.Fatalf("encode rsa key to pem")
+	}
+	return string(pemBlock)
 }

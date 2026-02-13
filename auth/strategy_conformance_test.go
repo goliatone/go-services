@@ -10,6 +10,7 @@ import (
 
 func TestStrategyConformanceByMode(t *testing.T) {
 	now := time.Date(2026, 2, 13, 18, 0, 0, 0, time.UTC)
+	privateKeyPEM := generateTestRSAPrivateKeyPEM(t)
 	tests := []struct {
 		name         string
 		expectedType string
@@ -47,10 +48,11 @@ func TestStrategyConformanceByMode(t *testing.T) {
 			name:         "service_account_jwt",
 			expectedType: core.AuthKindServiceAccountJWT,
 			strategy: NewServiceAccountJWTStrategy(ServiceAccountJWTStrategyConfig{
-				Issuer:     "svc@example.com",
-				Subject:    "svc@example.com",
-				Audience:   "https://oauth2.googleapis.com/token",
-				PrivateKey: "jwt_secret",
+				Issuer:           "svc@example.com",
+				Subject:          "svc@example.com",
+				Audience:         "https://oauth2.googleapis.com/token",
+				SigningAlgorithm: "RS256",
+				SigningKey:       privateKeyPEM,
 				Now: func() time.Time {
 					return now
 				},

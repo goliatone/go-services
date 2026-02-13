@@ -56,6 +56,62 @@ func TestDispatcher_SharedVerificationAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestDispatcher_IdempotencyWindowExpiresByKeyTTL(t *testing.T) {
+	store := NewInMemoryIdempotencyStore()
+	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
+	store.Now = func() time.Time { return now }
+
+	handler := &stubInboundHandler{
+		surface: SurfaceCommand,
+		result: core.InboundResult{
+			Accepted:   true,
+			StatusCode: 202,
+		},
+	}
+	dispatcher := NewDispatcher(stubInboundVerifier{}, store)
+	dispatcher.KeyTTL = time.Minute
+	if err := dispatcher.Register(handler); err != nil {
+		t.Fatalf("register handler: %v", err)
+	}
+
+	req := core.InboundRequest{
+		ProviderID: "github",
+		Surface:    SurfaceCommand,
+		Metadata: map[string]any{
+			"idempotency_key": "ttl-key",
+		},
+	}
+	if _, err := dispatcher.Dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch first request: %v", err)
+	}
+	if handler.calls != 1 {
+		t.Fatalf("expected one handler call, got %d", handler.calls)
+	}
+
+	deduped, err := dispatcher.Dispatch(context.Background(), req)
+	if err != nil {
+		t.Fatalf("dispatch duplicate request: %v", err)
+	}
+	if deduped.Metadata["deduped"] != true {
+		t.Fatalf("expected deduped marker before ttl expiry")
+	}
+	if handler.calls != 1 {
+		t.Fatalf("expected duplicate suppression before ttl expiry")
+	}
+
+	now = now.Add(2 * time.Minute)
+	result, err := dispatcher.Dispatch(context.Background(), req)
+	if err != nil {
+		t.Fatalf("dispatch after ttl expiry: %v", err)
+	}
+	if !result.Accepted {
+		t.Fatalf("expected request accepted after ttl expiry")
+	}
+	if handler.calls != 2 {
+		t.Fatalf("expected handler to be called again after ttl expiry, got %d", handler.calls)
+	}
+}
+
 func TestDispatcher_RetriesAfterTransientHandlerFailure(t *testing.T) {
 	store := NewInMemoryClaimStore()
 	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)

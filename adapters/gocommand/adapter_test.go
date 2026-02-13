@@ -33,6 +33,12 @@ type queueMessage struct{}
 
 func (queueMessage) Type() string { return "services.command.queue" }
 
+type lookupMessage struct {
+	ID string
+}
+
+func (lookupMessage) Type() string { return "services.query.lookup" }
+
 func TestValidateMessageContract(t *testing.T) {
 	if err := ValidateMessageContract(okMessage{}); err != nil {
 		t.Fatalf("expected valid message, got %v", err)
@@ -100,5 +106,40 @@ func TestQueueResolverHookWiring(t *testing.T) {
 
 	if _, ok := queueRegistry.Get("services.command.queue"); !ok {
 		t.Fatalf("expected command to be mirrored into queue registry")
+	}
+}
+
+func TestQueryResolverHookAndDispatchWiring(t *testing.T) {
+	adapter := NewRegistryAdapter(command.NewRegistry())
+	queryResolverCalled := 0
+
+	qry := command.QueryFunc[lookupMessage, string](func(_ context.Context, msg lookupMessage) (string, error) {
+		return "user:" + msg.ID, nil
+	})
+
+	if _, err := RegisterAndSubscribeQuery(adapter, qry); err != nil {
+		t.Fatalf("register and subscribe query: %v", err)
+	}
+	if err := adapter.AddResolver("query-meta", func(_ any, meta command.CommandMeta, _ *command.Registry) error {
+		if meta.MessageType == "services.query.lookup" {
+			queryResolverCalled++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("add query resolver: %v", err)
+	}
+	if err := adapter.Initialize(); err != nil {
+		t.Fatalf("initialize registry: %v", err)
+	}
+	if queryResolverCalled == 0 {
+		t.Fatalf("expected query resolver hook to run during initialization")
+	}
+
+	result, err := Query[lookupMessage, string](context.Background(), lookupMessage{ID: "u1"})
+	if err != nil {
+		t.Fatalf("query dispatch: %v", err)
+	}
+	if result != "user:u1" {
+		t.Fatalf("expected query result user:u1, got %q", result)
 	}
 }

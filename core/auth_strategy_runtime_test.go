@@ -207,6 +207,60 @@ func TestService_CompleteCallback_EncryptsNonOAuthCredentialPayload(t *testing.T
 	}
 }
 
+func TestService_CompleteCallback_FallsBackExternalAccountIDWhenStrategyOmitted(t *testing.T) {
+	ctx := context.Background()
+
+	strategy := &recordingAuthStrategy{
+		kind: AuthKindAPIKey,
+		completeResponse: AuthCompleteResponse{
+			Credential: ActiveCredential{
+				TokenType:   "api_key",
+				AccessToken: "plain_secret_token",
+			},
+		},
+	}
+
+	registry := NewProviderRegistry()
+	provider := &strategyProviderStub{
+		id:       "custom_api_fallback",
+		authKind: AuthKindAPIKey,
+		strategy: strategy,
+	}
+	if err := registry.Register(provider); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	connectionStore := newMemoryConnectionStore()
+	credentialStore := newMemoryCredentialStore()
+	svc, err := NewService(
+		Config{},
+		WithRegistry(registry),
+		WithConnectionStore(connectionStore),
+		WithCredentialStore(credentialStore),
+		WithSecretProvider(testSecretProvider{}),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	completion, err := svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID: "custom_api_fallback",
+		Scope:      ScopeRef{Type: "org", ID: "o_fallback"},
+	})
+	if err != nil {
+		t.Fatalf("complete callback: %v", err)
+	}
+
+	expectedExternalAccountID := "custom_api_fallback:org:o_fallback"
+	if completion.Connection.ExternalAccountID != expectedExternalAccountID {
+		t.Fatalf(
+			"expected fallback external account id %q, got %q",
+			expectedExternalAccountID,
+			completion.Connection.ExternalAccountID,
+		)
+	}
+}
+
 type strategyProviderStub struct {
 	id       string
 	authKind string
