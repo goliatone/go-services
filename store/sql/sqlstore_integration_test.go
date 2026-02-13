@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -356,6 +358,177 @@ func TestNewService_WiresStoresFromPersistenceAndRepositoryFactory(t *testing.T)
 	_ = ctx
 }
 
+func TestService_GrantLifecyclePermissionAndRefreshIdempotency_Integration(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	grantStore, err := sqlstore.NewGrantStore(client.DB())
+	if err != nil {
+		t.Fatalf("new grant store: %v", err)
+	}
+
+	provider := &integrationProvider{
+		id: "github",
+		completeResponse: core.CompleteAuthResponse{
+			ExternalAccountID: "acct_int",
+			Credential: core.ActiveCredential{
+				TokenType:       "bearer",
+				RequestedScopes: []string{"repo:read", "repo:write"},
+				GrantedScopes:   []string{"repo:read", "repo:write"},
+				Refreshable:     true,
+			},
+			RequestedGrants: []string{"repo:read", "repo:write"},
+			GrantedGrants:   []string{"repo:read", "repo:write"},
+		},
+		refreshResponse: core.RefreshResult{
+			Credential: core.ActiveCredential{
+				TokenType:       "bearer",
+				RequestedScopes: []string{"repo:read", "repo:write"},
+				GrantedScopes:   []string{"repo:read"},
+				Refreshable:     true,
+			},
+			GrantedGrants: []string{"repo:read"},
+		},
+		capabilities: []core.CapabilityDescriptor{{
+			Name:           "repo.write",
+			RequiredGrants: []string{"repo:write"},
+			DeniedBehavior: core.CapabilityDeniedBehaviorBlock,
+		}},
+	}
+	registry := core.NewProviderRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	svc, err := core.NewService(core.Config{},
+		core.WithRegistry(registry),
+		core.WithConnectionStore(repoFactory.ConnectionStore()),
+		core.WithCredentialStore(repoFactory.CredentialStore()),
+		core.WithGrantStore(grantStore),
+		core.WithOAuthStateStore(core.NewMemoryOAuthStateStore(time.Minute)),
+		core.WithConnectionLocker(core.NewMemoryConnectionLocker()),
+		core.WithRefreshBackoffScheduler(core.ExponentialBackoffScheduler{Initial: 0, Max: 0}),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	beginResp, err := svc.Connect(ctx, core.ConnectRequest{
+		ProviderID:      "github",
+		Scope:           core.ScopeRef{Type: "user", ID: "usr_int"},
+		RedirectURI:     "https://app.example/callback",
+		RequestedGrants: []string{"repo:read", "repo:write"},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	completed, err := svc.CompleteCallback(ctx, core.CompleteAuthRequest{
+		ProviderID:  "github",
+		Scope:       core.ScopeRef{Type: "user", ID: "usr_int"},
+		Code:        "code-int",
+		State:       beginResp.State,
+		RedirectURI: "https://app.example/callback",
+	})
+	if err != nil {
+		t.Fatalf("complete callback: %v", err)
+	}
+
+	allowedBefore, err := svc.InvokeCapability(ctx, core.InvokeCapabilityRequest{
+		ProviderID: "github",
+		Scope:      core.ScopeRef{Type: "user", ID: "usr_int"},
+		Capability: "repo.write",
+	})
+	if err != nil {
+		t.Fatalf("invoke capability before refresh: %v", err)
+	}
+	if !allowedBefore.Allowed {
+		t.Fatalf("expected capability allowed before grant downgrade")
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, refreshErr := svc.Refresh(ctx, core.RefreshRequest{
+				ProviderID:   "github",
+				ConnectionID: completed.Connection.ID,
+			})
+			errCh <- refreshErr
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	successCount := 0
+	lockCount := 0
+	for refreshErr := range errCh {
+		if refreshErr == nil {
+			successCount++
+			continue
+		}
+		if strings.Contains(strings.ToLower(refreshErr.Error()), "service_refresh_locked") {
+			lockCount++
+			continue
+		}
+		t.Fatalf("refresh failed: %v", refreshErr)
+	}
+	if successCount != 1 || lockCount != 1 {
+		t.Fatalf("expected one refresh success and one lock conflict, got success=%d lock=%d", successCount, lockCount)
+	}
+
+	activeCredential, err := repoFactory.CredentialStore().GetActiveByConnection(ctx, completed.Connection.ID)
+	if err != nil {
+		t.Fatalf("get active credential: %v", err)
+	}
+	if activeCredential.Version != 2 {
+		t.Fatalf("expected exactly one credential rotation, got version %d", activeCredential.Version)
+	}
+
+	allowedAfter, err := svc.InvokeCapability(ctx, core.InvokeCapabilityRequest{
+		ProviderID: "github",
+		Scope:      core.ScopeRef{Type: "user", ID: "usr_int"},
+		Capability: "repo.write",
+	})
+	if err != nil {
+		t.Fatalf("invoke capability after refresh: %v", err)
+	}
+	if allowedAfter.Allowed {
+		t.Fatalf("expected capability blocked after grant downgrade")
+	}
+
+	var expandedCount int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_grant_events WHERE connection_id = ? AND event_type = ?",
+		completed.Connection.ID,
+		core.GrantEventExpanded,
+	).Scan(ctx, &expandedCount); err != nil {
+		t.Fatalf("count expanded events: %v", err)
+	}
+	if expandedCount == 0 {
+		t.Fatalf("expected at least one expanded grant event")
+	}
+
+	var downgradedCount int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_grant_events WHERE connection_id = ? AND event_type = ?",
+		completed.Connection.ID,
+		core.GrantEventDowngraded,
+	).Scan(ctx, &downgradedCount); err != nil {
+		t.Fatalf("count downgraded events: %v", err)
+	}
+	if downgradedCount == 0 {
+		t.Fatalf("expected at least one downgraded grant event")
+	}
+}
+
 func newSQLiteClient(t *testing.T) (*persistence.Client, func()) {
 	t.Helper()
 
@@ -425,5 +598,46 @@ func (stubCredentialStore) GetActiveByConnection(context.Context, string) (core.
 	return core.Credential{}, nil
 }
 func (stubCredentialStore) RevokeActive(context.Context, string, string) error {
+	return nil
+}
+
+type integrationProvider struct {
+	id               string
+	completeResponse core.CompleteAuthResponse
+	refreshResponse  core.RefreshResult
+	capabilities     []core.CapabilityDescriptor
+}
+
+func (p *integrationProvider) ID() string                    { return p.id }
+func (p *integrationProvider) AuthKind() string              { return "oauth2" }
+func (p *integrationProvider) SupportedScopeTypes() []string { return []string{"user", "org"} }
+func (p *integrationProvider) Capabilities() []core.CapabilityDescriptor {
+	return append([]core.CapabilityDescriptor(nil), p.capabilities...)
+}
+
+func (p *integrationProvider) BeginAuth(_ context.Context, req core.BeginAuthRequest) (core.BeginAuthResponse, error) {
+	return core.BeginAuthResponse{
+		URL:             "https://example.com/oauth",
+		State:           req.State,
+		RequestedGrants: append([]string(nil), req.RequestedGrants...),
+	}, nil
+}
+
+func (p *integrationProvider) CompleteAuth(_ context.Context, _ core.CompleteAuthRequest) (core.CompleteAuthResponse, error) {
+	return p.completeResponse, nil
+}
+
+func (p *integrationProvider) Refresh(_ context.Context, _ core.ActiveCredential) (core.RefreshResult, error) {
+	return p.refreshResponse, nil
+}
+
+func (p *integrationProvider) Signer() core.Signer {
+	return integrationSigner{}
+}
+
+type integrationSigner struct{}
+
+func (integrationSigner) Sign(_ context.Context, req *http.Request, _ core.ActiveCredential) error {
+	req.Header.Set("X-Signed-Integration", "true")
 	return nil
 }
