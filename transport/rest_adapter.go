@@ -16,14 +16,16 @@ import (
 const KindREST = "rest"
 
 const defaultRESTClientTimeout = 30 * time.Second
+const defaultRESTResponseBodyLimit int64 = 10 << 20 // 10 MiB
 
 type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
 type RESTAdapter struct {
-	Client         HTTPDoer
-	DefaultHeaders map[string]string
+	Client               HTTPDoer
+	DefaultHeaders       map[string]string
+	MaxResponseBodyBytes int64
 }
 
 func NewRESTAdapter(client HTTPDoer) *RESTAdapter {
@@ -31,8 +33,9 @@ func NewRESTAdapter(client HTTPDoer) *RESTAdapter {
 		client = &http.Client{Timeout: defaultRESTClientTimeout}
 	}
 	return &RESTAdapter{
-		Client:         client,
-		DefaultHeaders: map[string]string{},
+		Client:               client,
+		DefaultHeaders:       map[string]string{},
+		MaxResponseBodyBytes: defaultRESTResponseBodyLimit,
 	}
 }
 
@@ -100,9 +103,19 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 	}
 	defer httpRes.Body.Close()
 
-	body, err := io.ReadAll(httpRes.Body)
+	maxBodyBytes := a.MaxResponseBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = defaultRESTResponseBodyLimit
+	}
+	body, err := io.ReadAll(io.LimitReader(httpRes.Body, maxBodyBytes+1))
 	if err != nil {
 		return core.TransportResponse{}, err
+	}
+	if int64(len(body)) > maxBodyBytes {
+		return core.TransportResponse{}, fmt.Errorf(
+			"transport: response body exceeds limit of %d bytes",
+			maxBodyBytes,
+		)
 	}
 
 	return core.TransportResponse{

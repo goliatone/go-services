@@ -129,6 +129,31 @@ func TestNewRESTAdapter_DefaultClientTimeout(t *testing.T) {
 	if httpClient.Timeout != defaultRESTClientTimeout {
 		t.Fatalf("expected default timeout %s, got %s", defaultRESTClientTimeout, httpClient.Timeout)
 	}
+	if adapter.MaxResponseBodyBytes != defaultRESTResponseBodyLimit {
+		t.Fatalf("expected default response body limit %d, got %d", defaultRESTResponseBodyLimit, adapter.MaxResponseBodyBytes)
+	}
+}
+
+func TestRESTAdapter_DoFailsOnResponseBodyOverLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("12345"))
+	}))
+	defer server.Close()
+
+	adapter := NewRESTAdapter(server.Client())
+	adapter.MaxResponseBodyBytes = 4
+
+	_, err := adapter.Do(context.Background(), core.TransportRequest{
+		Method: "GET",
+		URL:    server.URL,
+	})
+	if err == nil {
+		t.Fatalf("expected response body limit error")
+	}
+	if !strings.Contains(err.Error(), "response body exceeds limit") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func TestGraphQLAdapter_UsesMetadataQueryAndVariables(t *testing.T) {
