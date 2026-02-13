@@ -7,6 +7,9 @@ import (
 
 	"github.com/goliatone/go-command"
 	jobqueuecommand "github.com/goliatone/go-job/queue/command"
+	servicescommand "github.com/goliatone/go-services/command"
+	"github.com/goliatone/go-services/core"
+	servicesquery "github.com/goliatone/go-services/query"
 )
 
 type okMessage struct{}
@@ -48,6 +51,28 @@ func TestValidateMessageContract(t *testing.T) {
 	}
 	if err := ValidateMessageContract(failingMessage{}); err == nil {
 		t.Fatalf("expected Validate() failure to bubble")
+	}
+	if err := ValidateMessageContract(servicescommand.ConnectMessage{
+		Request: core.ConnectRequest{
+			ProviderID: "github",
+			Scope:      core.ScopeRef{Type: "user", ID: "u1"},
+		},
+	}); err != nil {
+		t.Fatalf("expected wrapped command message to pass validation: %v", err)
+	}
+	if err := ValidateMessageContract(servicesquery.LoadSyncCursorMessage{
+		ConnectionID: "conn_1",
+		ResourceType: "drive.file",
+		ResourceID:   "file_1",
+	}); err != nil {
+		t.Fatalf("expected wrapped query message to pass validation: %v", err)
+	}
+	if err := ValidateMessageContract(servicescommand.ConnectMessage{
+		Request: core.ConnectRequest{
+			Scope: core.ScopeRef{Type: "user", ID: "u1"},
+		},
+	}); err == nil {
+		t.Fatalf("expected wrapped command message validation failure")
 	}
 }
 
