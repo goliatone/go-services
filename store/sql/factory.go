@@ -12,11 +12,14 @@ import (
 type RepositoryFactory struct {
 	db *bun.DB
 
-	connectionStore   *ConnectionStore
-	credentialStore   *CredentialStore
-	subscriptionStore *SubscriptionStore
-	syncCursorStore   *SyncCursorStore
-	syncJobStore      *SyncJobStore
+	connectionStore           *ConnectionStore
+	credentialStore           *CredentialStore
+	subscriptionStore         *SubscriptionStore
+	syncCursorStore           *SyncCursorStore
+	syncJobStore              *SyncJobStore
+	outboxStore               *OutboxStore
+	notificationDispatchStore *NotificationDispatchStore
+	activityStore             *ActivityStore
 }
 
 func NewRepositoryFactory() *RepositoryFactory {
@@ -101,6 +104,27 @@ func (f *RepositoryFactory) SyncJobStore() *SyncJobStore {
 	return f.syncJobStore
 }
 
+func (f *RepositoryFactory) OutboxStore() *OutboxStore {
+	if f == nil {
+		return nil
+	}
+	return f.outboxStore
+}
+
+func (f *RepositoryFactory) NotificationDispatchStore() *NotificationDispatchStore {
+	if f == nil {
+		return nil
+	}
+	return f.notificationDispatchStore
+}
+
+func (f *RepositoryFactory) ActivityStore() *ActivityStore {
+	if f == nil {
+		return nil
+	}
+	return f.activityStore
+}
+
 func (f *RepositoryFactory) initStores() error {
 	connectionRepo := repository.NewRepository[*connectionRecord](f.db, connectionHandlers())
 	if validator, ok := connectionRepo.(repository.Validator); ok {
@@ -139,6 +163,21 @@ func (f *RepositoryFactory) initStores() error {
 		return err
 	}
 	f.syncJobStore = syncJobStore
+	outboxStore, err := NewOutboxStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.outboxStore = outboxStore
+	notificationDispatchStore, err := NewNotificationDispatchStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.notificationDispatchStore = notificationDispatchStore
+	activityStore, err := NewActivityStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.activityStore = activityStore
 
 	return nil
 }

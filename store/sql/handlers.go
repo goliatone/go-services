@@ -94,6 +94,35 @@ func eventHandlers() repository.ModelHandlers[*serviceEventRecord] {
 	}
 }
 
+func activityHandlers() repository.ModelHandlers[*activityEntryRecord] {
+	return repository.ModelHandlers[*activityEntryRecord]{
+		NewRecord: func() *activityEntryRecord {
+			return &activityEntryRecord{}
+		},
+		GetID: func(record *activityEntryRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *activityEntryRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *activityEntryRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
 func grantEventHandlers() repository.ModelHandlers[*grantEventRecord] {
 	return repository.ModelHandlers[*grantEventRecord]{
 		NewRecord: func() *grantEventRecord {
@@ -231,6 +260,64 @@ func syncJobHandlers() repository.ModelHandlers[*syncJobRecord] {
 			return "id"
 		},
 		GetIdentifierValue: func(record *syncJobRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
+func outboxHandlers() repository.ModelHandlers[*lifecycleOutboxRecord] {
+	return repository.ModelHandlers[*lifecycleOutboxRecord]{
+		NewRecord: func() *lifecycleOutboxRecord {
+			return &lifecycleOutboxRecord{}
+		},
+		GetID: func(record *lifecycleOutboxRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *lifecycleOutboxRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *lifecycleOutboxRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
+func notificationDispatchHandlers() repository.ModelHandlers[*notificationDispatchRecord] {
+	return repository.ModelHandlers[*notificationDispatchRecord]{
+		NewRecord: func() *notificationDispatchRecord {
+			return &notificationDispatchRecord{}
+		},
+		GetID: func(record *notificationDispatchRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *notificationDispatchRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *notificationDispatchRecord) string {
 			if record == nil {
 				return ""
 			}

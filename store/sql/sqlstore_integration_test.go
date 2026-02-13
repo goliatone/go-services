@@ -428,6 +428,245 @@ func TestWebhookDeliveryStore_DedupeAndRetryLedger(t *testing.T) {
 	}
 }
 
+func TestOutboxStore_ClaimAckRetryLifecycle(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	outboxStore, err := sqlstore.NewOutboxStore(client.DB())
+	if err != nil {
+		t.Fatalf("new outbox store: %v", err)
+	}
+
+	event := core.LifecycleEvent{
+		ID:         "evt_outbox_1",
+		Name:       "connection.refresh_failed",
+		ProviderID: "github",
+		ScopeType:  "user",
+		ScopeID:    "usr_outbox",
+		Source:     "worker",
+		OccurredAt: time.Now().UTC().Add(-2 * time.Minute),
+		Payload:    map[string]any{"status": "warn"},
+		Metadata:   map[string]any{"request_id": "req_1"},
+	}
+	if err := outboxStore.Enqueue(ctx, event); err != nil {
+		t.Fatalf("enqueue event: %v", err)
+	}
+
+	claimed, err := outboxStore.ClaimBatch(ctx, 10)
+	if err != nil {
+		t.Fatalf("claim batch: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("expected 1 claimed event, got %d", len(claimed))
+	}
+	if claimed[0].ID != event.ID {
+		t.Fatalf("expected event id %q, got %q", event.ID, claimed[0].ID)
+	}
+	if claimed[0].Metadata[core.MetadataKeyOutboxAttempts] != 0 {
+		t.Fatalf("expected initial attempts metadata to be 0")
+	}
+
+	if err := outboxStore.Retry(ctx, event.ID, errors.New("transient"), time.Now().UTC().Add(-time.Second)); err != nil {
+		t.Fatalf("retry event: %v", err)
+	}
+
+	reclaimed, err := outboxStore.ClaimBatch(ctx, 10)
+	if err != nil {
+		t.Fatalf("re-claim batch: %v", err)
+	}
+	if len(reclaimed) != 1 {
+		t.Fatalf("expected 1 re-claimed event, got %d", len(reclaimed))
+	}
+	if reclaimed[0].Metadata[core.MetadataKeyOutboxAttempts] != 1 {
+		t.Fatalf("expected attempts metadata=1 after retry")
+	}
+
+	if err := outboxStore.Ack(ctx, event.ID); err != nil {
+		t.Fatalf("ack event: %v", err)
+	}
+	claimedAfterAck, err := outboxStore.ClaimBatch(ctx, 10)
+	if err != nil {
+		t.Fatalf("claim after ack: %v", err)
+	}
+	if len(claimedAfterAck) != 0 {
+		t.Fatalf("expected no claimed events after ack, got %d", len(claimedAfterAck))
+	}
+
+	failedEvent := core.LifecycleEvent{
+		ID:         "evt_outbox_2",
+		Name:       "sync.failed",
+		ProviderID: "github",
+		ScopeType:  "user",
+		ScopeID:    "usr_outbox",
+		Source:     "worker",
+		OccurredAt: time.Now().UTC(),
+	}
+	if err := outboxStore.Enqueue(ctx, failedEvent); err != nil {
+		t.Fatalf("enqueue failed event: %v", err)
+	}
+	if _, err := outboxStore.ClaimBatch(ctx, 10); err != nil {
+		t.Fatalf("claim failed event: %v", err)
+	}
+	if err := outboxStore.Retry(ctx, failedEvent.ID, errors.New("terminal"), time.Time{}); err != nil {
+		t.Fatalf("mark failed event: %v", err)
+	}
+
+	var status string
+	var attempts int
+	if err := client.DB().NewRaw(
+		"SELECT status, attempts FROM service_lifecycle_outbox WHERE event_id = ?",
+		failedEvent.ID,
+	).Scan(ctx, &status, &attempts); err != nil {
+		t.Fatalf("load failed event row: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("expected failed status, got %q", status)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected failed event attempts=1, got %d", attempts)
+	}
+}
+
+func TestNotificationDispatchStore_IdempotencyLedger(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	ledger, err := sqlstore.NewNotificationDispatchStore(client.DB())
+	if err != nil {
+		t.Fatalf("new notification dispatch store: %v", err)
+	}
+
+	record := core.NotificationDispatchRecord{
+		EventID:        "evt_notify_1",
+		Projector:      "go-notifications",
+		DefinitionCode: "services.connection.failed",
+		RecipientKey:   "user:usr_1",
+		IdempotencyKey: "dispatch-key-1",
+		Status:         "sent",
+		Metadata:       map[string]any{"channel": "email"},
+	}
+	if err := ledger.Record(ctx, record); err != nil {
+		t.Fatalf("record dispatch: %v", err)
+	}
+
+	seen, err := ledger.Seen(ctx, record.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("seen: %v", err)
+	}
+	if !seen {
+		t.Fatalf("expected idempotency key to be tracked")
+	}
+
+	// Duplicate idempotency keys should be treated as idempotent no-op.
+	if err := ledger.Record(ctx, record); err != nil {
+		t.Fatalf("record duplicate dispatch: %v", err)
+	}
+
+	var count int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_notification_dispatches WHERE idempotency_key = ?",
+		record.IdempotencyKey,
+	).Scan(ctx, &count); err != nil {
+		t.Fatalf("count dispatch rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one dispatch row for idempotency key, got %d", count)
+	}
+}
+
+func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	activityStore, err := sqlstore.NewActivityStore(client.DB())
+	if err != nil {
+		t.Fatalf("new activity store: %v", err)
+	}
+
+	baseMeta := map[string]any{
+		"provider_id": "github",
+		"scope_type":  "user",
+		"scope_id":    "usr_activity",
+	}
+	oldCreatedAt := time.Now().UTC().Add(-48 * time.Hour)
+	for i := 0; i < 3; i++ {
+		entry := core.ServiceActivityEntry{
+			ID:        fmt.Sprintf("act_old_%d", i),
+			Actor:     "system",
+			Action:    "connection.refresh",
+			Object:    fmt.Sprintf("connection:conn_%d", i),
+			Channel:   "services.lifecycle",
+			Status:    core.ServiceActivityStatusOK,
+			Metadata:  baseMeta,
+			CreatedAt: oldCreatedAt.Add(time.Duration(i) * time.Minute),
+		}
+		if err := activityStore.Record(ctx, entry); err != nil {
+			t.Fatalf("record old entry %d: %v", i, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		entry := core.ServiceActivityEntry{
+			ID:      fmt.Sprintf("act_new_%d", i),
+			Actor:   "webhook",
+			Action:  "webhook.received",
+			Object:  fmt.Sprintf("subscription:sub_%d", i),
+			Channel: "services.lifecycle",
+			Status:  core.ServiceActivityStatusWarn,
+			Metadata: map[string]any{
+				"provider_id": "github",
+				"scope_type":  "user",
+				"scope_id":    "usr_activity",
+			},
+			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Minute),
+		}
+		if err := activityStore.Record(ctx, entry); err != nil {
+			t.Fatalf("record new entry %d: %v", i, err)
+		}
+	}
+
+	page, err := activityStore.List(ctx, core.ServicesActivityFilter{
+		ProviderID: "github",
+		ScopeType:  "user",
+		ScopeID:    "usr_activity",
+		Page:       1,
+		PerPage:    10,
+	})
+	if err != nil {
+		t.Fatalf("list activity entries: %v", err)
+	}
+	if page.Total != 6 {
+		t.Fatalf("expected total=6 before prune, got %d", page.Total)
+	}
+
+	deleted, err := activityStore.Prune(ctx, core.ActivityRetentionPolicy{
+		TTL:    24 * time.Hour,
+		RowCap: 2,
+	})
+	if err != nil {
+		t.Fatalf("prune activity entries: %v", err)
+	}
+	if deleted < 4 {
+		t.Fatalf("expected at least four deleted entries, got %d", deleted)
+	}
+
+	page, err = activityStore.List(ctx, core.ServicesActivityFilter{
+		ProviderID: "github",
+		ScopeType:  "user",
+		ScopeID:    "usr_activity",
+		Page:       1,
+		PerPage:    10,
+	})
+	if err != nil {
+		t.Fatalf("list after prune: %v", err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("expected total=2 after prune row cap, got %d", page.Total)
+	}
+}
+
 func TestSyncCursorStore_AdvanceAtomicCompareAndSwap(t *testing.T) {
 	ctx := context.Background()
 	client, cleanup := newSQLiteClient(t)

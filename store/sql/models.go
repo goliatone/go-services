@@ -59,6 +59,28 @@ type serviceEventRecord struct {
 	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
+type activityEntryRecord struct {
+	bun.BaseModel `bun:"table:service_activity_entries,alias:sae"`
+
+	ID             string         `bun:"id,pk"`
+	ProviderID     string         `bun:"provider_id,notnull"`
+	ScopeType      string         `bun:"scope_type,notnull"`
+	ScopeID        string         `bun:"scope_id,notnull"`
+	ConnectionID   *string        `bun:"connection_id"`
+	InstallationID *string        `bun:"installation_id"`
+	SubscriptionID *string        `bun:"subscription_id"`
+	SyncJobID      *string        `bun:"sync_job_id"`
+	Channel        string         `bun:"channel,notnull"`
+	Action         string         `bun:"action,notnull"`
+	ObjectType     string         `bun:"object_type,notnull"`
+	ObjectID       string         `bun:"object_id,notnull"`
+	Actor          string         `bun:"actor,notnull"`
+	ActorType      string         `bun:"actor_type,notnull"`
+	Status         string         `bun:"status,notnull"`
+	Metadata       map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CreatedAt      time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
 type grantEventRecord struct {
 	bun.BaseModel `bun:"table:service_grant_events,alias:sge"`
 
@@ -141,4 +163,40 @@ type syncJobRecord struct {
 	Metadata      map[string]any `bun:"metadata,type:jsonb,notnull"`
 	CreatedAt     time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 	UpdatedAt     time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type lifecycleOutboxRecord struct {
+	bun.BaseModel `bun:"table:service_lifecycle_outbox,alias:slo"`
+
+	ID           string         `bun:"id,pk"`
+	EventID      string         `bun:"event_id,notnull"`
+	EventName    string         `bun:"event_name,notnull"`
+	ProviderID   string         `bun:"provider_id,notnull"`
+	ScopeType    string         `bun:"scope_type,notnull"`
+	ScopeID      string         `bun:"scope_id,notnull"`
+	ConnectionID *string        `bun:"connection_id"`
+	Payload      map[string]any `bun:"payload,type:jsonb,notnull"`
+	Metadata     map[string]any `bun:"metadata,type:jsonb,notnull"`
+	Status       string         `bun:"status,notnull"`
+	Attempts     int            `bun:"attempts,notnull"`
+	NextAttempt  *time.Time     `bun:"next_attempt_at,nullzero"`
+	LastError    string         `bun:"last_error,notnull"`
+	OccurredAt   time.Time      `bun:"occurred_at,notnull"`
+	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt    time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type notificationDispatchRecord struct {
+	bun.BaseModel `bun:"table:service_notification_dispatches,alias:snd"`
+
+	ID           string         `bun:"id,pk"`
+	EventID      string         `bun:"event_id,notnull"`
+	Projector    string         `bun:"projector,notnull"`
+	Definition   string         `bun:"definition_code,notnull"`
+	RecipientKey string         `bun:"recipient_key,notnull"`
+	Idempotency  string         `bun:"idempotency_key,notnull"`
+	Status       string         `bun:"status,notnull"`
+	Error        string         `bun:"error,notnull"`
+	Metadata     map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
