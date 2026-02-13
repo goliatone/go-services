@@ -14,6 +14,8 @@ type ServiceAccountJWTStrategyConfig struct {
 	Subject           string
 	Audience          string
 	PrivateKey        string
+	SigningKey        string
+	SigningAlgorithm  string
 	KeyID             string
 	TokenTTL          time.Duration
 	ExternalAccountID string
@@ -29,6 +31,14 @@ func NewServiceAccountJWTStrategy(cfg ServiceAccountJWTStrategyConfig) *ServiceA
 	if tokenTTL <= 0 {
 		tokenTTL = time.Hour
 	}
+	signingKey := strings.TrimSpace(cfg.SigningKey)
+	if signingKey == "" {
+		signingKey = strings.TrimSpace(cfg.PrivateKey)
+	}
+	signingAlgorithm := strings.TrimSpace(strings.ToUpper(cfg.SigningAlgorithm))
+	if signingAlgorithm == "" {
+		signingAlgorithm = jwtAlgRS256
+	}
 	now := cfg.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -39,6 +49,8 @@ func NewServiceAccountJWTStrategy(cfg ServiceAccountJWTStrategyConfig) *ServiceA
 			Subject:           strings.TrimSpace(cfg.Subject),
 			Audience:          strings.TrimSpace(cfg.Audience),
 			PrivateKey:        strings.TrimSpace(cfg.PrivateKey),
+			SigningKey:        signingKey,
+			SigningAlgorithm:  signingAlgorithm,
 			KeyID:             strings.TrimSpace(cfg.KeyID),
 			TokenTTL:          tokenTTL,
 			ExternalAccountID: strings.TrimSpace(cfg.ExternalAccountID),
@@ -77,8 +89,14 @@ func (s *ServiceAccountJWTStrategy) Complete(_ context.Context, req core.AuthCom
 		s.config.Subject,
 		req.Scope.ID,
 	)
-	privateKey := firstNonEmpty(
-		readString(metadata, "private_key", "jwt_private_key"),
+	signingAlgorithm := firstNonEmpty(
+		readString(metadata, "signing_algorithm", "jwt_signing_algorithm", "alg"),
+		s.config.SigningAlgorithm,
+		jwtAlgRS256,
+	)
+	signingKey := firstNonEmpty(
+		readString(metadata, "signing_key", "jwt_signing_key", "private_key", "jwt_private_key", "jwt_secret"),
+		s.config.SigningKey,
 		s.config.PrivateKey,
 	)
 	keyID := firstNonEmpty(
@@ -92,8 +110,8 @@ func (s *ServiceAccountJWTStrategy) Complete(_ context.Context, req core.AuthCom
 	if audience == "" {
 		return core.AuthCompleteResponse{}, fmt.Errorf("auth: service_account_jwt audience is required")
 	}
-	if privateKey == "" {
-		return core.AuthCompleteResponse{}, fmt.Errorf("auth: service_account_jwt private key is required")
+	if signingKey == "" {
+		return core.AuthCompleteResponse{}, fmt.Errorf("auth: service_account_jwt signing key is required")
 	}
 
 	now := s.config.Now().UTC()
@@ -105,7 +123,7 @@ func (s *ServiceAccountJWTStrategy) Complete(_ context.Context, req core.AuthCom
 		"iat": now.Unix(),
 		"exp": expiresAt.Unix(),
 	}
-	token, err := buildHS256JWT(keyID, privateKey, claims)
+	token, err := buildJWT(keyID, signingAlgorithm, signingKey, claims)
 	if err != nil {
 		return core.AuthCompleteResponse{}, err
 	}
@@ -123,10 +141,11 @@ func (s *ServiceAccountJWTStrategy) Complete(_ context.Context, req core.AuthCom
 	)
 
 	credentialMetadata := map[string]any{
-		"auth_kind": core.AuthKindServiceAccountJWT,
-		"issuer":    issuer,
-		"subject":   subject,
-		"audience":  audience,
+		"auth_kind":         core.AuthKindServiceAccountJWT,
+		"issuer":            issuer,
+		"subject":           subject,
+		"audience":          audience,
+		"signing_algorithm": strings.ToUpper(strings.TrimSpace(signingAlgorithm)),
 	}
 	if keyID != "" {
 		credentialMetadata["key_id"] = keyID
@@ -156,11 +175,12 @@ func (s *ServiceAccountJWTStrategy) Refresh(_ context.Context, cred core.ActiveC
 	issuer := firstNonEmpty(readString(metadata, "issuer"), s.config.Issuer)
 	audience := firstNonEmpty(readString(metadata, "audience"), s.config.Audience)
 	subject := firstNonEmpty(readString(metadata, "subject"), s.config.Subject)
-	privateKey := strings.TrimSpace(s.config.PrivateKey)
+	signingAlgorithm := firstNonEmpty(readString(metadata, "signing_algorithm"), s.config.SigningAlgorithm, jwtAlgRS256)
+	signingKey := firstNonEmpty(s.config.SigningKey, s.config.PrivateKey)
 	keyID := firstNonEmpty(readString(metadata, "key_id"), s.config.KeyID)
 
-	if issuer == "" || audience == "" || subject == "" || privateKey == "" {
-		return core.RefreshResult{}, fmt.Errorf("auth: service_account_jwt refresh requires issuer/audience/subject/private key")
+	if issuer == "" || audience == "" || subject == "" || signingKey == "" {
+		return core.RefreshResult{}, fmt.Errorf("auth: service_account_jwt refresh requires issuer/audience/subject/signing key")
 	}
 
 	now := s.config.Now().UTC()
@@ -172,7 +192,7 @@ func (s *ServiceAccountJWTStrategy) Refresh(_ context.Context, cred core.ActiveC
 		"iat": now.Unix(),
 		"exp": expiresAt.Unix(),
 	}
-	token, err := buildHS256JWT(keyID, privateKey, claims)
+	token, err := buildJWT(keyID, signingAlgorithm, signingKey, claims)
 	if err != nil {
 		return core.RefreshResult{}, err
 	}
@@ -184,6 +204,7 @@ func (s *ServiceAccountJWTStrategy) Refresh(_ context.Context, cred core.ActiveC
 	refreshed.ExpiresAt = &expiresAt
 	refreshed.Metadata = metadata
 	refreshed.Metadata["auth_kind"] = core.AuthKindServiceAccountJWT
+	refreshed.Metadata["signing_algorithm"] = strings.ToUpper(strings.TrimSpace(signingAlgorithm))
 	if keyID != "" {
 		refreshed.Metadata["key_id"] = keyID
 	}
