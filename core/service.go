@@ -20,6 +20,7 @@ type Service struct {
 	config                  Config
 	logger                  Logger
 	loggerProvider          LoggerProvider
+	metricsRecorder         MetricsRecorder
 	errorFactory            ErrorFactory
 	errorMapper             ErrorMapper
 	persistenceClient       any
@@ -44,6 +45,7 @@ type Service struct {
 type ServiceDependencies struct {
 	Logger              Logger
 	LoggerProvider      LoggerProvider
+	MetricsRecorder     MetricsRecorder
 	ErrorFactory        ErrorFactory
 	ErrorMapper         ErrorMapper
 	PersistenceClient   any
@@ -83,6 +85,9 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 
 	if builder.errorFactory == nil {
 		builder.errorFactory = goerrors.New
+	}
+	if builder.metricsRecorder == nil {
+		builder.metricsRecorder = NopMetricsRecorder{}
 	}
 	if builder.errorMapper == nil {
 		builder.errorMapper = defaultErrorMapper
@@ -173,6 +178,7 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		config:                  finalConfig,
 		logger:                  logger,
 		loggerProvider:          provider,
+		metricsRecorder:         builder.metricsRecorder,
 		errorFactory:            builder.errorFactory,
 		errorMapper:             builder.errorMapper,
 		persistenceClient:       builder.persistenceClient,
@@ -227,6 +233,7 @@ func (s *Service) Dependencies() ServiceDependencies {
 	return ServiceDependencies{
 		Logger:              s.logger,
 		LoggerProvider:      s.loggerProvider,
+		MetricsRecorder:     s.metricsRecorder,
 		ErrorFactory:        s.errorFactory,
 		ErrorMapper:         s.errorMapper,
 		PersistenceClient:   s.persistenceClient,
@@ -248,15 +255,27 @@ func (s *Service) Dependencies() ServiceDependencies {
 	}
 }
 
-func (s *Service) Connect(ctx context.Context, req ConnectRequest) (BeginAuthResponse, error) {
-	if err := req.Scope.Validate(); err != nil {
-		return BeginAuthResponse{}, s.mapError(err)
+func (s *Service) Connect(ctx context.Context, req ConnectRequest) (response BeginAuthResponse, err error) {
+	startedAt := time.Now().UTC()
+	fields := map[string]any{
+		"provider_id": req.ProviderID,
+		"scope_type":  req.Scope.Type,
+		"scope_id":    req.Scope.ID,
+	}
+	defer func() {
+		s.observeOperation(ctx, startedAt, "connect", err, fields)
+	}()
+
+	if err = req.Scope.Validate(); err != nil {
+		err = s.mapError(err)
+		return BeginAuthResponse{}, err
 	}
 	state := strings.TrimSpace(req.State)
 	if state == "" {
 		generated, generateErr := generateOAuthState()
 		if generateErr != nil {
-			return BeginAuthResponse{}, s.mapError(generateErr)
+			err = s.mapError(generateErr)
+			return BeginAuthResponse{}, err
 		}
 		state = generated
 	}
@@ -265,7 +284,7 @@ func (s *Service) Connect(ctx context.Context, req ConnectRequest) (BeginAuthRes
 	if err != nil {
 		return BeginAuthResponse{}, err
 	}
-	response, err := provider.BeginAuth(ctx, BeginAuthRequest{
+	response, err = provider.BeginAuth(ctx, BeginAuthRequest{
 		ProviderID:      req.ProviderID,
 		Scope:           req.Scope,
 		RedirectURI:     req.RedirectURI,
@@ -274,7 +293,8 @@ func (s *Service) Connect(ctx context.Context, req ConnectRequest) (BeginAuthRes
 		Metadata:        req.Metadata,
 	})
 	if err != nil {
-		return BeginAuthResponse{}, s.mapError(err)
+		err = s.mapError(err)
+		return BeginAuthResponse{}, err
 	}
 	if strings.TrimSpace(response.State) == "" {
 		response.State = state
@@ -291,7 +311,8 @@ func (s *Service) Connect(ctx context.Context, req ConnectRequest) (BeginAuthRes
 			CreatedAt:       time.Now().UTC(),
 		})
 		if saveErr != nil {
-			return BeginAuthResponse{}, s.mapError(saveErr)
+			err = s.mapError(saveErr)
+			return BeginAuthResponse{}, err
 		}
 	}
 
@@ -353,12 +374,27 @@ func (s *Service) CompleteReconsent(ctx context.Context, req CompleteAuthRequest
 	return s.CompleteCallback(ctx, req)
 }
 
-func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest) (CallbackCompletion, error) {
-	if err := req.Scope.Validate(); err != nil {
-		return CallbackCompletion{}, s.mapError(err)
+func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest) (completion CallbackCompletion, err error) {
+	startedAt := time.Now().UTC()
+	fields := map[string]any{
+		"provider_id": req.ProviderID,
+		"scope_type":  req.Scope.Type,
+		"scope_id":    req.Scope.ID,
 	}
-	if err := s.validateOAuthCallbackState(ctx, req); err != nil {
-		return CallbackCompletion{}, s.mapError(err)
+	defer func() {
+		if completion.Connection.ID != "" {
+			fields["connection_id"] = completion.Connection.ID
+		}
+		s.observeOperation(ctx, startedAt, "complete_callback", err, fields)
+	}()
+
+	if err = req.Scope.Validate(); err != nil {
+		err = s.mapError(err)
+		return CallbackCompletion{}, err
+	}
+	if err = s.validateOAuthCallbackState(ctx, req); err != nil {
+		err = s.mapError(err)
+		return CallbackCompletion{}, err
 	}
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
@@ -366,7 +402,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 	}
 	result, err := provider.CompleteAuth(ctx, req)
 	if err != nil {
-		return CallbackCompletion{}, s.mapError(err)
+		err = s.mapError(err)
+		return CallbackCompletion{}, err
 	}
 
 	connection := Connection{
@@ -380,7 +417,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 	if s.connectionStore != nil {
 		existing, found, findErr := s.findScopedConnection(ctx, req.ProviderID, req.Scope)
 		if findErr != nil {
-			return CallbackCompletion{}, s.mapError(findErr)
+			err = s.mapError(findErr)
+			return CallbackCompletion{}, err
 		}
 		if found {
 			connection = existing
@@ -391,7 +429,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 				string(ConnectionStatusActive),
 				"",
 			); updateErr != nil {
-				return CallbackCompletion{}, s.mapError(updateErr)
+				err = s.mapError(updateErr)
+				return CallbackCompletion{}, err
 			}
 			connection.Status = ConnectionStatusActive
 			connection.LastError = ""
@@ -403,7 +442,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 				Status:            ConnectionStatusActive,
 			})
 			if err != nil {
-				return CallbackCompletion{}, s.mapError(err)
+				err = s.mapError(err)
+				return CallbackCompletion{}, err
 			}
 		}
 	}
@@ -435,7 +475,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 			Status:           CredentialStatusActive,
 		})
 		if err != nil {
-			return CallbackCompletion{}, s.mapError(err)
+			err = s.mapError(err)
+			return CallbackCompletion{}, err
 		}
 	}
 
@@ -448,7 +489,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		req.Metadata,
 	)
 	if grantErr != nil {
-		return CallbackCompletion{}, s.mapError(grantErr)
+		err = s.mapError(grantErr)
+		return CallbackCompletion{}, err
 	}
 	if wasNeedsReconsent && s.grantStore != nil {
 		_ = s.grantStore.AppendEvent(ctx, AppendGrantEventInput{
@@ -461,7 +503,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		})
 	}
 
-	return CallbackCompletion{Connection: connection, Credential: credential}, nil
+	completion = CallbackCompletion{Connection: connection, Credential: credential}
+	return completion, nil
 }
 
 func (s *Service) validateOAuthCallbackState(ctx context.Context, req CompleteAuthRequest) error {
@@ -493,10 +536,20 @@ func (s *Service) validateOAuthCallbackState(ctx context.Context, req CompleteAu
 	return nil
 }
 
-func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResult, error) {
+func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result RefreshResult, err error) {
+	startedAt := time.Now().UTC()
+	fields := map[string]any{
+		"provider_id":   req.ProviderID,
+		"connection_id": req.ConnectionID,
+	}
+	defer func() {
+		s.observeOperation(ctx, startedAt, "refresh", err, fields)
+	}()
+
 	connectionID := strings.TrimSpace(req.ConnectionID)
 	if connectionID == "" {
-		return RefreshResult{}, s.mapError(fmt.Errorf("core: connection id is required"))
+		err = s.mapError(fmt.Errorf("core: connection id is required"))
+		return RefreshResult{}, err
 	}
 	req.ConnectionID = connectionID
 
@@ -504,7 +557,8 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResul
 	if s.connectionLocker != nil && !isRefreshLockHeld(ctx, connectionID) {
 		lockHandle, lockErr := s.connectionLocker.Acquire(ctx, connectionID, defaultRefreshLockTTL)
 		if lockErr != nil {
-			return RefreshResult{}, s.mapError(lockErr)
+			err = s.mapError(lockErr)
+			return RefreshResult{}, err
 		}
 		ctx = context.WithValue(ctx, refreshLockContextKey{}, connectionID)
 		unlock = func() {
@@ -524,16 +578,19 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResul
 	} else if s.credentialStore != nil {
 		stored, loadErr := s.credentialStore.GetActiveByConnection(ctx, req.ConnectionID)
 		if loadErr != nil {
-			return RefreshResult{}, s.mapError(loadErr)
+			err = s.mapError(loadErr)
+			return RefreshResult{}, err
 		}
 		activeCred = credentialToActive(stored)
 	} else {
-		return RefreshResult{}, s.mapError(fmt.Errorf("core: refresh requires credential input or credential store"))
+		err = s.mapError(fmt.Errorf("core: refresh requires credential input or credential store"))
+		return RefreshResult{}, err
 	}
 
-	result, err := provider.Refresh(ctx, activeCred)
+	result, err = provider.Refresh(ctx, activeCred)
 	if err != nil {
-		return RefreshResult{}, s.mapError(err)
+		err = s.mapError(err)
+		return RefreshResult{}, err
 	}
 
 	shouldPersist := shouldPersistRefreshedCredential(activeCred, result.Credential)
@@ -550,13 +607,15 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResul
 			Status:           CredentialStatusActive,
 		})
 		if saveErr != nil {
-			return RefreshResult{}, s.mapError(saveErr)
+			err = s.mapError(saveErr)
+			return RefreshResult{}, err
 		}
 	}
 
 	if s.connectionStore != nil {
 		if updateErr := s.connectionStore.UpdateStatus(ctx, req.ConnectionID, string(ConnectionStatusActive), ""); updateErr != nil {
-			return RefreshResult{}, s.mapError(updateErr)
+			err = s.mapError(updateErr)
+			return RefreshResult{}, err
 		}
 	}
 
@@ -569,7 +628,8 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResul
 		result.Metadata,
 	)
 	if grantErr != nil {
-		return RefreshResult{}, s.mapError(grantErr)
+		err = s.mapError(grantErr)
+		return RefreshResult{}, err
 	}
 	if len(missingRequiredProviderGrants(provider.Capabilities(), snapshot.Granted)) > 0 {
 		if transitionErr := s.transitionConnectionToNeedsReconsent(
@@ -577,31 +637,62 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResul
 			req.ConnectionID,
 			"required grants missing after refresh",
 		); transitionErr != nil {
-			return RefreshResult{}, s.mapError(transitionErr)
+			err = s.mapError(transitionErr)
+			return RefreshResult{}, err
 		}
 	}
 
 	return result, nil
 }
 
-func (s *Service) Revoke(ctx context.Context, connectionID string, reason string) error {
+func (s *Service) Revoke(ctx context.Context, connectionID string, reason string) (err error) {
+	startedAt := time.Now().UTC()
+	fields := map[string]any{
+		"connection_id": connectionID,
+	}
+	defer func() {
+		s.observeOperation(ctx, startedAt, "revoke", err, fields)
+	}()
+
 	if strings.TrimSpace(connectionID) == "" {
-		return s.mapError(fmt.Errorf("core: connection id is required"))
+		err = s.mapError(fmt.Errorf("core: connection id is required"))
+		return err
 	}
 	if s.credentialStore != nil {
-		if err := s.credentialStore.RevokeActive(ctx, connectionID, reason); err != nil {
-			return s.mapError(err)
+		if err = s.credentialStore.RevokeActive(ctx, connectionID, reason); err != nil {
+			err = s.mapError(err)
+			return err
 		}
 	}
 	if s.connectionStore != nil {
-		if err := s.connectionStore.UpdateStatus(ctx, connectionID, string(ConnectionStatusDisconnected), reason); err != nil {
-			return s.mapError(err)
+		if err = s.connectionStore.UpdateStatus(ctx, connectionID, string(ConnectionStatusDisconnected), reason); err != nil {
+			err = s.mapError(err)
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequest) (CapabilityResult, error) {
+func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequest) (result CapabilityResult, err error) {
+	startedAt := time.Now().UTC()
+	fields := map[string]any{
+		"provider_id": req.ProviderID,
+		"scope_type":  req.Scope.Type,
+		"scope_id":    req.Scope.ID,
+		"capability":  req.Capability,
+	}
+	defer func() {
+		if result.Connection.ID != "" {
+			fields["connection_id"] = result.Connection.ID
+		}
+		if result.Allowed {
+			fields["decision"] = "allowed"
+		} else {
+			fields["decision"] = "blocked"
+		}
+		s.observeOperation(ctx, startedAt, "invoke_capability", err, fields)
+	}()
+
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
 		return CapabilityResult{}, err
@@ -612,19 +703,22 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 			fmt.Sprintf("capability %q is not supported by provider %q", req.Capability, req.ProviderID),
 			goerrors.CategoryOperation,
 		).WithTextCode("SERVICE_CAPABILITY_UNSUPPORTED")
-		return CapabilityResult{}, wrapped.WithMetadata(map[string]any{"provider_id": req.ProviderID, "capability": req.Capability})
+		err = wrapped.WithMetadata(map[string]any{"provider_id": req.ProviderID, "capability": req.Capability})
+		return CapabilityResult{}, err
 	}
 
 	resolution, err := s.resolveConnection(ctx, req.ProviderID, req.Scope)
 	if err != nil {
-		return CapabilityResult{}, s.mapError(err)
+		err = s.mapError(err)
+		return CapabilityResult{}, err
 	}
 	if resolution.Outcome == ConnectionResolutionNotFound {
-		return CapabilityResult{
+		result = CapabilityResult{
 			Allowed: false,
 			Mode:    CapabilityDeniedBehaviorBlock,
 			Reason:  resolution.Reason,
-		}, nil
+		}
+		return result, nil
 	}
 
 	decision := PermissionDecision{
@@ -635,7 +729,8 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 	if s.permissionEvaluator != nil {
 		decision, err = s.permissionEvaluator.EvaluateCapability(ctx, resolution.Connection.ID, req.Capability)
 		if err != nil {
-			return CapabilityResult{}, s.mapError(err)
+			err = s.mapError(err)
+			return CapabilityResult{}, err
 		}
 		if decision.Mode == "" {
 			decision.Mode = descriptor.DeniedBehavior
@@ -649,13 +744,14 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 		metadata["missing_grants"] = append([]string(nil), decision.MissingGrants...)
 	}
 
-	return CapabilityResult{
+	result = CapabilityResult{
 		Allowed:    decision.Allowed,
 		Mode:       decision.Mode,
 		Reason:     decision.Reason,
 		Connection: resolution.Connection,
 		Metadata:   metadata,
-	}, nil
+	}
+	return result, nil
 }
 
 func (s *Service) resolveConnection(ctx context.Context, providerID string, requested ScopeRef) (ConnectionResolution, error) {

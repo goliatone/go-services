@@ -444,6 +444,11 @@ type LoggerProvider = glog.LoggerProvider
 
 type FieldsLogger = glog.FieldsLogger
 
+type MetricsRecorder interface {
+	IncCounter(ctx context.Context, name string, value int64, tags map[string]string)
+	ObserveHistogram(ctx context.Context, name string, value float64, tags map[string]string)
+}
+
 type Signer interface {
 	Sign(ctx context.Context, req *http.Request, cred ActiveCredential) error
 }

@@ -31,6 +31,7 @@ type serviceBuilder struct {
 	runtimeConfig       Config
 	logger              Logger
 	loggerProvider      LoggerProvider
+	metricsRecorder     MetricsRecorder
 	errorFactory        ErrorFactory
 	errorMapper         ErrorMapper
 	persistenceClient   any
@@ -62,6 +63,12 @@ func WithLogger(logger Logger) Option {
 func WithLoggerProvider(provider LoggerProvider) Option {
 	return func(b *serviceBuilder) {
 		b.loggerProvider = provider
+	}
+}
+
+func WithMetricsRecorder(recorder MetricsRecorder) Option {
+	return func(b *serviceBuilder) {
+		b.metricsRecorder = recorder
 	}
 }
 
@@ -179,6 +186,7 @@ func defaultServiceBuilder(runtime Config) serviceBuilder {
 		runtimeConfig:   runtime,
 		loggerProvider:  loggerProvider,
 		logger:          logger,
+		metricsRecorder: NopMetricsRecorder{},
 		errorFactory:    goerrors.New,
 		errorMapper:     defaultErrorMapper,
 		configProvider:  NewCfgxConfigProvider(nil),
