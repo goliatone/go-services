@@ -59,8 +59,11 @@ func (e *GrantPermissionEvaluator) EvaluateCapability(
 
 	granted := map[string]struct{}{}
 	if e.GrantStore != nil {
-		snapshot, snapshotErr := e.GrantStore.GetLatestSnapshot(ctx, connectionID)
-		if snapshotErr == nil {
+		snapshot, found, snapshotErr := e.GrantStore.GetLatestSnapshot(ctx, connectionID)
+		if snapshotErr != nil {
+			return PermissionDecision{}, snapshotErr
+		}
+		if found {
 			for _, grant := range normalizeGrants(snapshot.Granted) {
 				granted[grant] = struct{}{}
 			}

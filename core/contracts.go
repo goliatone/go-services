@@ -99,6 +99,8 @@ type CreateConnectionInput struct {
 type SaveCredentialInput struct {
 	ConnectionID      string
 	EncryptedPayload  []byte
+	PayloadFormat     string
+	PayloadVersion    int
 	TokenType         string
 	RequestedScopes   []string
 	GrantedScopes     []string
@@ -196,9 +198,10 @@ type AuthBeginRequest struct {
 }
 
 type AuthBeginResponse struct {
-	URL      string
-	State    string
-	Metadata map[string]any
+	URL             string
+	State           string
+	RequestedGrants []string
+	Metadata        map[string]any
 }
 
 type AuthCompleteRequest struct {
@@ -210,8 +213,11 @@ type AuthCompleteRequest struct {
 }
 
 type AuthCompleteResponse struct {
-	Credential ActiveCredential
-	Metadata   map[string]any
+	ExternalAccountID string
+	Credential        ActiveCredential
+	RequestedGrants   []string
+	GrantedGrants     []string
+	Metadata          map[string]any
 }
 
 type TransportRequest struct {
@@ -403,6 +409,21 @@ type Provider interface {
 	BeginAuth(ctx context.Context, req BeginAuthRequest) (BeginAuthResponse, error)
 	CompleteAuth(ctx context.Context, req CompleteAuthRequest) (CompleteAuthResponse, error)
 	Refresh(ctx context.Context, cred ActiveCredential) (RefreshResult, error)
+}
+
+const (
+	AuthKindOAuth2AuthCode         = "oauth2_auth_code"
+	AuthKindOAuth2ClientCredential = "oauth2_client_credentials"
+	AuthKindServiceAccountJWT      = "service_account_jwt"
+	AuthKindAPIKey                 = "api_key"
+	AuthKindPAT                    = "pat"
+	AuthKindHMAC                   = "hmac"
+	AuthKindMTLS                   = "mtls"
+	AuthKindBasic                  = "basic"
+)
+
+type AuthStrategyProvider interface {
+	AuthStrategy() AuthStrategy
 }
 
 type Registry interface {
@@ -678,8 +699,22 @@ type NotificationDispatchLedger interface {
 
 type GrantStore interface {
 	SaveSnapshot(ctx context.Context, in SaveGrantSnapshotInput) error
-	GetLatestSnapshot(ctx context.Context, connectionID string) (GrantSnapshot, error)
+	GetLatestSnapshot(ctx context.Context, connectionID string) (GrantSnapshot, bool, error)
 	AppendEvent(ctx context.Context, in AppendGrantEventInput) error
+}
+
+type GrantStoreTransactional interface {
+	SaveSnapshotAndEvent(
+		ctx context.Context,
+		snapshot SaveGrantSnapshotInput,
+		event *AppendGrantEventInput,
+	) error
+}
+
+type IdempotencyClaimStore interface {
+	Claim(ctx context.Context, key string, lease time.Duration) (claimID string, accepted bool, err error)
+	Complete(ctx context.Context, claimID string) error
+	Fail(ctx context.Context, claimID string, cause error, retryAt time.Time) error
 }
 
 type PermissionEvaluator interface {

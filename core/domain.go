@@ -130,6 +130,8 @@ type Credential struct {
 	ConnectionID     string
 	Version          int
 	EncryptedPayload []byte
+	PayloadFormat    string
+	PayloadVersion   int
 	TokenType        string
 	RequestedScopes  []string
 	GrantedScopes    []string

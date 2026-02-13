@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ type Service struct {
 	metricsRecorder         MetricsRecorder
 	errorFactory            ErrorFactory
 	errorMapper             ErrorMapper
+	secretProvider          SecretProvider
 	persistenceClient       any
 	repositoryFactory       any
 	configProvider          ConfigProvider
@@ -38,6 +40,7 @@ type Service struct {
 	syncCursorStore         SyncCursorStore
 	grantStore              GrantStore
 	permissionEvaluator     PermissionEvaluator
+	credentialCodec         CredentialCodec
 	strictPolicy            InheritancePolicy
 	inheritancePolicy       InheritancePolicy
 }
@@ -48,6 +51,7 @@ type ServiceDependencies struct {
 	MetricsRecorder     MetricsRecorder
 	ErrorFactory        ErrorFactory
 	ErrorMapper         ErrorMapper
+	SecretProvider      SecretProvider
 	PersistenceClient   any
 	RepositoryFactory   any
 	ConfigProvider      ConfigProvider
@@ -63,6 +67,7 @@ type ServiceDependencies struct {
 	SyncCursorStore     SyncCursorStore
 	GrantStore          GrantStore
 	PermissionEvaluator PermissionEvaluator
+	CredentialCodec     CredentialCodec
 	InheritancePolicy   InheritancePolicy
 }
 
@@ -115,6 +120,9 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 	}
 	if builder.signer == nil {
 		builder.signer = BearerTokenSigner{}
+	}
+	if builder.credentialCodec == nil {
+		builder.credentialCodec = JSONCredentialCodec{}
 	}
 
 	defaults := DefaultConfig()
@@ -181,6 +189,7 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		metricsRecorder:         builder.metricsRecorder,
 		errorFactory:            builder.errorFactory,
 		errorMapper:             builder.errorMapper,
+		secretProvider:          builder.secretProvider,
 		persistenceClient:       builder.persistenceClient,
 		repositoryFactory:       builder.repositoryFactory,
 		configProvider:          builder.configProvider,
@@ -196,6 +205,7 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		syncCursorStore:         builder.syncCursorStore,
 		grantStore:              builder.grantStore,
 		permissionEvaluator:     builder.permissionEvaluator,
+		credentialCodec:         builder.credentialCodec,
 		strictPolicy:            strict,
 		inheritancePolicy:       inheritancePolicy,
 	}, nil
@@ -236,6 +246,7 @@ func (s *Service) Dependencies() ServiceDependencies {
 		MetricsRecorder:     s.metricsRecorder,
 		ErrorFactory:        s.errorFactory,
 		ErrorMapper:         s.errorMapper,
+		SecretProvider:      s.secretProvider,
 		PersistenceClient:   s.persistenceClient,
 		RepositoryFactory:   s.repositoryFactory,
 		ConfigProvider:      s.configProvider,
@@ -251,6 +262,7 @@ func (s *Service) Dependencies() ServiceDependencies {
 		SyncCursorStore:     s.syncCursorStore,
 		GrantStore:          s.grantStore,
 		PermissionEvaluator: s.permissionEvaluator,
+		CredentialCodec:     s.credentialCodec,
 		InheritancePolicy:   s.inheritancePolicy,
 	}
 }
@@ -270,8 +282,18 @@ func (s *Service) Connect(ctx context.Context, req ConnectRequest) (response Beg
 		err = s.mapError(err)
 		return BeginAuthResponse{}, err
 	}
+	provider, err := s.resolveProvider(req.ProviderID)
+	if err != nil {
+		return BeginAuthResponse{}, err
+	}
+	strategy := s.resolveAuthStrategy(provider)
+	if strategy == nil {
+		err = s.mapError(fmt.Errorf("core: auth strategy is not configured"))
+		return BeginAuthResponse{}, err
+	}
+
 	state := strings.TrimSpace(req.State)
-	if state == "" {
+	if state == "" && strategyRequiresCallbackState(strategy) {
 		generated, generateErr := generateOAuthState()
 		if generateErr != nil {
 			err = s.mapError(generateErr)
@@ -280,33 +302,37 @@ func (s *Service) Connect(ctx context.Context, req ConnectRequest) (response Beg
 		state = generated
 	}
 
-	provider, err := s.resolveProvider(req.ProviderID)
-	if err != nil {
-		return BeginAuthResponse{}, err
-	}
-	response, err = provider.BeginAuth(ctx, BeginAuthRequest{
-		ProviderID:      req.ProviderID,
-		Scope:           req.Scope,
-		RedirectURI:     req.RedirectURI,
-		State:           state,
-		RequestedGrants: req.RequestedGrants,
-		Metadata:        req.Metadata,
+	begin, err := strategy.Begin(ctx, AuthBeginRequest{
+		Scope:        req.Scope,
+		RedirectURI:  req.RedirectURI,
+		State:        state,
+		RequestedRaw: append([]string(nil), req.RequestedGrants...),
+		Metadata:     req.Metadata,
 	})
 	if err != nil {
 		err = s.mapError(err)
 		return BeginAuthResponse{}, err
 	}
+	response = BeginAuthResponse{
+		URL:             begin.URL,
+		State:           begin.State,
+		RequestedGrants: append([]string(nil), begin.RequestedGrants...),
+		Metadata:        copyAnyMap(begin.Metadata),
+	}
+	if len(response.RequestedGrants) == 0 {
+		response.RequestedGrants = append([]string(nil), req.RequestedGrants...)
+	}
 	if strings.TrimSpace(response.State) == "" {
 		response.State = state
 	}
 
-	if s.oauthStateStore != nil {
+	if s.oauthStateStore != nil && strategyRequiresCallbackState(strategy) {
 		saveErr := s.oauthStateStore.Save(ctx, OAuthStateRecord{
 			State:           response.State,
 			ProviderID:      req.ProviderID,
 			Scope:           req.Scope,
 			RedirectURI:     req.RedirectURI,
-			RequestedGrants: append([]string(nil), req.RequestedGrants...),
+			RequestedGrants: append([]string(nil), response.RequestedGrants...),
 			Metadata:        copyAnyMap(req.Metadata),
 			CreatedAt:       time.Now().UTC(),
 		})
@@ -344,7 +370,7 @@ func (s *Service) StartReconsent(ctx context.Context, req ReconsentRequest) (Beg
 
 	requested := append([]string(nil), req.RequestedGrants...)
 	if len(requested) == 0 && s.grantStore != nil {
-		if snapshot, snapshotErr := s.grantStore.GetLatestSnapshot(ctx, connectionID); snapshotErr == nil {
+		if snapshot, found, snapshotErr := s.grantStore.GetLatestSnapshot(ctx, connectionID); snapshotErr == nil && found {
 			requested = append([]string(nil), snapshot.Requested...)
 		}
 	}
@@ -392,25 +418,42 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		err = s.mapError(err)
 		return CallbackCompletion{}, err
 	}
-	if err = s.validateOAuthCallbackState(ctx, req); err != nil {
-		err = s.mapError(err)
-		return CallbackCompletion{}, err
-	}
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
 		return CallbackCompletion{}, err
 	}
-	result, err := provider.CompleteAuth(ctx, req)
+	strategy := s.resolveAuthStrategy(provider)
+	if strategy == nil {
+		err = s.mapError(fmt.Errorf("core: auth strategy is not configured"))
+		return CallbackCompletion{}, err
+	}
+	if strategyRequiresCallbackState(strategy) {
+		if err = s.validateOAuthCallbackState(ctx, req); err != nil {
+			err = s.mapError(err)
+			return CallbackCompletion{}, err
+		}
+	}
+	result, err := strategy.Complete(ctx, AuthCompleteRequest{
+		Scope:       req.Scope,
+		Code:        req.Code,
+		State:       req.State,
+		RedirectURI: req.RedirectURI,
+		Metadata:    copyAnyMap(req.Metadata),
+	})
 	if err != nil {
 		err = s.mapError(err)
 		return CallbackCompletion{}, err
+	}
+	externalAccountID := strings.TrimSpace(result.ExternalAccountID)
+	if externalAccountID == "" {
+		externalAccountID = fmt.Sprintf("%s:%s:%s", req.ProviderID, req.Scope.Type, req.Scope.ID)
 	}
 
 	connection := Connection{
 		ProviderID:        req.ProviderID,
 		ScopeType:         req.Scope.Type,
 		ScopeID:           req.Scope.ID,
-		ExternalAccountID: result.ExternalAccountID,
+		ExternalAccountID: externalAccountID,
 		Status:            ConnectionStatusActive,
 	}
 	wasNeedsReconsent := false
@@ -463,16 +506,25 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 	}
 
 	if s.credentialStore != nil {
+		encryptedPayload, keyID, keyVersion, payloadFormat, payloadVersion, encryptErr := s.encryptCredentialPayload(ctx, result.Credential)
+		if encryptErr != nil {
+			err = s.mapError(encryptErr)
+			return CallbackCompletion{}, err
+		}
 		credential, err = s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
-			ConnectionID:     connection.ID,
-			EncryptedPayload: credentialPayloadFromActive(result.Credential),
-			TokenType:        result.Credential.TokenType,
-			RequestedScopes:  append([]string(nil), result.Credential.RequestedScopes...),
-			GrantedScopes:    append([]string(nil), result.Credential.GrantedScopes...),
-			ExpiresAt:        result.Credential.ExpiresAt,
-			Refreshable:      result.Credential.Refreshable,
-			RotatesAt:        result.Credential.RotatesAt,
-			Status:           CredentialStatusActive,
+			ConnectionID:      connection.ID,
+			EncryptedPayload:  encryptedPayload,
+			PayloadFormat:     payloadFormat,
+			PayloadVersion:    payloadVersion,
+			TokenType:         result.Credential.TokenType,
+			RequestedScopes:   append([]string(nil), result.Credential.RequestedScopes...),
+			GrantedScopes:     append([]string(nil), result.Credential.GrantedScopes...),
+			ExpiresAt:         result.Credential.ExpiresAt,
+			Refreshable:       result.Credential.Refreshable,
+			RotatesAt:         result.Credential.RotatesAt,
+			Status:            CredentialStatusActive,
+			EncryptionKeyID:   keyID,
+			EncryptionVersion: keyVersion,
 		})
 		if err != nil {
 			err = s.mapError(err)
@@ -480,12 +532,21 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		}
 	}
 
+	requestedGrants := append([]string(nil), result.RequestedGrants...)
+	if len(requestedGrants) == 0 {
+		requestedGrants = append([]string(nil), result.Credential.RequestedScopes...)
+	}
+	grantedGrants := append([]string(nil), result.GrantedGrants...)
+	if len(grantedGrants) == 0 {
+		grantedGrants = append([]string(nil), result.Credential.GrantedScopes...)
+	}
+
 	_, delta, grantErr := s.reconcileGrantSnapshot(
 		ctx,
 		provider,
 		connection.ID,
-		resolveRequestedGrants(result),
-		resolveGrantedGrants(result),
+		requestedGrants,
+		grantedGrants,
 		req.Metadata,
 	)
 	if grantErr != nil {
@@ -571,6 +632,11 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 	if err != nil {
 		return RefreshResult{}, err
 	}
+	strategy := s.resolveAuthStrategy(provider)
+	if strategy == nil {
+		err = s.mapError(fmt.Errorf("core: auth strategy is not configured"))
+		return RefreshResult{}, err
+	}
 
 	activeCred := ActiveCredential{}
 	if req.Credential != nil {
@@ -581,13 +647,17 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 			err = s.mapError(loadErr)
 			return RefreshResult{}, err
 		}
-		activeCred = credentialToActive(stored)
+		activeCred, err = s.credentialToActive(ctx, stored)
+		if err != nil {
+			err = s.mapError(err)
+			return RefreshResult{}, err
+		}
 	} else {
 		err = s.mapError(fmt.Errorf("core: refresh requires credential input or credential store"))
 		return RefreshResult{}, err
 	}
 
-	result, err = provider.Refresh(ctx, activeCred)
+	result, err = strategy.Refresh(ctx, activeCred)
 	if err != nil {
 		err = s.mapError(err)
 		return RefreshResult{}, err
@@ -595,16 +665,25 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 
 	shouldPersist := shouldPersistRefreshedCredential(activeCred, result.Credential)
 	if s.credentialStore != nil && shouldPersist {
+		encryptedPayload, keyID, keyVersion, payloadFormat, payloadVersion, encryptErr := s.encryptCredentialPayload(ctx, result.Credential)
+		if encryptErr != nil {
+			err = s.mapError(encryptErr)
+			return RefreshResult{}, err
+		}
 		_, saveErr := s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
-			ConnectionID:     req.ConnectionID,
-			EncryptedPayload: credentialPayloadFromActive(result.Credential),
-			TokenType:        result.Credential.TokenType,
-			RequestedScopes:  append([]string(nil), result.Credential.RequestedScopes...),
-			GrantedScopes:    append([]string(nil), result.Credential.GrantedScopes...),
-			ExpiresAt:        result.Credential.ExpiresAt,
-			Refreshable:      result.Credential.Refreshable,
-			RotatesAt:        result.Credential.RotatesAt,
-			Status:           CredentialStatusActive,
+			ConnectionID:      req.ConnectionID,
+			EncryptedPayload:  encryptedPayload,
+			PayloadFormat:     payloadFormat,
+			PayloadVersion:    payloadVersion,
+			TokenType:         result.Credential.TokenType,
+			RequestedScopes:   append([]string(nil), result.Credential.RequestedScopes...),
+			GrantedScopes:     append([]string(nil), result.Credential.GrantedScopes...),
+			ExpiresAt:         result.Credential.ExpiresAt,
+			Refreshable:       result.Credential.Refreshable,
+			RotatesAt:         result.Credential.RotatesAt,
+			Status:            CredentialStatusActive,
+			EncryptionKeyID:   keyID,
+			EncryptionVersion: keyVersion,
 		})
 		if saveErr != nil {
 			err = s.mapError(saveErr)
@@ -828,44 +907,52 @@ func findCapabilityDescriptor(capabilities []CapabilityDescriptor, capability st
 	return CapabilityDescriptor{}, false
 }
 
-func credentialToActive(credential Credential) ActiveCredential {
+func (s *Service) credentialToActive(ctx context.Context, credential Credential) (ActiveCredential, error) {
 	active := ActiveCredential{
-		ConnectionID:    credential.ConnectionID,
-		TokenType:       credential.TokenType,
-		RequestedScopes: append([]string(nil), credential.RequestedScopes...),
-		GrantedScopes:   append([]string(nil), credential.GrantedScopes...),
-		Refreshable:     credential.Refreshable,
-		AccessToken:     strings.TrimSpace(string(credential.EncryptedPayload)),
+		ConnectionID: credential.ConnectionID,
 	}
-	if !credential.ExpiresAt.IsZero() {
+	if len(credential.EncryptedPayload) > 0 {
+		if s == nil || s.secretProvider == nil {
+			return ActiveCredential{}, fmt.Errorf("core: secret provider is required to decrypt credential payloads")
+		}
+		decrypted, err := s.secretProvider.Decrypt(ctx, credential.EncryptedPayload)
+		if err != nil {
+			return ActiveCredential{}, fmt.Errorf("core: decrypt credential payload: %w", err)
+		}
+		codec, codecErr := s.codecForCredential(credential)
+		if codecErr != nil {
+			return ActiveCredential{}, codecErr
+		}
+		decoded, decodeErr := codec.Decode(decrypted)
+		if decodeErr != nil {
+			return ActiveCredential{}, decodeErr
+		}
+		active = decoded
+	}
+	if strings.TrimSpace(active.ConnectionID) == "" {
+		active.ConnectionID = credential.ConnectionID
+	}
+	if strings.TrimSpace(active.TokenType) == "" {
+		active.TokenType = credential.TokenType
+	}
+	if len(active.RequestedScopes) == 0 {
+		active.RequestedScopes = append([]string(nil), credential.RequestedScopes...)
+	}
+	if len(active.GrantedScopes) == 0 {
+		active.GrantedScopes = append([]string(nil), credential.GrantedScopes...)
+	}
+	if credential.Refreshable && !active.Refreshable {
+		active.Refreshable = true
+	}
+	if active.ExpiresAt == nil && !credential.ExpiresAt.IsZero() {
 		expires := credential.ExpiresAt
 		active.ExpiresAt = &expires
 	}
-	if !credential.RotatesAt.IsZero() {
+	if active.RotatesAt == nil && !credential.RotatesAt.IsZero() {
 		rotates := credential.RotatesAt
 		active.RotatesAt = &rotates
 	}
-	return active
-}
-
-func resolveRequestedGrants(result CompleteAuthResponse) []string {
-	if len(result.RequestedGrants) > 0 {
-		return append([]string(nil), result.RequestedGrants...)
-	}
-	if len(result.Credential.RequestedScopes) > 0 {
-		return append([]string(nil), result.Credential.RequestedScopes...)
-	}
-	return []string{}
-}
-
-func resolveGrantedGrants(result CompleteAuthResponse) []string {
-	if len(result.GrantedGrants) > 0 {
-		return append([]string(nil), result.GrantedGrants...)
-	}
-	if len(result.Credential.GrantedScopes) > 0 {
-		return append([]string(nil), result.Credential.GrantedScopes...)
-	}
-	return []string{}
+	return active, nil
 }
 
 func resolveRefreshGrantedGrants(result RefreshResult) []string {
@@ -934,13 +1021,78 @@ func sameTimePointer(left, right *time.Time) bool {
 	return left.UTC().Equal(right.UTC())
 }
 
-func credentialPayloadFromActive(credential ActiveCredential) []byte {
-	token := strings.TrimSpace(credential.AccessToken)
-	if token == "" {
-		token = strings.TrimSpace(credential.RefreshToken)
+type secretProviderMetadata interface {
+	Metadata() (string, int)
+}
+
+func (s *Service) encryptCredentialPayload(
+	ctx context.Context,
+	credential ActiveCredential,
+) ([]byte, string, int, string, int, error) {
+	if s == nil || s.secretProvider == nil {
+		return nil, "", 0, "", 0, fmt.Errorf("core: secret provider is required to persist credential payloads")
 	}
-	if token == "" {
-		token = "{}"
+	codec := s.credentialCodec
+	if codec == nil {
+		codec = JSONCredentialCodec{}
 	}
-	return []byte(token)
+	plaintext, codecErr := codec.Encode(credential)
+	if codecErr != nil {
+		return nil, "", 0, "", 0, codecErr
+	}
+	if len(plaintext) == 0 {
+		return nil, "", 0, "", 0, fmt.Errorf("core: credential payload codec encoded an empty payload")
+	}
+	encrypted, err := s.secretProvider.Encrypt(ctx, plaintext)
+	if err != nil {
+		return nil, "", 0, "", 0, fmt.Errorf("core: encrypt credential payload: %w", err)
+	}
+	if len(encrypted) == 0 {
+		return nil, "", 0, "", 0, fmt.Errorf("core: encrypted credential payload is empty")
+	}
+	if bytes.Equal(encrypted, plaintext) {
+		return nil, "", 0, "", 0, fmt.Errorf("core: encrypted credential payload is not encrypted")
+	}
+
+	keyID := "managed"
+	version := 1
+	if metadataProvider, ok := s.secretProvider.(secretProviderMetadata); ok {
+		id, keyVersion := metadataProvider.Metadata()
+		if strings.TrimSpace(id) != "" {
+			keyID = strings.TrimSpace(id)
+		}
+		if keyVersion > 0 {
+			version = keyVersion
+		}
+	}
+
+	return encrypted, keyID, version, codec.Format(), codec.Version(), nil
+}
+
+func (s *Service) codecForCredential(credential Credential) (CredentialCodec, error) {
+	format := strings.ToLower(strings.TrimSpace(credential.PayloadFormat))
+	version := credential.PayloadVersion
+	if format == "" {
+		format = CredentialPayloadFormatLegacyToken
+	}
+	if version <= 0 {
+		version = CredentialPayloadVersionV1
+	}
+	if s != nil && s.credentialCodec != nil {
+		primaryFormat := strings.ToLower(strings.TrimSpace(s.credentialCodec.Format()))
+		if format == primaryFormat {
+			if version != s.credentialCodec.Version() {
+				return nil, fmt.Errorf("core: unsupported credential payload version %d for format %q", version, format)
+			}
+			return s.credentialCodec, nil
+		}
+	}
+	legacy := LegacyTokenCredentialCodec{}
+	if format == legacy.Format() {
+		if version != legacy.Version() {
+			return nil, fmt.Errorf("core: unsupported credential payload version %d for format %q", version, format)
+		}
+		return legacy, nil
+	}
+	return nil, fmt.Errorf("core: unsupported credential payload format %q", format)
 }

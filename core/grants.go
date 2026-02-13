@@ -103,39 +103,53 @@ func (s *Service) reconcileGrantSnapshot(
 		granted = normalizeGrants(normalized)
 	}
 
-	previous, err := s.grantStore.GetLatestSnapshot(ctx, connectionID)
-	hasPrevious := err == nil
+	previous, hasPrevious, err := s.grantStore.GetLatestSnapshot(ctx, connectionID)
+	if err != nil {
+		return GrantSnapshot{}, GrantDelta{}, err
+	}
 	version := 1
 	if hasPrevious {
 		version = previous.Version + 1
 	}
 
 	now := time.Now().UTC()
-	if saveErr := s.grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
+	snapshotInput := SaveGrantSnapshotInput{
 		ConnectionID: connectionID,
 		Version:      version,
 		Requested:    requested,
 		Granted:      granted,
 		CapturedAt:   now,
 		Metadata:     copyAnyMap(metadata),
-	}); saveErr != nil {
-		return GrantSnapshot{}, GrantDelta{}, saveErr
 	}
 
-	delta := ComputeGrantDelta(previous.Granted, granted)
-	if !hasPrevious {
-		delta = ComputeGrantDelta(nil, granted)
+	delta := ComputeGrantDelta(nil, granted)
+	if hasPrevious {
+		delta = ComputeGrantDelta(previous.Granted, granted)
 	}
+	var eventInput *AppendGrantEventInput
 	if delta.EventType != "" {
-		if appendErr := s.grantStore.AppendEvent(ctx, AppendGrantEventInput{
+		eventInput = &AppendGrantEventInput{
 			ConnectionID: connectionID,
 			EventType:    delta.EventType,
 			Added:        delta.Added,
 			Removed:      delta.Removed,
 			OccurredAt:   now,
 			Metadata:     copyAnyMap(metadata),
-		}); appendErr != nil {
-			return GrantSnapshot{}, GrantDelta{}, appendErr
+		}
+	}
+
+	if transactionalStore, ok := s.grantStore.(GrantStoreTransactional); ok {
+		if saveErr := transactionalStore.SaveSnapshotAndEvent(ctx, snapshotInput, eventInput); saveErr != nil {
+			return GrantSnapshot{}, GrantDelta{}, saveErr
+		}
+	} else {
+		if saveErr := s.grantStore.SaveSnapshot(ctx, snapshotInput); saveErr != nil {
+			return GrantSnapshot{}, GrantDelta{}, saveErr
+		}
+		if eventInput != nil {
+			if appendErr := s.grantStore.AppendEvent(ctx, *eventInput); appendErr != nil {
+				return GrantSnapshot{}, GrantDelta{}, appendErr
+			}
 		}
 	}
 

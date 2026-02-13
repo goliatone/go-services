@@ -34,6 +34,7 @@ type serviceBuilder struct {
 	metricsRecorder     MetricsRecorder
 	errorFactory        ErrorFactory
 	errorMapper         ErrorMapper
+	secretProvider      SecretProvider
 	persistenceClient   any
 	repositoryFactory   any
 	configProvider      ConfigProvider
@@ -50,6 +51,7 @@ type serviceBuilder struct {
 	syncCursorStore     SyncCursorStore
 	grantStore          GrantStore
 	permissionEvaluator PermissionEvaluator
+	credentialCodec     CredentialCodec
 }
 
 type Option func(*serviceBuilder)
@@ -81,6 +83,12 @@ func WithErrorFactory(factory ErrorFactory) Option {
 func WithErrorMapper(mapper ErrorMapper) Option {
 	return func(b *serviceBuilder) {
 		b.errorMapper = mapper
+	}
+}
+
+func WithSecretProvider(provider SecretProvider) Option {
+	return func(b *serviceBuilder) {
+		b.secretProvider = provider
 	}
 }
 
@@ -180,6 +188,12 @@ func WithPermissionEvaluator(evaluator PermissionEvaluator) Option {
 	}
 }
 
+func WithCredentialCodec(codec CredentialCodec) Option {
+	return func(b *serviceBuilder) {
+		b.credentialCodec = codec
+	}
+}
+
 func defaultServiceBuilder(runtime Config) serviceBuilder {
 	loggerProvider, logger := glog.Resolve("services", nil, nil)
 	return serviceBuilder{
@@ -192,6 +206,7 @@ func defaultServiceBuilder(runtime Config) serviceBuilder {
 		configProvider:  NewCfgxConfigProvider(nil),
 		optionsResolver: GoOptionsResolver{},
 		registry:        NewProviderRegistry(),
+		credentialCodec: JSONCredentialCodec{},
 	}
 }
 
