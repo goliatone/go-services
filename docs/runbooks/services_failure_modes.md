@@ -43,14 +43,18 @@ This runbook defines detection, triage, mitigation, and recovery actions for com
 - Repeated delivery identifiers for same provider channel.
 
 ### Immediate Actions
-1. Ensure dedupe ledger is healthy and writable.
-2. Validate signature verification remains enabled.
-3. Confirm replayed deliveries are acknowledged without duplicate side effects.
+1. Ensure delivery claim ledger is healthy and writable.
+2. Validate state transitions in `service_webhook_deliveries`:
+   `pending|retry_ready -> processing -> processed|dead`.
+3. For stuck `processing` rows, verify lease/retry windows so they can re-enter `retry_ready`.
+4. Validate signature verification remains enabled.
+5. Confirm replayed deliveries are acknowledged without duplicate side effects.
 
 ### Recovery
 1. Audit dedupe TTL/window configuration.
 2. Tune optional coalescing/debouncing windows for bursty sources.
 3. Re-run targeted webhook integration tests if config changed.
+4. Verify dead-letter transitions only occur after configured `MaxAttempts`.
 
 ## Outbox Lag / Dispatcher Backlog
 
