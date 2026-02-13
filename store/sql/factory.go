@@ -12,8 +12,11 @@ import (
 type RepositoryFactory struct {
 	db *bun.DB
 
-	connectionStore *ConnectionStore
-	credentialStore *CredentialStore
+	connectionStore   *ConnectionStore
+	credentialStore   *CredentialStore
+	subscriptionStore *SubscriptionStore
+	syncCursorStore   *SyncCursorStore
+	syncJobStore      *SyncJobStore
 }
 
 func NewRepositoryFactory() *RepositoryFactory {
@@ -77,6 +80,27 @@ func (f *RepositoryFactory) DB() *bun.DB {
 	return f.db
 }
 
+func (f *RepositoryFactory) SubscriptionStore() core.SubscriptionStore {
+	if f == nil {
+		return nil
+	}
+	return f.subscriptionStore
+}
+
+func (f *RepositoryFactory) SyncCursorStore() core.SyncCursorStore {
+	if f == nil {
+		return nil
+	}
+	return f.syncCursorStore
+}
+
+func (f *RepositoryFactory) SyncJobStore() *SyncJobStore {
+	if f == nil {
+		return nil
+	}
+	return f.syncJobStore
+}
+
 func (f *RepositoryFactory) initStores() error {
 	connectionRepo := repository.NewRepository[*connectionRecord](f.db, connectionHandlers())
 	if validator, ok := connectionRepo.(repository.Validator); ok {
@@ -100,6 +124,21 @@ func (f *RepositoryFactory) initStores() error {
 		db:   f.db,
 		repo: credentialRepo,
 	}
+	subscriptionStore, err := NewSubscriptionStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.subscriptionStore = subscriptionStore
+	syncCursorStore, err := NewSyncCursorStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.syncCursorStore = syncCursorStore
+	syncJobStore, err := NewSyncJobStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.syncJobStore = syncJobStore
 
 	return nil
 }

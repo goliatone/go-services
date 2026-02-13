@@ -75,3 +75,70 @@ type grantEventRecord struct {
 	Metadata        map[string]any `bun:"metadata,type:jsonb,notnull"`
 	CreatedAt       time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
+
+type subscriptionRecord struct {
+	bun.BaseModel `bun:"table:service_subscriptions,alias:ss"`
+
+	ID                   string         `bun:"id,pk"`
+	ConnectionID         string         `bun:"connection_id,notnull"`
+	ProviderID           string         `bun:"provider_id,notnull"`
+	ResourceType         string         `bun:"resource_type,notnull"`
+	ResourceID           string         `bun:"resource_id,notnull"`
+	ChannelID            string         `bun:"channel_id,notnull"`
+	RemoteSubscriptionID string         `bun:"remote_subscription_id"`
+	CallbackURL          string         `bun:"callback_url,notnull"`
+	VerificationTokenRef string         `bun:"verification_token_ref,notnull"`
+	Status               string         `bun:"status,notnull"`
+	ExpiresAt            *time.Time     `bun:"expires_at,nullzero"`
+	Metadata             map[string]any `bun:"metadata,type:jsonb,notnull"`
+	LastNotifiedAt       *time.Time     `bun:"last_notified_at,nullzero"`
+	CreatedAt            time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt            time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+	DeletedAt            *time.Time     `bun:"deleted_at,soft_delete"`
+}
+
+type webhookDeliveryRecord struct {
+	bun.BaseModel `bun:"table:service_webhook_deliveries,alias:swd"`
+
+	ID            string     `bun:"id,pk"`
+	ProviderID    string     `bun:"provider_id,notnull"`
+	DeliveryID    string     `bun:"delivery_id,notnull"`
+	Status        string     `bun:"status,notnull"`
+	Attempts      int        `bun:"attempts,notnull"`
+	NextAttemptAt *time.Time `bun:"next_attempt_at,nullzero"`
+	Payload       []byte     `bun:"payload"`
+	CreatedAt     time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt     time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type syncCursorRecord struct {
+	bun.BaseModel `bun:"table:service_sync_cursors,alias:ssc"`
+
+	ID           string         `bun:"id,pk"`
+	ConnectionID string         `bun:"connection_id,notnull"`
+	ProviderID   string         `bun:"provider_id,notnull"`
+	ResourceType string         `bun:"resource_type,notnull"`
+	ResourceID   string         `bun:"resource_id,notnull"`
+	Cursor       string         `bun:"cursor,notnull"`
+	Status       string         `bun:"status,notnull"`
+	LastSyncedAt *time.Time     `bun:"last_synced_at,nullzero"`
+	Metadata     map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CreatedAt    time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt    time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type syncJobRecord struct {
+	bun.BaseModel `bun:"table:service_sync_jobs,alias:ssj"`
+
+	ID            string         `bun:"id,pk"`
+	ConnectionID  string         `bun:"connection_id,notnull"`
+	ProviderID    string         `bun:"provider_id,notnull"`
+	Mode          string         `bun:"mode,notnull"`
+	Checkpoint    string         `bun:"checkpoint"`
+	Status        string         `bun:"status,notnull"`
+	Attempts      int            `bun:"attempts,notnull"`
+	NextAttemptAt *time.Time     `bun:"next_attempt_at,nullzero"`
+	Metadata      map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CreatedAt     time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt     time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}

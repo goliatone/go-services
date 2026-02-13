@@ -1,11 +1,17 @@
 package sqlstore
 
-import "github.com/goliatone/go-services/core"
+import (
+	"github.com/goliatone/go-services/core"
+	servicesync "github.com/goliatone/go-services/sync"
+)
 
 var (
 	_ core.ConnectionStore        = (*ConnectionStore)(nil)
 	_ core.CredentialStore        = (*CredentialStore)(nil)
+	_ core.SubscriptionStore      = (*SubscriptionStore)(nil)
+	_ core.SyncCursorStore        = (*SyncCursorStore)(nil)
 	_ core.GrantStore             = (*GrantStore)(nil)
+	_ servicesync.SyncJobStore    = (*SyncJobStore)(nil)
 	_ core.StoreProvider          = (*RepositoryFactory)(nil)
 	_ core.RepositoryStoreFactory = (*RepositoryFactory)(nil)
 )

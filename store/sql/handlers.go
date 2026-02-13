@@ -123,6 +123,122 @@ func grantEventHandlers() repository.ModelHandlers[*grantEventRecord] {
 	}
 }
 
+func subscriptionHandlers() repository.ModelHandlers[*subscriptionRecord] {
+	return repository.ModelHandlers[*subscriptionRecord]{
+		NewRecord: func() *subscriptionRecord {
+			return &subscriptionRecord{}
+		},
+		GetID: func(record *subscriptionRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *subscriptionRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *subscriptionRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
+func webhookDeliveryHandlers() repository.ModelHandlers[*webhookDeliveryRecord] {
+	return repository.ModelHandlers[*webhookDeliveryRecord]{
+		NewRecord: func() *webhookDeliveryRecord {
+			return &webhookDeliveryRecord{}
+		},
+		GetID: func(record *webhookDeliveryRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *webhookDeliveryRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *webhookDeliveryRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
+func syncCursorHandlers() repository.ModelHandlers[*syncCursorRecord] {
+	return repository.ModelHandlers[*syncCursorRecord]{
+		NewRecord: func() *syncCursorRecord {
+			return &syncCursorRecord{}
+		},
+		GetID: func(record *syncCursorRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *syncCursorRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *syncCursorRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
+func syncJobHandlers() repository.ModelHandlers[*syncJobRecord] {
+	return repository.ModelHandlers[*syncJobRecord]{
+		NewRecord: func() *syncJobRecord {
+			return &syncJobRecord{}
+		},
+		GetID: func(record *syncJobRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *syncJobRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *syncJobRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
 func parseUUID(value string) uuid.UUID {
 	parsed, err := uuid.Parse(strings.TrimSpace(value))
 	if err != nil {

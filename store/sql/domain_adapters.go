@@ -92,3 +92,145 @@ func (r *credentialRecord) toDomain() core.Credential {
 	}
 	return credential
 }
+
+func newSubscriptionRecord(in core.UpsertSubscriptionInput, now time.Time) *subscriptionRecord {
+	record := &subscriptionRecord{
+		ConnectionID:         in.ConnectionID,
+		ProviderID:           in.ProviderID,
+		ResourceType:         in.ResourceType,
+		ResourceID:           in.ResourceID,
+		ChannelID:            in.ChannelID,
+		RemoteSubscriptionID: in.RemoteSubscriptionID,
+		CallbackURL:          in.CallbackURL,
+		VerificationTokenRef: in.VerificationTokenRef,
+		Status:               string(in.Status),
+		Metadata:             copyAnyMap(in.Metadata),
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if in.ExpiresAt != nil {
+		value := *in.ExpiresAt
+		record.ExpiresAt = &value
+	}
+	return record
+}
+
+func (r *subscriptionRecord) toDomain() core.Subscription {
+	if r == nil {
+		return core.Subscription{}
+	}
+	subscription := core.Subscription{
+		ID:                   r.ID,
+		ConnectionID:         r.ConnectionID,
+		ProviderID:           r.ProviderID,
+		ResourceType:         r.ResourceType,
+		ResourceID:           r.ResourceID,
+		ChannelID:            r.ChannelID,
+		RemoteSubscriptionID: r.RemoteSubscriptionID,
+		CallbackURL:          r.CallbackURL,
+		VerificationTokenRef: r.VerificationTokenRef,
+		Status:               core.SubscriptionStatus(r.Status),
+		Metadata:             copyAnyMap(r.Metadata),
+		CreatedAt:            r.CreatedAt,
+		UpdatedAt:            r.UpdatedAt,
+	}
+	if r.ExpiresAt != nil {
+		subscription.ExpiresAt = *r.ExpiresAt
+	}
+	return subscription
+}
+
+func newSyncCursorRecord(in core.UpsertSyncCursorInput, now time.Time) *syncCursorRecord {
+	record := &syncCursorRecord{
+		ConnectionID: in.ConnectionID,
+		ProviderID:   in.ProviderID,
+		ResourceType: in.ResourceType,
+		ResourceID:   in.ResourceID,
+		Cursor:       in.Cursor,
+		Status:       in.Status,
+		Metadata:     copyAnyMap(in.Metadata),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if in.LastSyncedAt != nil {
+		value := *in.LastSyncedAt
+		record.LastSyncedAt = &value
+	}
+	return record
+}
+
+func (r *syncCursorRecord) toDomain() core.SyncCursor {
+	if r == nil {
+		return core.SyncCursor{}
+	}
+	cursor := core.SyncCursor{
+		ID:           r.ID,
+		ConnectionID: r.ConnectionID,
+		ProviderID:   r.ProviderID,
+		ResourceType: r.ResourceType,
+		ResourceID:   r.ResourceID,
+		Cursor:       r.Cursor,
+		Status:       r.Status,
+		Metadata:     copyAnyMap(r.Metadata),
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
+	}
+	if r.LastSyncedAt != nil {
+		cursor.LastSyncedAt = *r.LastSyncedAt
+	}
+	return cursor
+}
+
+func (r *syncJobRecord) toDomain() core.SyncJob {
+	if r == nil {
+		return core.SyncJob{}
+	}
+	job := core.SyncJob{
+		ID:           r.ID,
+		ConnectionID: r.ConnectionID,
+		ProviderID:   r.ProviderID,
+		Mode:         core.SyncJobMode(r.Mode),
+		Checkpoint:   r.Checkpoint,
+		Status:       core.SyncJobStatus(r.Status),
+		Attempts:     r.Attempts,
+		Metadata:     copyAnyMap(r.Metadata),
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
+	}
+	if r.NextAttemptAt != nil {
+		nextAttempt := *r.NextAttemptAt
+		job.NextAttemptAt = &nextAttempt
+	}
+	return job
+}
+
+func newSyncJobRecord(job core.SyncJob, now time.Time) *syncJobRecord {
+	record := &syncJobRecord{
+		ID:           job.ID,
+		ConnectionID: job.ConnectionID,
+		ProviderID:   job.ProviderID,
+		Mode:         string(job.Mode),
+		Checkpoint:   job.Checkpoint,
+		Status:       string(job.Status),
+		Attempts:     job.Attempts,
+		Metadata:     copyAnyMap(job.Metadata),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if job.NextAttemptAt != nil {
+		value := *job.NextAttemptAt
+		record.NextAttemptAt = &value
+	}
+	return record
+}
+
+func copyAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}

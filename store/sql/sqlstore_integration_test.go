@@ -3,6 +3,7 @@ package sqlstore_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"github.com/goliatone/go-services/core"
 	servicemigrations "github.com/goliatone/go-services/migrations"
 	sqlstore "github.com/goliatone/go-services/store/sql"
+	servicesync "github.com/goliatone/go-services/sync"
+	serviceswebhooks "github.com/goliatone/go-services/webhooks"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 )
@@ -358,6 +361,584 @@ func TestNewService_WiresStoresFromPersistenceAndRepositoryFactory(t *testing.T)
 	_ = ctx
 }
 
+func TestWebhookDeliveryStore_DedupeAndRetryLedger(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	deliveryStore, err := sqlstore.NewWebhookDeliveryStore(client.DB())
+	if err != nil {
+		t.Fatalf("new webhook delivery store: %v", err)
+	}
+
+	record, deduped, err := deliveryStore.Reserve(ctx, "github", "delivery-1", []byte(`{"ok":true}`))
+	if err != nil {
+		t.Fatalf("reserve initial delivery: %v", err)
+	}
+	if deduped {
+		t.Fatalf("expected initial reserve to not be deduped")
+	}
+	if record.Status != "pending" {
+		t.Fatalf("expected pending status, got %q", record.Status)
+	}
+
+	record, deduped, err = deliveryStore.Reserve(ctx, "github", "delivery-1", []byte(`{"ok":true}`))
+	if err != nil {
+		t.Fatalf("reserve duplicate delivery: %v", err)
+	}
+	if !deduped {
+		t.Fatalf("expected duplicate reserve to be deduped")
+	}
+	if record.Attempts != 1 {
+		t.Fatalf("expected attempts to remain 1 before retry, got %d", record.Attempts)
+	}
+
+	nextAttempt := time.Now().UTC().Add(2 * time.Minute)
+	if err := deliveryStore.MarkRetry(ctx, "github", "delivery-1", fmt.Errorf("transient"), nextAttempt); err != nil {
+		t.Fatalf("mark retry: %v", err)
+	}
+
+	retried, err := deliveryStore.Get(ctx, "github", "delivery-1")
+	if err != nil {
+		t.Fatalf("get retried delivery: %v", err)
+	}
+	if retried.Status != "retry_ready" {
+		t.Fatalf("expected retry_ready status, got %q", retried.Status)
+	}
+	if retried.Attempts != 2 {
+		t.Fatalf("expected retry attempts=2, got %d", retried.Attempts)
+	}
+	if retried.NextAttemptAt == nil {
+		t.Fatalf("expected next attempt timestamp to be set")
+	}
+
+	if err := deliveryStore.MarkProcessed(ctx, "github", "delivery-1"); err != nil {
+		t.Fatalf("mark processed: %v", err)
+	}
+
+	processed, err := deliveryStore.Get(ctx, "github", "delivery-1")
+	if err != nil {
+		t.Fatalf("get processed delivery: %v", err)
+	}
+	if processed.Status != "processed" {
+		t.Fatalf("expected processed status, got %q", processed.Status)
+	}
+	if processed.NextAttemptAt != nil {
+		t.Fatalf("expected next attempt timestamp to be cleared")
+	}
+}
+
+func TestSyncCursorStore_AdvanceAtomicCompareAndSwap(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	cursorStore, err := sqlstore.NewSyncCursorStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync cursor store: %v", err)
+	}
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	connection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_cursor"},
+		ExternalAccountID: "acct_cursor",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	seeded, err := cursorStore.Upsert(ctx, core.UpsertSyncCursorInput{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_1",
+		Cursor:       "c1",
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+	if seeded.Cursor != "c1" {
+		t.Fatalf("expected seeded cursor c1")
+	}
+
+	syncedAt := time.Now().UTC()
+	advanced, err := cursorStore.Advance(ctx, core.AdvanceSyncCursorInput{
+		ConnectionID:   connection.ID,
+		ProviderID:     "github",
+		ResourceType:   "drive.file",
+		ResourceID:     "file_1",
+		ExpectedCursor: "c1",
+		Cursor:         "c2",
+		LastSyncedAt:   &syncedAt,
+		Status:         "active",
+	})
+	if err != nil {
+		t.Fatalf("advance cursor: %v", err)
+	}
+	if advanced.Cursor != "c2" {
+		t.Fatalf("expected cursor to advance to c2, got %q", advanced.Cursor)
+	}
+
+	_, err = cursorStore.Advance(ctx, core.AdvanceSyncCursorInput{
+		ConnectionID:   connection.ID,
+		ProviderID:     "github",
+		ResourceType:   "drive.file",
+		ResourceID:     "file_1",
+		ExpectedCursor: "stale",
+		Cursor:         "c3",
+		Status:         "active",
+	})
+	if !errors.Is(err, core.ErrSyncCursorConflict) {
+		t.Fatalf("expected sync cursor conflict, got %v", err)
+	}
+
+	current, err := cursorStore.Get(ctx, connection.ID, "drive.file", "file_1")
+	if err != nil {
+		t.Fatalf("get current cursor: %v", err)
+	}
+	if current.Cursor != "c2" {
+		t.Fatalf("expected cursor to remain c2 after conflict, got %q", current.Cursor)
+	}
+}
+
+func TestSyncOrchestrator_PersistsCheckpointAndResume(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	connection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_sync"},
+		ExternalAccountID: "acct_sync",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	cursorStore, err := sqlstore.NewSyncCursorStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync cursor store: %v", err)
+	}
+	_, err = cursorStore.Upsert(ctx, core.UpsertSyncCursorInput{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_sync",
+		Cursor:       "checkpoint_seed",
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+
+	syncJobStore, err := sqlstore.NewSyncJobStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync job store: %v", err)
+	}
+	orchestrator := servicesync.NewOrchestrator(syncJobStore, cursorStore)
+
+	job, err := orchestrator.StartBootstrap(ctx, core.BootstrapRequest{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_sync",
+	})
+	if err != nil {
+		t.Fatalf("start bootstrap: %v", err)
+	}
+	if job.Checkpoint != "checkpoint_seed" {
+		t.Fatalf("expected checkpoint from persisted cursor")
+	}
+
+	job, err = orchestrator.SaveCheckpoint(ctx, job.ID, "checkpoint_next", map[string]any{"page": 2})
+	if err != nil {
+		t.Fatalf("save checkpoint: %v", err)
+	}
+	if job.Checkpoint != "checkpoint_next" {
+		t.Fatalf("expected checkpoint update to persist")
+	}
+
+	nextAttempt := time.Now().UTC().Add(5 * time.Minute)
+	job, err = orchestrator.Fail(ctx, job.ID, fmt.Errorf("temporary"), &nextAttempt)
+	if err != nil {
+		t.Fatalf("fail job: %v", err)
+	}
+	if job.Status != core.SyncJobStatusFailed {
+		t.Fatalf("expected failed job status")
+	}
+
+	if err := orchestrator.Resume(ctx, job.ID); err != nil {
+		t.Fatalf("resume job: %v", err)
+	}
+	stored, err := syncJobStore.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("get resumed job: %v", err)
+	}
+	if stored.Status != core.SyncJobStatusQueued {
+		t.Fatalf("expected queued status after resume, got %q", stored.Status)
+	}
+	if stored.Checkpoint != "checkpoint_next" {
+		t.Fatalf("expected checkpoint durability across resume")
+	}
+}
+
+func TestSubscriptionLifecycle_RenewAndCancel_Integration(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	subscriptionStore, err := sqlstore.NewSubscriptionStore(client.DB())
+	if err != nil {
+		t.Fatalf("new subscription store: %v", err)
+	}
+
+	provider := &integrationProvider{
+		id: "github",
+		subscribeResponse: core.SubscriptionResult{
+			ChannelID:            "channel_1",
+			RemoteSubscriptionID: "remote_1",
+			ExpiresAt:            ptrTime(time.Now().UTC().Add(30 * time.Minute)),
+			Metadata:             map[string]any{"lease": "initial"},
+		},
+		renewSubscriptionResponse: core.SubscriptionResult{
+			ChannelID:            "channel_1",
+			RemoteSubscriptionID: "remote_2",
+			ExpiresAt:            ptrTime(time.Now().UTC().Add(60 * time.Minute)),
+			Metadata:             map[string]any{"lease": "renewed"},
+		},
+	}
+	registry := core.NewProviderRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	svc, err := core.NewService(core.Config{},
+		core.WithRegistry(registry),
+		core.WithConnectionStore(repoFactory.ConnectionStore()),
+		core.WithSubscriptionStore(subscriptionStore),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	connection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_sub"},
+		ExternalAccountID: "acct_sub",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	subscription, err := svc.Subscribe(ctx, core.SubscribeRequest{
+		ConnectionID: connection.ID,
+		ResourceType: "drive.file",
+		ResourceID:   "file_sub",
+		CallbackURL:  "https://app.example/webhooks/github",
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if subscription.RemoteSubscriptionID != "remote_1" {
+		t.Fatalf("expected remote_1 subscription id")
+	}
+
+	renewed, err := svc.RenewSubscription(ctx, core.RenewSubscriptionRequest{
+		SubscriptionID: subscription.ID,
+	})
+	if err != nil {
+		t.Fatalf("renew subscription: %v", err)
+	}
+	if renewed.RemoteSubscriptionID != "remote_2" {
+		t.Fatalf("expected remote_2 subscription id")
+	}
+
+	if err := svc.CancelSubscription(ctx, core.CancelSubscriptionRequest{
+		SubscriptionID: renewed.ID,
+		Reason:         "manual revoke",
+	}); err != nil {
+		t.Fatalf("cancel subscription: %v", err)
+	}
+	stored, err := subscriptionStore.Get(ctx, renewed.ID)
+	if err != nil {
+		t.Fatalf("load cancelled subscription: %v", err)
+	}
+	if stored.Status != core.SubscriptionStatusCancelled {
+		t.Fatalf("expected cancelled subscription status, got %q", stored.Status)
+	}
+}
+
+func TestWebhookTriggeredSync_DedupeAndCursorAdvance_Integration(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	connection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_webhook"},
+		ExternalAccountID: "acct_webhook",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	subscriptionStore, err := sqlstore.NewSubscriptionStore(client.DB())
+	if err != nil {
+		t.Fatalf("new subscription store: %v", err)
+	}
+	_, err = subscriptionStore.Upsert(ctx, core.UpsertSubscriptionInput{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_webhook",
+		ChannelID:    "channel_webhook",
+		CallbackURL:  "https://app.example/webhooks/github",
+		Status:       core.SubscriptionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+
+	cursorStore, err := sqlstore.NewSyncCursorStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync cursor store: %v", err)
+	}
+	_, err = cursorStore.Upsert(ctx, core.UpsertSyncCursorInput{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_webhook",
+		Cursor:       "cursor_1",
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+
+	syncJobStore, err := sqlstore.NewSyncJobStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync job store: %v", err)
+	}
+	orchestrator := servicesync.NewOrchestrator(syncJobStore, cursorStore)
+
+	deliveryStore, err := sqlstore.NewWebhookDeliveryStore(client.DB())
+	if err != nil {
+		t.Fatalf("new webhook delivery store: %v", err)
+	}
+	handler := webhookSyncHandler{
+		subscriptions: subscriptionStore,
+		cursors:       cursorStore,
+		orchestrator:  orchestrator,
+	}
+	processor := serviceswebhooks.NewProcessor(nil, deliveryStore, handler)
+
+	req := core.InboundRequest{
+		ProviderID: "github",
+		Headers: map[string]string{
+			"X-Channel-ID": "channel_webhook",
+		},
+		Metadata: map[string]any{
+			"delivery_id": "delivery_sync_1",
+			"next_cursor": "cursor_2",
+		},
+	}
+	result, err := processor.Process(ctx, req)
+	if err != nil {
+		t.Fatalf("process webhook: %v", err)
+	}
+	if !result.Accepted {
+		t.Fatalf("expected webhook processing accepted")
+	}
+
+	updatedCursor, err := cursorStore.Get(ctx, connection.ID, "drive.file", "file_webhook")
+	if err != nil {
+		t.Fatalf("load updated cursor: %v", err)
+	}
+	if updatedCursor.Cursor != "cursor_2" {
+		t.Fatalf("expected cursor advance to cursor_2, got %q", updatedCursor.Cursor)
+	}
+
+	var firstRunCount int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_sync_jobs WHERE connection_id = ? AND mode = ?",
+		connection.ID,
+		string(core.SyncJobModeIncremental),
+	).Scan(ctx, &firstRunCount); err != nil {
+		t.Fatalf("count sync jobs: %v", err)
+	}
+	if firstRunCount != 1 {
+		t.Fatalf("expected one incremental sync job after first delivery, got %d", firstRunCount)
+	}
+
+	second, err := processor.Process(ctx, req)
+	if err != nil {
+		t.Fatalf("process duplicate webhook: %v", err)
+	}
+	if second.Metadata["deduped"] != true {
+		t.Fatalf("expected duplicate webhook to be deduped")
+	}
+	var dedupedCount int
+	if err := client.DB().NewRaw(
+		"SELECT COUNT(*) FROM service_sync_jobs WHERE connection_id = ? AND mode = ?",
+		connection.ID,
+		string(core.SyncJobModeIncremental),
+	).Scan(ctx, &dedupedCount); err != nil {
+		t.Fatalf("count sync jobs after duplicate: %v", err)
+	}
+	if dedupedCount != 1 {
+		t.Fatalf("expected no new sync job on duplicate delivery, got %d", dedupedCount)
+	}
+}
+
+func TestCursorInvalidationRecoveryAndResumableBackfill_Integration(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	connection, err := repoFactory.ConnectionStore().Create(ctx, core.CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             core.ScopeRef{Type: "user", ID: "usr_backfill"},
+		ExternalAccountID: "acct_backfill",
+		Status:            core.ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	cursorStore, err := sqlstore.NewSyncCursorStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync cursor store: %v", err)
+	}
+	_, err = cursorStore.Upsert(ctx, core.UpsertSyncCursorInput{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_backfill",
+		Cursor:       "cursor_a",
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+	_, err = cursorStore.Advance(ctx, core.AdvanceSyncCursorInput{
+		ConnectionID:   connection.ID,
+		ProviderID:     "github",
+		ResourceType:   "drive.file",
+		ResourceID:     "file_backfill",
+		ExpectedCursor: "cursor_a",
+		Cursor:         "cursor_b",
+		Status:         "active",
+	})
+	if err != nil {
+		t.Fatalf("advance cursor to cursor_b: %v", err)
+	}
+	_, err = cursorStore.Advance(ctx, core.AdvanceSyncCursorInput{
+		ConnectionID:   connection.ID,
+		ProviderID:     "github",
+		ResourceType:   "drive.file",
+		ResourceID:     "file_backfill",
+		ExpectedCursor: "cursor_a",
+		Cursor:         "cursor_c",
+		Status:         "active",
+	})
+	if !errors.Is(err, core.ErrSyncCursorConflict) {
+		t.Fatalf("expected cursor conflict on stale advance, got %v", err)
+	}
+
+	_, err = cursorStore.Upsert(ctx, core.UpsertSyncCursorInput{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_backfill",
+		Cursor:       "cursor_rebootstrap",
+		Status:       "active",
+		Metadata: map[string]any{
+			"recovery": "invalidation",
+		},
+	})
+	if err != nil {
+		t.Fatalf("recover cursor via bootstrap baseline: %v", err)
+	}
+
+	syncJobStore, err := sqlstore.NewSyncJobStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync job store: %v", err)
+	}
+	orchestrator := servicesync.NewOrchestrator(syncJobStore, cursorStore)
+
+	from := time.Now().UTC().Add(-48 * time.Hour)
+	to := time.Now().UTC().Add(-24 * time.Hour)
+	job, err := orchestrator.StartBackfill(ctx, core.BackfillRequest{
+		ConnectionID: connection.ID,
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_backfill",
+		From:         &from,
+		To:           &to,
+	})
+	if err != nil {
+		t.Fatalf("start backfill: %v", err)
+	}
+	if job.Mode != core.SyncJobModeBackfill {
+		t.Fatalf("expected backfill mode")
+	}
+
+	job, err = orchestrator.SaveCheckpoint(ctx, job.ID, "page_10", map[string]any{"window": "historic"})
+	if err != nil {
+		t.Fatalf("save checkpoint: %v", err)
+	}
+	if job.Checkpoint != "page_10" {
+		t.Fatalf("expected checkpoint page_10")
+	}
+
+	nextAttempt := time.Now().UTC().Add(15 * time.Minute)
+	job, err = orchestrator.Fail(ctx, job.ID, fmt.Errorf("temporary backfill failure"), &nextAttempt)
+	if err != nil {
+		t.Fatalf("fail backfill job: %v", err)
+	}
+	if job.Status != core.SyncJobStatusFailed {
+		t.Fatalf("expected failed backfill status")
+	}
+
+	if err := orchestrator.Resume(ctx, job.ID); err != nil {
+		t.Fatalf("resume backfill job: %v", err)
+	}
+	stored, err := syncJobStore.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("load resumed backfill job: %v", err)
+	}
+	if stored.Status != core.SyncJobStatusQueued {
+		t.Fatalf("expected queued status after backfill resume")
+	}
+	if stored.Checkpoint != "page_10" {
+		t.Fatalf("expected backfill checkpoint preserved across resume")
+	}
+}
+
 func TestService_GrantLifecyclePermissionAndRefreshIdempotency_Integration(t *testing.T) {
 	ctx := context.Background()
 	client, cleanup := newSQLiteClient(t)
@@ -602,10 +1183,16 @@ func (stubCredentialStore) RevokeActive(context.Context, string, string) error {
 }
 
 type integrationProvider struct {
-	id               string
-	completeResponse core.CompleteAuthResponse
-	refreshResponse  core.RefreshResult
-	capabilities     []core.CapabilityDescriptor
+	id                        string
+	completeResponse          core.CompleteAuthResponse
+	refreshResponse           core.RefreshResult
+	capabilities              []core.CapabilityDescriptor
+	subscribeResponse         core.SubscriptionResult
+	renewSubscriptionResponse core.SubscriptionResult
+	subscribeErr              error
+	renewErr                  error
+	cancelErr                 error
+	cancelCount               int
 }
 
 func (p *integrationProvider) ID() string                    { return p.id }
@@ -631,6 +1218,25 @@ func (p *integrationProvider) Refresh(_ context.Context, _ core.ActiveCredential
 	return p.refreshResponse, nil
 }
 
+func (p *integrationProvider) Subscribe(_ context.Context, _ core.SubscribeRequest) (core.SubscriptionResult, error) {
+	if p.subscribeErr != nil {
+		return core.SubscriptionResult{}, p.subscribeErr
+	}
+	return p.subscribeResponse, nil
+}
+
+func (p *integrationProvider) RenewSubscription(_ context.Context, _ core.RenewSubscriptionRequest) (core.SubscriptionResult, error) {
+	if p.renewErr != nil {
+		return core.SubscriptionResult{}, p.renewErr
+	}
+	return p.renewSubscriptionResponse, nil
+}
+
+func (p *integrationProvider) CancelSubscription(_ context.Context, _ core.CancelSubscriptionRequest) error {
+	p.cancelCount++
+	return p.cancelErr
+}
+
 func (p *integrationProvider) Signer() core.Signer {
 	return integrationSigner{}
 }
@@ -640,4 +1246,73 @@ type integrationSigner struct{}
 func (integrationSigner) Sign(_ context.Context, req *http.Request, _ core.ActiveCredential) error {
 	req.Header.Set("X-Signed-Integration", "true")
 	return nil
+}
+
+type webhookSyncHandler struct {
+	subscriptions core.SubscriptionStore
+	cursors       core.SyncCursorStore
+	orchestrator  *servicesync.Orchestrator
+}
+
+func (h webhookSyncHandler) Handle(ctx context.Context, req core.InboundRequest) (core.InboundResult, error) {
+	channelID := req.Headers["X-Channel-ID"]
+	subscription, err := h.subscriptions.GetByChannelID(ctx, req.ProviderID, channelID)
+	if err != nil {
+		return core.InboundResult{}, err
+	}
+
+	currentCursor, err := h.cursors.Get(ctx, subscription.ConnectionID, subscription.ResourceType, subscription.ResourceID)
+	if err != nil {
+		currentCursor = core.SyncCursor{
+			ConnectionID: subscription.ConnectionID,
+			ProviderID:   subscription.ProviderID,
+			ResourceType: subscription.ResourceType,
+			ResourceID:   subscription.ResourceID,
+			Cursor:       "",
+		}
+	}
+
+	nextCursor := strings.TrimSpace(fmt.Sprint(req.Metadata["next_cursor"]))
+	job, err := h.orchestrator.StartIncremental(
+		ctx,
+		subscription.ConnectionID,
+		subscription.ProviderID,
+		subscription.ResourceType,
+		subscription.ResourceID,
+		map[string]any{"source": "webhook"},
+	)
+	if err != nil {
+		return core.InboundResult{}, err
+	}
+
+	_, err = h.cursors.Advance(ctx, core.AdvanceSyncCursorInput{
+		ConnectionID:   subscription.ConnectionID,
+		ProviderID:     subscription.ProviderID,
+		ResourceType:   subscription.ResourceType,
+		ResourceID:     subscription.ResourceID,
+		ExpectedCursor: currentCursor.Cursor,
+		Cursor:         nextCursor,
+		Status:         "active",
+		LastSyncedAt:   ptrTime(time.Now().UTC()),
+		Metadata:       map[string]any{"source": "webhook"},
+	})
+	if err != nil {
+		return core.InboundResult{}, err
+	}
+	if _, err := h.orchestrator.SaveCheckpoint(ctx, job.ID, nextCursor, map[string]any{"source": "webhook"}); err != nil {
+		return core.InboundResult{}, err
+	}
+
+	return core.InboundResult{
+		Accepted:   true,
+		StatusCode: 202,
+		Metadata: map[string]any{
+			"job_id": job.ID,
+		},
+	}, nil
+}
+
+func ptrTime(value time.Time) *time.Time {
+	out := value.UTC()
+	return &out
 }
