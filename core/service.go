@@ -406,14 +406,15 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 
 	if s.credentialStore != nil {
 		credential, err = s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
-			ConnectionID:    connection.ID,
-			TokenType:       result.Credential.TokenType,
-			RequestedScopes: append([]string(nil), result.Credential.RequestedScopes...),
-			GrantedScopes:   append([]string(nil), result.Credential.GrantedScopes...),
-			ExpiresAt:       result.Credential.ExpiresAt,
-			Refreshable:     result.Credential.Refreshable,
-			RotatesAt:       result.Credential.RotatesAt,
-			Status:          CredentialStatusActive,
+			ConnectionID:     connection.ID,
+			EncryptedPayload: credentialPayloadFromActive(result.Credential),
+			TokenType:        result.Credential.TokenType,
+			RequestedScopes:  append([]string(nil), result.Credential.RequestedScopes...),
+			GrantedScopes:    append([]string(nil), result.Credential.GrantedScopes...),
+			ExpiresAt:        result.Credential.ExpiresAt,
+			Refreshable:      result.Credential.Refreshable,
+			RotatesAt:        result.Credential.RotatesAt,
+			Status:           CredentialStatusActive,
 		})
 		if err != nil {
 			return CallbackCompletion{}, s.mapError(err)
@@ -475,6 +476,25 @@ func (s *Service) validateOAuthCallbackState(ctx context.Context, req CompleteAu
 }
 
 func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResult, error) {
+	connectionID := strings.TrimSpace(req.ConnectionID)
+	if connectionID == "" {
+		return RefreshResult{}, s.mapError(fmt.Errorf("core: connection id is required"))
+	}
+	req.ConnectionID = connectionID
+
+	unlock := func() {}
+	if s.connectionLocker != nil && !isRefreshLockHeld(ctx, connectionID) {
+		lockHandle, lockErr := s.connectionLocker.Acquire(ctx, connectionID, defaultRefreshLockTTL)
+		if lockErr != nil {
+			return RefreshResult{}, s.mapError(lockErr)
+		}
+		ctx = context.WithValue(ctx, refreshLockContextKey{}, connectionID)
+		unlock = func() {
+			_ = lockHandle.Unlock(ctx)
+		}
+	}
+	defer unlock()
+
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
 		return RefreshResult{}, err
@@ -498,16 +518,18 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (RefreshResul
 		return RefreshResult{}, s.mapError(err)
 	}
 
-	if s.credentialStore != nil {
+	shouldPersist := shouldPersistRefreshedCredential(activeCred, result.Credential)
+	if s.credentialStore != nil && shouldPersist {
 		_, saveErr := s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
-			ConnectionID:    req.ConnectionID,
-			TokenType:       result.Credential.TokenType,
-			RequestedScopes: append([]string(nil), result.Credential.RequestedScopes...),
-			GrantedScopes:   append([]string(nil), result.Credential.GrantedScopes...),
-			ExpiresAt:       result.Credential.ExpiresAt,
-			Refreshable:     result.Credential.Refreshable,
-			RotatesAt:       result.Credential.RotatesAt,
-			Status:          CredentialStatusActive,
+			ConnectionID:     req.ConnectionID,
+			EncryptedPayload: credentialPayloadFromActive(result.Credential),
+			TokenType:        result.Credential.TokenType,
+			RequestedScopes:  append([]string(nil), result.Credential.RequestedScopes...),
+			GrantedScopes:    append([]string(nil), result.Credential.GrantedScopes...),
+			ExpiresAt:        result.Credential.ExpiresAt,
+			Refreshable:      result.Credential.Refreshable,
+			RotatesAt:        result.Credential.RotatesAt,
+			Status:           CredentialStatusActive,
 		})
 		if saveErr != nil {
 			return RefreshResult{}, s.mapError(saveErr)
@@ -740,4 +762,71 @@ func resolveRefreshGrantedGrants(result RefreshResult) []string {
 		return append([]string(nil), result.Credential.GrantedScopes...)
 	}
 	return []string{}
+}
+
+func shouldPersistRefreshedCredential(current ActiveCredential, refreshed ActiveCredential) bool {
+	if !strings.EqualFold(strings.TrimSpace(current.TokenType), strings.TrimSpace(refreshed.TokenType)) {
+		return true
+	}
+
+	currentToken := strings.TrimSpace(current.AccessToken)
+	refreshedToken := strings.TrimSpace(refreshed.AccessToken)
+	if refreshedToken != "" && currentToken != refreshedToken {
+		return true
+	}
+	if refreshedToken == "" && currentToken == "" && strings.TrimSpace(refreshed.RefreshToken) != "" && strings.TrimSpace(current.RefreshToken) != strings.TrimSpace(refreshed.RefreshToken) {
+		return true
+	}
+
+	if current.Refreshable != refreshed.Refreshable {
+		return true
+	}
+	if !sameStringSliceSet(current.RequestedScopes, refreshed.RequestedScopes) {
+		return true
+	}
+	if !sameStringSliceSet(current.GrantedScopes, refreshed.GrantedScopes) {
+		return true
+	}
+	if !sameTimePointer(current.ExpiresAt, refreshed.ExpiresAt) {
+		return true
+	}
+	if !sameTimePointer(current.RotatesAt, refreshed.RotatesAt) {
+		return true
+	}
+	return false
+}
+
+func sameStringSliceSet(left, right []string) bool {
+	lset := toGrantSet(left)
+	rset := toGrantSet(right)
+	if len(lset) != len(rset) {
+		return false
+	}
+	for value := range lset {
+		if _, ok := rset[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func sameTimePointer(left, right *time.Time) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return left.UTC().Equal(right.UTC())
+}
+
+func credentialPayloadFromActive(credential ActiveCredential) []byte {
+	token := strings.TrimSpace(credential.AccessToken)
+	if token == "" {
+		token = strings.TrimSpace(credential.RefreshToken)
+	}
+	if token == "" {
+		token = "{}"
+	}
+	return []byte(token)
 }

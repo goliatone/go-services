@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	goerrors "github.com/goliatone/go-errors"
 )
@@ -158,6 +160,106 @@ func TestRunRefreshWithRetry_FailsWhenLockHeld(t *testing.T) {
 	}
 }
 
+func TestRefresh_IdempotentCredentialRotationUnderConcurrentExecution(t *testing.T) {
+	ctx := context.Background()
+	expiresInitial := time.Now().UTC().Add(30 * time.Minute)
+	expiresRefreshed := time.Now().UTC().Add(2 * time.Hour)
+
+	provider := &stableRefreshProvider{
+		testProvider: testProvider{id: "github"},
+		result: RefreshResult{
+			Credential: ActiveCredential{
+				TokenType:       "bearer",
+				RequestedScopes: []string{"repo:read"},
+				GrantedScopes:   []string{"repo:read"},
+				Refreshable:     true,
+				ExpiresAt:       &expiresRefreshed,
+			},
+		},
+		delay: 50 * time.Millisecond,
+	}
+	registry := NewProviderRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	connectionStore := newMemoryConnectionStore()
+	connection, err := connectionStore.Create(ctx, CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             ScopeRef{Type: "user", ID: "u3"},
+		ExternalAccountID: "acct_3",
+		Status:            ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+	credentialStore := newMemoryCredentialStore()
+	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
+		ConnectionID:     connection.ID,
+		EncryptedPayload: []byte("token-1"),
+		TokenType:        "bearer",
+		RequestedScopes:  []string{"repo:read"},
+		GrantedScopes:    []string{"repo:read"},
+		ExpiresAt:        &expiresInitial,
+		Refreshable:      true,
+		Status:           CredentialStatusActive,
+	}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+
+	svc, err := NewService(
+		Config{},
+		WithRegistry(registry),
+		WithConnectionStore(connectionStore),
+		WithCredentialStore(credentialStore),
+		WithConnectionLocker(NewMemoryConnectionLocker()),
+		WithRefreshBackoffScheduler(ExponentialBackoffScheduler{Initial: 0, Max: 0}),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, refreshErr := svc.Refresh(ctx, RefreshRequest{
+				ProviderID:   "github",
+				ConnectionID: connection.ID,
+			})
+			errCh <- refreshErr
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	successCount := 0
+	lockErrorCount := 0
+	for refreshErr := range errCh {
+		if refreshErr == nil {
+			successCount++
+			continue
+		}
+		if strings.Contains(strings.ToLower(refreshErr.Error()), "service_refresh_locked") {
+			lockErrorCount++
+			continue
+		}
+		t.Fatalf("refresh failed: %v", refreshErr)
+	}
+	if successCount != 1 || lockErrorCount != 1 {
+		t.Fatalf("expected one success and one lock conflict, got success=%d lock=%d", successCount, lockErrorCount)
+	}
+
+	active, err := credentialStore.GetActiveByConnection(ctx, connection.ID)
+	if err != nil {
+		t.Fatalf("get active credential: %v", err)
+	}
+	if active.Version != 2 {
+		t.Fatalf("expected exactly one rotated version under concurrent refresh, got version=%d", active.Version)
+	}
+}
+
 type scriptedRefreshProvider struct {
 	testProvider
 	errs  []error
@@ -171,4 +273,17 @@ func (p *scriptedRefreshProvider) Refresh(ctx context.Context, cred ActiveCreden
 		return RefreshResult{}, p.errs[index]
 	}
 	return p.testProvider.Refresh(ctx, cred)
+}
+
+type stableRefreshProvider struct {
+	testProvider
+	result RefreshResult
+	delay  time.Duration
+}
+
+func (p *stableRefreshProvider) Refresh(_ context.Context, _ ActiveCredential) (RefreshResult, error) {
+	if p.delay > 0 {
+		time.Sleep(p.delay)
+	}
+	return p.result, nil
 }

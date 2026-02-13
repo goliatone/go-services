@@ -177,7 +177,7 @@ func defaultErrorMapper(err error) *goerrors.Error {
 	if err == nil {
 		return nil
 	}
-	return goerrors.MapToError(err, goerrors.DefaultErrorMappers())
+	return serviceErrorMapper(err)
 }
 
 type staticRawConfigLoader struct {
