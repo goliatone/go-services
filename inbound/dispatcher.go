@@ -22,15 +22,11 @@ type Verifier interface {
 	Verify(ctx context.Context, req core.InboundRequest) error
 }
 
-type IdempotencyStore interface {
-	Reserve(ctx context.Context, key string, ttl time.Duration) (bool, error)
-}
-
 type IdempotencyKeyExtractor func(req core.InboundRequest) (string, error)
 
 type Dispatcher struct {
 	Verifier   Verifier
-	Store      IdempotencyStore
+	Store      core.IdempotencyClaimStore
 	ExtractKey IdempotencyKeyExtractor
 	KeyTTL     time.Duration
 
@@ -38,7 +34,7 @@ type Dispatcher struct {
 	handlers map[string]core.InboundHandler
 }
 
-func NewDispatcher(verifier Verifier, store IdempotencyStore) *Dispatcher {
+func NewDispatcher(verifier Verifier, store core.IdempotencyClaimStore) *Dispatcher {
 	return &Dispatcher{
 		Verifier:   verifier,
 		Store:      store,
@@ -94,6 +90,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 		}
 	}
 
+	claimID := ""
 	if d.Store != nil {
 		extractor := d.ExtractKey
 		if extractor == nil {
@@ -103,7 +100,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 		if err != nil {
 			return core.InboundResult{}, err
 		}
-		accepted, err := d.Store.Reserve(ctx, req.ProviderID+":"+req.Surface+":"+key, d.keyTTL())
+		var accepted bool
+		claimID, accepted, err = d.Store.Claim(ctx, req.ProviderID+":"+req.Surface+":"+key, d.keyTTL())
 		if err != nil {
 			return core.InboundResult{}, err
 		}
@@ -126,7 +124,23 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 	}
 	result, err := handler.Handle(ctx, req)
 	if err != nil {
+		if d.Store != nil && claimID != "" {
+			_ = d.Store.Fail(ctx, claimID, err, time.Time{})
+		}
 		return core.InboundResult{}, err
+	}
+	retryableFailure := !result.Accepted || result.StatusCode >= http.StatusInternalServerError
+	if retryableFailure {
+		retryErr := fmt.Errorf("inbound: handler returned retryable status %d", result.StatusCode)
+		if d.Store != nil && claimID != "" {
+			_ = d.Store.Fail(ctx, claimID, retryErr, time.Time{})
+		}
+		return result, retryErr
+	}
+	if d.Store != nil && claimID != "" {
+		if err := d.Store.Complete(ctx, claimID); err != nil {
+			return core.InboundResult{}, err
+		}
 	}
 	result.Metadata = ensureMetadata(result.Metadata)
 	result.Metadata["provider_id"] = req.ProviderID
@@ -160,53 +174,181 @@ func DefaultIdempotencyKeyExtractor(req core.InboundRequest) (string, error) {
 	return "", fmt.Errorf("inbound: idempotency key is required")
 }
 
-type InMemoryIdempotencyStore struct {
+type claimStatus string
+
+const (
+	claimStatusProcessing claimStatus = "processing"
+	claimStatusRetryReady claimStatus = "retry_ready"
+	claimStatusComplete   claimStatus = "complete"
+)
+
+type claimEntry struct {
+	Key            string
+	Status         claimStatus
+	ClaimID        string
+	Attempts       int
+	LeaseExpiresAt time.Time
+	RetryAt        time.Time
+}
+
+type InMemoryClaimStore struct {
 	mu      sync.Mutex
-	entries map[string]time.Time
+	entries map[string]claimEntry
+	claims  map[string]string
+	nextID  int
 	Now     func() time.Time
 }
 
-func NewInMemoryIdempotencyStore() *InMemoryIdempotencyStore {
-	return &InMemoryIdempotencyStore{
-		entries: map[string]time.Time{},
+type InMemoryIdempotencyStore = InMemoryClaimStore
+
+func NewInMemoryClaimStore() *InMemoryClaimStore {
+	return &InMemoryClaimStore{
+		entries: map[string]claimEntry{},
+		claims:  map[string]string{},
 		Now: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
 }
 
-func (s *InMemoryIdempotencyStore) Reserve(_ context.Context, key string, ttl time.Duration) (bool, error) {
+func NewInMemoryIdempotencyStore() *InMemoryClaimStore {
+	return NewInMemoryClaimStore()
+}
+
+func (s *InMemoryClaimStore) Claim(
+	_ context.Context,
+	key string,
+	lease time.Duration,
+) (string, bool, error) {
 	if s == nil {
-		return false, fmt.Errorf("inbound: idempotency store is nil")
+		return "", false, fmt.Errorf("inbound: idempotency store is nil")
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return false, fmt.Errorf("inbound: idempotency key is required")
+		return "", false, fmt.Errorf("inbound: idempotency key is required")
 	}
 	now := s.now()
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
+	if lease <= 0 {
+		lease = 10 * time.Minute
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for existingKey, expiresAt := range s.entries {
-		if now.After(expiresAt) {
-			delete(s.entries, existingKey)
+	entry, exists := s.entries[key]
+	if !exists {
+		claimID := s.nextClaimID()
+		s.entries[key] = claimEntry{
+			Key:            key,
+			Status:         claimStatusProcessing,
+			ClaimID:        claimID,
+			Attempts:       1,
+			LeaseExpiresAt: now.Add(lease),
+		}
+		s.claims[claimID] = key
+		return claimID, true, nil
+	}
+
+	switch entry.Status {
+	case claimStatusComplete:
+		return "", false, nil
+	case claimStatusProcessing:
+		if now.Before(entry.LeaseExpiresAt) {
+			return "", false, nil
+		}
+	case claimStatusRetryReady:
+		if !entry.RetryAt.IsZero() && now.Before(entry.RetryAt) {
+			return "", false, nil
 		}
 	}
-	if expiresAt, exists := s.entries[key]; exists && now.Before(expiresAt) {
-		return false, nil
+
+	if entry.ClaimID != "" {
+		delete(s.claims, entry.ClaimID)
 	}
-	s.entries[key] = now.Add(ttl)
-	return true, nil
+	claimID := s.nextClaimID()
+	entry.Status = claimStatusProcessing
+	entry.ClaimID = claimID
+	entry.Attempts++
+	entry.LeaseExpiresAt = now.Add(lease)
+	entry.RetryAt = time.Time{}
+	s.entries[key] = entry
+	s.claims[claimID] = key
+	return claimID, true, nil
 }
 
-func (s *InMemoryIdempotencyStore) now() time.Time {
+func (s *InMemoryClaimStore) Complete(_ context.Context, claimID string) error {
+	if s == nil {
+		return fmt.Errorf("inbound: idempotency store is nil")
+	}
+	claimID = strings.TrimSpace(claimID)
+	if claimID == "" {
+		return fmt.Errorf("inbound: claim id is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.claims[claimID]
+	if !ok {
+		return nil
+	}
+	entry, exists := s.entries[key]
+	if !exists || entry.ClaimID != claimID || entry.Status != claimStatusProcessing {
+		delete(s.claims, claimID)
+		return nil
+	}
+	entry.Status = claimStatusComplete
+	entry.LeaseExpiresAt = time.Time{}
+	entry.RetryAt = time.Time{}
+	s.entries[key] = entry
+	delete(s.claims, claimID)
+	return nil
+}
+
+func (s *InMemoryClaimStore) Fail(
+	_ context.Context,
+	claimID string,
+	_ error,
+	retryAt time.Time,
+) error {
+	if s == nil {
+		return fmt.Errorf("inbound: idempotency store is nil")
+	}
+	claimID = strings.TrimSpace(claimID)
+	if claimID == "" {
+		return fmt.Errorf("inbound: claim id is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.claims[claimID]
+	if !ok {
+		return nil
+	}
+	entry, exists := s.entries[key]
+	if !exists || entry.ClaimID != claimID || entry.Status != claimStatusProcessing {
+		delete(s.claims, claimID)
+		return nil
+	}
+	if retryAt.IsZero() {
+		retryAt = s.now()
+	}
+	entry.Status = claimStatusRetryReady
+	entry.RetryAt = retryAt.UTC()
+	entry.LeaseExpiresAt = time.Time{}
+	s.entries[key] = entry
+	delete(s.claims, claimID)
+	return nil
+}
+
+func (s *InMemoryClaimStore) now() time.Time {
 	if s != nil && s.Now != nil {
 		return s.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+func (s *InMemoryClaimStore) nextClaimID() string {
+	s.nextID++
+	return fmt.Sprintf("claim_%d", s.nextID)
 }
 
 func (d *Dispatcher) keyTTL() time.Duration {
