@@ -89,4 +89,3 @@ func TestOAuth2ClientCredentialsStrategy_CompleteRequiresCredentials(t *testing.
 		t.Fatalf("expected credential config error")
 	}
 }
-

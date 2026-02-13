@@ -40,4 +40,3 @@ func buildHS256JWT(keyID string, secret string, claims map[string]any) (string, 
 	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return signed + "." + signature, nil
 }
-

@@ -243,4 +243,3 @@ func buildClientCredentialsToken(clientID string, clientSecret string, scopes []
 	sum := sha256.Sum256([]byte(clientID + "|" + clientSecret + "|" + strings.Join(normalizeValues(scopes), ",") + "|" + fmt.Sprintf("%d", now.UnixNano())))
 	return "cc_" + hex.EncodeToString(sum[:16])
 }
-

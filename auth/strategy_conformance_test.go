@@ -106,7 +106,7 @@ func TestStrategyConformanceByMode(t *testing.T) {
 			}
 
 			begin, err := tc.strategy.Begin(ctx, core.AuthBeginRequest{
-				Scope:       tc.completeReq.Scope,
+				Scope:        tc.completeReq.Scope,
 				RequestedRaw: []string{"read"},
 			})
 			if err != nil {
@@ -130,4 +130,3 @@ func TestStrategyConformanceByMode(t *testing.T) {
 		})
 	}
 }
-

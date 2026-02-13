@@ -152,11 +152,11 @@ func (s *APIKeyStrategy) Refresh(_ context.Context, cred core.ActiveCredential) 
 }
 
 type HMACStrategyConfig struct {
-	Secret           string
-	KeyID            string
-	SignatureHeader  string
-	TimestampHeader  string
-	ExternalAccount  string
+	Secret          string
+	KeyID           string
+	SignatureHeader string
+	TimestampHeader string
+	ExternalAccount string
 }
 
 type HMACStrategy struct {
@@ -229,10 +229,10 @@ func (s *HMACStrategy) Complete(_ context.Context, req core.AuthCompleteRequest)
 	}
 
 	credentialMetadata := map[string]any{
-		"auth_kind":         core.AuthKindHMAC,
-		"hmac_key_id":       keyID,
-		"signature_header":  s.config.SignatureHeader,
-		"timestamp_header":  s.config.TimestampHeader,
+		"auth_kind":        core.AuthKindHMAC,
+		"hmac_key_id":      keyID,
+		"signature_header": s.config.SignatureHeader,
+		"timestamp_header": s.config.TimestampHeader,
 	}
 
 	return core.AuthCompleteResponse{
@@ -269,4 +269,3 @@ func (s *HMACStrategy) Refresh(_ context.Context, cred core.ActiveCredential) (c
 		},
 	}, nil
 }
-

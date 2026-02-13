@@ -192,4 +192,3 @@ func (*MTLSStrategy) Refresh(_ context.Context, cred core.ActiveCredential) (cor
 		},
 	}, nil
 }
-

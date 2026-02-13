@@ -88,4 +88,3 @@ func TestHMACStrategy_CompleteRequiresSecret(t *testing.T) {
 		t.Fatalf("expected missing secret error")
 	}
 }
-

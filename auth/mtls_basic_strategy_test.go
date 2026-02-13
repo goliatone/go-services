@@ -69,4 +69,3 @@ func TestMTLSStrategy_CompleteRequiresCertAndKeyRef(t *testing.T) {
 		t.Fatalf("expected mtls missing cert/key error")
 	}
 }
-

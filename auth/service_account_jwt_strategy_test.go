@@ -67,4 +67,3 @@ func TestServiceAccountJWTStrategy_CompleteRequiresConfig(t *testing.T) {
 		t.Fatalf("expected required config error")
 	}
 }
-
