@@ -120,6 +120,17 @@ func TestRESTAdapter_DoSendsMethodHeadersAndQuery(t *testing.T) {
 	}
 }
 
+func TestNewRESTAdapter_DefaultClientTimeout(t *testing.T) {
+	adapter := NewRESTAdapter(nil)
+	httpClient, ok := adapter.Client.(*http.Client)
+	if !ok {
+		t.Fatalf("expected default http client implementation")
+	}
+	if httpClient.Timeout != defaultRESTClientTimeout {
+		t.Fatalf("expected default timeout %s, got %s", defaultRESTClientTimeout, httpClient.Timeout)
+	}
+}
+
 func TestGraphQLAdapter_UsesMetadataQueryAndVariables(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

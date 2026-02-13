@@ -80,6 +80,27 @@ func TestNewFacade_RequiresService(t *testing.T) {
 	}
 }
 
+func TestNewFacade_TypedNilRepositoryFactoryDoesNotPanic(t *testing.T) {
+	svc := &stubFacadeServiceWithDeps{
+		deps: core.ServiceDependencies{
+			RepositoryFactory: (*stubActivityFactory)(nil),
+		},
+	}
+
+	facade, err := NewFacade(svc)
+	if err != nil {
+		t.Fatalf("new facade: %v", err)
+	}
+	if facade == nil {
+		t.Fatalf("expected facade")
+	}
+
+	_, queryErr := facade.Queries().ListServicesActivity.Query(context.Background(), servicesquery.ListServicesActivityMessage{})
+	if queryErr == nil {
+		t.Fatalf("expected missing activity reader error")
+	}
+}
+
 type stubFacadeService struct {
 	lastRevokeConnectionID string
 	lastRevokeReason       string
@@ -147,6 +168,27 @@ func (s *stubFacadeActivityReader) List(context.Context, core.ServicesActivityFi
 		Items: []core.ServiceActivityEntry{{ID: "evt_1", Action: "connected", Status: core.ServiceActivityStatusOK}},
 		Total: 1,
 	}, nil
+}
+
+type stubFacadeServiceWithDeps struct {
+	stubFacadeService
+	deps core.ServiceDependencies
+}
+
+func (s *stubFacadeServiceWithDeps) Dependencies() core.ServiceDependencies {
+	if s == nil {
+		return core.ServiceDependencies{}
+	}
+	return s.deps
+}
+
+type stubActivityFactory struct{}
+
+func (f *stubActivityFactory) ActivityStore() *stubFacadeActivityReader {
+	if f == nil {
+		panic("nil activity factory")
+	}
+	return &stubFacadeActivityReader{}
 }
 
 var _ CommandQueryService = (*stubFacadeService)(nil)
