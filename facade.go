@@ -133,12 +133,18 @@ func resolveActivityReader(service CommandQueryService) servicesquery.ServicesAc
 	if !factoryValue.IsValid() {
 		return nil
 	}
+	if factoryValue.Kind() == reflect.Ptr && factoryValue.IsNil() {
+		return nil
+	}
 	method := factoryValue.MethodByName("ActivityStore")
 	if !method.IsValid() || method.Type().NumIn() != 0 || method.Type().NumOut() != 1 {
 		return nil
 	}
 
-	results := method.Call(nil)
+	results, ok := safeReflectCall(method)
+	if !ok {
+		return nil
+	}
 	if len(results) != 1 {
 		return nil
 	}
@@ -154,4 +160,13 @@ func resolveActivityReader(service CommandQueryService) servicesquery.ServicesAc
 		return nil
 	}
 	return reader
+}
+
+func safeReflectCall(method reflect.Value) (_ []reflect.Value, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	return method.Call(nil), true
 }
