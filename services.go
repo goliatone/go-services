@@ -15,13 +15,17 @@ type OAuthStateStore = core.OAuthStateStore
 type ConnectionLocker = core.ConnectionLocker
 type RefreshBackoffScheduler = core.RefreshBackoffScheduler
 type MetricsRecorder = core.MetricsRecorder
+type SecretProvider = core.SecretProvider
 type RefreshRunOptions = core.RefreshRunOptions
 type RefreshRunResult = core.RefreshRunResult
 type GrantStore = core.GrantStore
+type GrantStoreTransactional = core.GrantStoreTransactional
 type PermissionEvaluator = core.PermissionEvaluator
 type Signer = core.Signer
 type SubscriptionStore = core.SubscriptionStore
 type SyncCursorStore = core.SyncCursorStore
+type CredentialCodec = core.CredentialCodec
+type IdempotencyClaimStore = core.IdempotencyClaimStore
 
 type ConnectRequest = core.ConnectRequest
 type ReconsentRequest = core.ReconsentRequest
@@ -38,6 +42,7 @@ var (
 	WithMetricsRecorder         = core.WithMetricsRecorder
 	WithErrorFactory            = core.WithErrorFactory
 	WithErrorMapper             = core.WithErrorMapper
+	WithSecretProvider          = core.WithSecretProvider
 	WithPersistenceClient       = core.WithPersistenceClient
 	WithRepositoryFactory       = core.WithRepositoryFactory
 	WithConfigProvider          = core.WithConfigProvider
@@ -54,6 +59,7 @@ var (
 	WithGrantStore              = core.WithGrantStore
 	WithPermissionEvaluator     = core.WithPermissionEvaluator
 	WithSigner                  = core.WithSigner
+	WithCredentialCodec         = core.WithCredentialCodec
 )
 
 func DefaultConfig() Config {

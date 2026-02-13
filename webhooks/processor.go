@@ -12,13 +12,15 @@ import (
 
 const (
 	DeliveryStatusPending    = "pending"
+	DeliveryStatusProcessing = "processing"
 	DeliveryStatusProcessed  = "processed"
 	DeliveryStatusRetryReady = "retry_ready"
-	DeliveryStatusRejected   = "rejected"
+	DeliveryStatusDead       = "dead"
 )
 
 type DeliveryRecord struct {
 	ID            string
+	ClaimID       string
 	ProviderID    string
 	DeliveryID    string
 	Status        string
@@ -29,10 +31,16 @@ type DeliveryRecord struct {
 }
 
 type DeliveryLedger interface {
-	Reserve(ctx context.Context, providerID string, deliveryID string, payload []byte) (DeliveryRecord, bool, error)
+	Claim(
+		ctx context.Context,
+		providerID string,
+		deliveryID string,
+		payload []byte,
+		lease time.Duration,
+	) (DeliveryRecord, bool, error)
 	Get(ctx context.Context, providerID string, deliveryID string) (DeliveryRecord, error)
-	MarkProcessed(ctx context.Context, providerID string, deliveryID string) error
-	MarkRetry(ctx context.Context, providerID string, deliveryID string, cause error, nextAttemptAt time.Time) error
+	Complete(ctx context.Context, claimID string) error
+	Fail(ctx context.Context, claimID string, cause error, nextAttemptAt time.Time, maxAttempts int) error
 }
 
 type Verifier interface {
@@ -83,16 +91,24 @@ type Processor struct {
 	ExtractID   DeliveryIDExtractor
 	Burst       BurstController
 	RetryPolicy RetryPolicy
-	Now         func() time.Time
+	// AllowAcceptedServerErrors changes default retry behavior for accepted 5xx handler responses.
+	// Default (false): accepted 5xx responses are treated as retryable errors.
+	AllowAcceptedServerErrors bool
+	ClaimLease                time.Duration
+	MaxAttempts               int
+	Now                       func() time.Time
 }
 
 func NewProcessor(verifier Verifier, ledger DeliveryLedger, handler Handler) *Processor {
 	return &Processor{
-		Verifier:    verifier,
-		Ledger:      ledger,
-		Handler:     handler,
-		ExtractID:   DefaultDeliveryIDExtractor,
-		RetryPolicy: ExponentialRetryPolicy{},
+		Verifier:                  verifier,
+		Ledger:                    ledger,
+		Handler:                   handler,
+		ExtractID:                 DefaultDeliveryIDExtractor,
+		RetryPolicy:               ExponentialRetryPolicy{},
+		AllowAcceptedServerErrors: false,
+		ClaimLease:                30 * time.Second,
+		MaxAttempts:               8,
 		Now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -132,17 +148,18 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 		return core.InboundResult{}, err
 	}
 
-	delivery, deduped, err := p.Ledger.Reserve(ctx, providerID, deliveryID, req.Body)
+	delivery, claimed, err := p.Ledger.Claim(ctx, providerID, deliveryID, req.Body, p.claimLease())
 	if err != nil {
 		return core.InboundResult{}, err
 	}
-	if deduped {
+	if !claimed {
 		return core.InboundResult{
 			Accepted:   true,
 			StatusCode: http.StatusOK,
 			Metadata: map[string]any{
 				"provider_id": providerID,
 				"delivery_id": delivery.DeliveryID,
+				"status":      delivery.Status,
 				"deduped":     true,
 			},
 		}, nil
@@ -154,7 +171,7 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 			return core.InboundResult{}, burstErr
 		}
 		if !decision.Allow {
-			if markErr := p.Ledger.MarkProcessed(ctx, providerID, deliveryID); markErr != nil {
+			if markErr := p.Ledger.Complete(ctx, delivery.ClaimID); markErr != nil {
 				return core.InboundResult{}, markErr
 			}
 			metadata := ensureMetadata(decision.Metadata)
@@ -172,20 +189,22 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 	result, err := p.Handler.Handle(ctx, req)
 	if err != nil {
 		nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
-		_ = p.Ledger.MarkRetry(ctx, providerID, deliveryID, err, nextAttemptAt)
+		_ = p.Ledger.Fail(ctx, delivery.ClaimID, err, nextAttemptAt, p.maxAttempts())
 		return core.InboundResult{}, err
 	}
 
-	if !result.Accepted || result.StatusCode >= http.StatusInternalServerError {
+	retryableServerFailure := result.StatusCode >= http.StatusInternalServerError &&
+		(!result.Accepted || !p.AllowAcceptedServerErrors)
+	if !result.Accepted || retryableServerFailure {
 		retryErr := fmt.Errorf("webhooks: delivery handler returned retryable status %d", result.StatusCode)
 		nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
-		_ = p.Ledger.MarkRetry(ctx, providerID, deliveryID, retryErr, nextAttemptAt)
-		if !result.Accepted {
+		_ = p.Ledger.Fail(ctx, delivery.ClaimID, retryErr, nextAttemptAt, p.maxAttempts())
+		if !result.Accepted || retryableServerFailure {
 			return result, retryErr
 		}
 	}
 
-	if err := p.Ledger.MarkProcessed(ctx, providerID, deliveryID); err != nil {
+	if err := p.Ledger.Complete(ctx, delivery.ClaimID); err != nil {
 		return core.InboundResult{}, err
 	}
 	result.Metadata = ensureMetadata(result.Metadata)
@@ -229,6 +248,20 @@ func (p *Processor) retryPolicy() RetryPolicy {
 		return p.RetryPolicy
 	}
 	return ExponentialRetryPolicy{}
+}
+
+func (p *Processor) claimLease() time.Duration {
+	if p != nil && p.ClaimLease > 0 {
+		return p.ClaimLease
+	}
+	return 30 * time.Second
+}
+
+func (p *Processor) maxAttempts() int {
+	if p != nil && p.MaxAttempts > 0 {
+		return p.MaxAttempts
+	}
+	return 8
 }
 
 func ensureMetadata(metadata map[string]any) map[string]any {

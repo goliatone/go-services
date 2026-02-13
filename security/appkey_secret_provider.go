@@ -121,9 +121,7 @@ func (p *AppKeySecretProvider) Decrypt(_ context.Context, ciphertext []byte) ([]
 	}
 
 	payload := string(ciphertext)
-	if strings.HasPrefix(payload, envelopePrefix) {
-		payload = strings.TrimPrefix(payload, envelopePrefix)
-	}
+	payload = strings.TrimPrefix(payload, envelopePrefix)
 
 	var parsed envelope
 	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
