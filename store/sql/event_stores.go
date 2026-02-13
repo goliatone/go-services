@@ -3,7 +3,6 @@ package sqlstore
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -11,8 +10,6 @@ import (
 	"github.com/goliatone/go-services/core"
 	"github.com/uptrace/bun"
 )
-
-const grantSnapshotEventType = "snapshot"
 
 type AppendServiceEventInput struct {
 	ConnectionID string
@@ -80,7 +77,9 @@ func (s *ServiceEventStore) Append(ctx context.Context, in AppendServiceEventInp
 }
 
 type GrantStore struct {
-	repo           repository.Repository[*grantEventRecord]
+	db             *bun.DB
+	snapshotRepo   repository.Repository[*grantSnapshotRecord]
+	eventRepo      repository.Repository[*grantEventRecord]
 	connectionRepo repository.Repository[*connectionRecord]
 }
 
@@ -88,10 +87,16 @@ func NewGrantStore(db *bun.DB) (*GrantStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("sqlstore: bun db is required")
 	}
-	grantRepo := repository.NewRepository[*grantEventRecord](db, grantEventHandlers())
-	if validator, ok := grantRepo.(repository.Validator); ok {
+	snapshotRepo := repository.NewRepository[*grantSnapshotRecord](db, grantSnapshotHandlers())
+	if validator, ok := snapshotRepo.(repository.Validator); ok {
 		if err := validator.Validate(); err != nil {
-			return nil, fmt.Errorf("sqlstore: invalid grant repository wiring: %w", err)
+			return nil, fmt.Errorf("sqlstore: invalid grant snapshot repository wiring: %w", err)
+		}
+	}
+	eventRepo := repository.NewRepository[*grantEventRecord](db, grantEventHandlers())
+	if validator, ok := eventRepo.(repository.Validator); ok {
+		if err := validator.Validate(); err != nil {
+			return nil, fmt.Errorf("sqlstore: invalid grant event repository wiring: %w", err)
 		}
 	}
 	connectionRepo := repository.NewRepository[*connectionRecord](db, connectionHandlers())
@@ -101,89 +106,140 @@ func NewGrantStore(db *bun.DB) (*GrantStore, error) {
 		}
 	}
 	return &GrantStore{
-		repo:           grantRepo,
+		db:             db,
+		snapshotRepo:   snapshotRepo,
+		eventRepo:      eventRepo,
 		connectionRepo: connectionRepo,
 	}, nil
 }
 
 func (s *GrantStore) SaveSnapshot(ctx context.Context, in core.SaveGrantSnapshotInput) error {
-	if s == nil || s.repo == nil {
+	if s == nil || s.snapshotRepo == nil || s.db == nil {
 		return fmt.Errorf("sqlstore: grant store is not configured")
 	}
-	metadata := RedactMetadata(in.Metadata)
-	metadata["snapshot_version"] = in.Version
-	metadata["captured_at"] = in.CapturedAt.UTC().Format(time.RFC3339Nano)
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		connection, err := s.loadConnectionTx(ctx, tx, in.ConnectionID)
+		if err != nil {
+			return err
+		}
+		return s.saveSnapshotTx(ctx, tx, connection, in)
+	})
+}
 
-	connection, err := s.connectionRepo.GetByID(ctx, strings.TrimSpace(in.ConnectionID))
+func (s *GrantStore) GetLatestSnapshot(ctx context.Context, connectionID string) (core.GrantSnapshot, bool, error) {
+	if s == nil || s.snapshotRepo == nil {
+		return core.GrantSnapshot{}, false, fmt.Errorf("sqlstore: grant store is not configured")
+	}
+	records, _, err := s.snapshotRepo.List(ctx,
+		repository.SelectBy("connection_id", "=", strings.TrimSpace(connectionID)),
+		repository.OrderBy("version DESC"),
+		repository.OrderBy("captured_at DESC"),
+		repository.SelectPaginate(1, 0),
+	)
 	if err != nil {
-		return err
+		return core.GrantSnapshot{}, false, err
+	}
+	if len(records) == 0 {
+		return core.GrantSnapshot{}, false, nil
 	}
 
-	record := &grantEventRecord{
+	record := records[0]
+	return core.GrantSnapshot{
+		ConnectionID: record.ConnectionID,
+		Version:      record.Version,
+		Requested:    append([]string(nil), record.RequestedGrants...),
+		Granted:      append([]string(nil), record.GrantedGrants...),
+		CapturedAt:   record.CapturedAt,
+		Metadata:     RedactMetadata(record.Metadata),
+	}, true, nil
+}
+
+func (s *GrantStore) AppendEvent(ctx context.Context, in core.AppendGrantEventInput) error {
+	if s == nil || s.eventRepo == nil || s.db == nil {
+		return fmt.Errorf("sqlstore: grant store is not configured")
+	}
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		connection, err := s.loadConnectionTx(ctx, tx, in.ConnectionID)
+		if err != nil {
+			return err
+		}
+		return s.appendEventTx(ctx, tx, connection, in)
+	})
+}
+
+func (s *GrantStore) SaveSnapshotAndEvent(
+	ctx context.Context,
+	snapshot core.SaveGrantSnapshotInput,
+	event *core.AppendGrantEventInput,
+) error {
+	if s == nil || s.snapshotRepo == nil || s.eventRepo == nil || s.db == nil {
+		return fmt.Errorf("sqlstore: grant store is not configured")
+	}
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		connection, err := s.loadConnectionTx(ctx, tx, snapshot.ConnectionID)
+		if err != nil {
+			return err
+		}
+		if err := s.saveSnapshotTx(ctx, tx, connection, snapshot); err != nil {
+			return err
+		}
+		if event != nil {
+			appendInput := *event
+			appendInput.ConnectionID = snapshot.ConnectionID
+			if err := s.appendEventTx(ctx, tx, connection, appendInput); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *GrantStore) saveSnapshotTx(
+	ctx context.Context,
+	tx bun.Tx,
+	connection connectionRecord,
+	in core.SaveGrantSnapshotInput,
+) error {
+	version := in.Version
+	if version <= 0 {
+		return fmt.Errorf("sqlstore: snapshot version must be greater than zero")
+	}
+
+	capturedAt := in.CapturedAt
+	if capturedAt.IsZero() {
+		capturedAt = time.Now().UTC()
+	}
+	metadata := RedactMetadata(in.Metadata)
+	metadata["snapshot_version"] = version
+	metadata["captured_at"] = capturedAt.UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC()
+	record := &grantSnapshotRecord{
 		ConnectionID:    connection.ID,
 		ProviderID:      connection.ProviderID,
 		ScopeType:       connection.ScopeType,
 		ScopeID:         connection.ScopeID,
-		EventType:       grantSnapshotEventType,
+		Version:         version,
 		RequestedGrants: append([]string(nil), in.Requested...),
 		GrantedGrants:   append([]string(nil), in.Granted...),
-		AddedGrants:     []string{},
-		RemovedGrants:   []string{},
 		Metadata:        metadata,
-		CreatedAt:       time.Now().UTC(),
+		CapturedAt:      capturedAt.UTC(),
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
-	_, err = s.repo.Create(ctx, record)
+	_, err := s.snapshotRepo.CreateTx(ctx, tx, record)
 	return err
 }
 
-func (s *GrantStore) GetLatestSnapshot(ctx context.Context, connectionID string) (core.GrantSnapshot, error) {
-	if s == nil || s.repo == nil {
-		return core.GrantSnapshot{}, fmt.Errorf("sqlstore: grant store is not configured")
+func (s *GrantStore) appendEventTx(
+	ctx context.Context,
+	tx bun.Tx,
+	connection connectionRecord,
+	in core.AppendGrantEventInput,
+) error {
+	eventType := strings.TrimSpace(in.EventType)
+	if eventType == "" {
+		return fmt.Errorf("sqlstore: grant event type is required")
 	}
-	records, _, err := s.repo.List(ctx,
-		repository.SelectBy("connection_id", "=", strings.TrimSpace(connectionID)),
-		repository.SelectBy("event_type", "=", grantSnapshotEventType),
-		repository.OrderBy("created_at DESC"),
-		repository.SelectPaginate(1, 0),
-	)
-	if err != nil {
-		return core.GrantSnapshot{}, err
-	}
-	if len(records) == 0 {
-		return core.GrantSnapshot{}, fmt.Errorf("sqlstore: grant snapshot not found for connection %q", connectionID)
-	}
-
-	record := records[0]
-	version := 0
-	if rawVersion, ok := record.Metadata["snapshot_version"]; ok {
-		version = toInt(rawVersion)
-	}
-	capturedAt := record.CreatedAt
-	if rawCapturedAt, ok := record.Metadata["captured_at"]; ok {
-		if parsed, parseErr := time.Parse(time.RFC3339Nano, fmt.Sprint(rawCapturedAt)); parseErr == nil {
-			capturedAt = parsed
-		}
-	}
-
-	return core.GrantSnapshot{
-		ConnectionID: record.ConnectionID,
-		Version:      version,
-		Requested:    append([]string(nil), record.RequestedGrants...),
-		Granted:      append([]string(nil), record.GrantedGrants...),
-		CapturedAt:   capturedAt,
-		Metadata:     RedactMetadata(record.Metadata),
-	}, nil
-}
-
-func (s *GrantStore) AppendEvent(ctx context.Context, in core.AppendGrantEventInput) error {
-	if s == nil || s.repo == nil {
-		return fmt.Errorf("sqlstore: grant store is not configured")
-	}
-	connection, err := s.connectionRepo.GetByID(ctx, strings.TrimSpace(in.ConnectionID))
-	if err != nil {
-		return err
-	}
-
 	occurredAt := in.OccurredAt
 	if occurredAt.IsZero() {
 		occurredAt = time.Now().UTC()
@@ -194,7 +250,7 @@ func (s *GrantStore) AppendEvent(ctx context.Context, in core.AppendGrantEventIn
 		ProviderID:      connection.ProviderID,
 		ScopeType:       connection.ScopeType,
 		ScopeID:         connection.ScopeID,
-		EventType:       strings.TrimSpace(in.EventType),
+		EventType:       eventType,
 		RequestedGrants: []string{},
 		GrantedGrants:   []string{},
 		AddedGrants:     append([]string(nil), in.Added...),
@@ -202,25 +258,29 @@ func (s *GrantStore) AppendEvent(ctx context.Context, in core.AppendGrantEventIn
 		Metadata:        RedactMetadata(in.Metadata),
 		CreatedAt:       occurredAt.UTC(),
 	}
-	_, err = s.repo.Create(ctx, record)
+	_, err := s.eventRepo.CreateTx(ctx, tx, record)
 	return err
 }
 
-func toInt(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
-		if err == nil {
-			return parsed
-		}
+func (s *GrantStore) loadConnectionTx(
+	ctx context.Context,
+	tx bun.Tx,
+	connectionID string,
+) (connectionRecord, error) {
+	id := strings.TrimSpace(connectionID)
+	if id == "" {
+		return connectionRecord{}, fmt.Errorf("sqlstore: connection id is required")
 	}
-	return 0
+	record := connectionRecord{}
+	if err := tx.NewSelect().
+		Model(&record).
+		Where("?TableAlias.id = ?", id).
+		Limit(1).
+		Scan(ctx); err != nil {
+		return connectionRecord{}, err
+	}
+	return record, nil
 }
 
 var _ core.GrantStore = (*GrantStore)(nil)
+var _ core.GrantStoreTransactional = (*GrantStore)(nil)

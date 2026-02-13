@@ -31,6 +31,29 @@ func (s *CredentialStore) SaveNewVersion(ctx context.Context, in core.SaveCreden
 	}
 	in.ConnectionID = trimmedConnectionID
 	in.Status = status
+	in.EncryptionKeyID = strings.TrimSpace(in.EncryptionKeyID)
+	in.PayloadFormat = strings.TrimSpace(in.PayloadFormat)
+	if in.PayloadFormat == "" {
+		in.PayloadFormat = core.CredentialPayloadFormatLegacyToken
+	}
+	if in.PayloadVersion <= 0 {
+		in.PayloadVersion = core.CredentialPayloadVersionV1
+	}
+	if len(in.EncryptedPayload) == 0 {
+		return core.Credential{}, fmt.Errorf("sqlstore: encrypted payload is required")
+	}
+	if in.PayloadFormat == "" {
+		return core.Credential{}, fmt.Errorf("sqlstore: payload format is required")
+	}
+	if in.PayloadVersion <= 0 {
+		return core.Credential{}, fmt.Errorf("sqlstore: payload version must be greater than zero")
+	}
+	if in.EncryptionKeyID == "" {
+		return core.Credential{}, fmt.Errorf("sqlstore: encryption key id is required")
+	}
+	if in.EncryptionVersion <= 0 {
+		return core.Credential{}, fmt.Errorf("sqlstore: encryption version must be greater than zero")
+	}
 	now := time.Now().UTC()
 
 	var created core.Credential

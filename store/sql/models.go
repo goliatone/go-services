@@ -29,6 +29,8 @@ type credentialRecord struct {
 	ConnectionID      string     `bun:"connection_id,notnull"`
 	Version           int        `bun:"version,notnull"`
 	EncryptedPayload  []byte     `bun:"encrypted_payload,notnull"`
+	PayloadFormat     string     `bun:"payload_format,notnull"`
+	PayloadVersion    int        `bun:"payload_version,notnull"`
 	TokenType         string     `bun:"token_type,notnull"`
 	RequestedScopes   []string   `bun:"requested_scopes,type:jsonb,notnull"`
 	GrantedScopes     []string   `bun:"granted_scopes,type:jsonb,notnull"`
@@ -96,6 +98,23 @@ type grantEventRecord struct {
 	RemovedGrants   []string       `bun:"removed_grants,type:jsonb,notnull"`
 	Metadata        map[string]any `bun:"metadata,type:jsonb,notnull"`
 	CreatedAt       time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type grantSnapshotRecord struct {
+	bun.BaseModel `bun:"table:service_grant_snapshots,alias:sgs"`
+
+	ID              string         `bun:"id,pk"`
+	ConnectionID    string         `bun:"connection_id,notnull"`
+	ProviderID      string         `bun:"provider_id,notnull"`
+	ScopeType       string         `bun:"scope_type,notnull"`
+	ScopeID         string         `bun:"scope_id,notnull"`
+	Version         int            `bun:"version,notnull"`
+	RequestedGrants []string       `bun:"requested_grants,type:jsonb,notnull"`
+	GrantedGrants   []string       `bun:"granted_grants,type:jsonb,notnull"`
+	Metadata        map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CapturedAt      time.Time      `bun:"captured_at,nullzero,notnull"`
+	CreatedAt       time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
 }
 
 type subscriptionRecord struct {

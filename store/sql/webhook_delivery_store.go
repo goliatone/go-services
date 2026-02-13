@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,11 +36,12 @@ func NewWebhookDeliveryStore(db *bun.DB) (*WebhookDeliveryStore, error) {
 	}, nil
 }
 
-func (s *WebhookDeliveryStore) Reserve(
+func (s *WebhookDeliveryStore) Claim(
 	ctx context.Context,
 	providerID string,
 	deliveryID string,
 	payload []byte,
+	lease time.Duration,
 ) (webhooks.DeliveryRecord, bool, error) {
 	if s == nil || s.db == nil {
 		return webhooks.DeliveryRecord{}, false, fmt.Errorf("sqlstore: webhook delivery store is not configured")
@@ -48,28 +51,61 @@ func (s *WebhookDeliveryStore) Reserve(
 	if providerID == "" || deliveryID == "" {
 		return webhooks.DeliveryRecord{}, false, fmt.Errorf("sqlstore: provider id and delivery id are required")
 	}
+	if lease <= 0 {
+		lease = 30 * time.Second
+	}
+	now := time.Now().UTC()
 
 	record := &webhookDeliveryRecord{
 		ID:         uuid.NewString(),
 		ProviderID: providerID,
 		DeliveryID: deliveryID,
 		Status:     webhooks.DeliveryStatusPending,
-		Attempts:   1,
+		Attempts:   0,
 		Payload:    append([]byte(nil), payload...),
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
-	if _, err := s.db.NewInsert().Model(record).Exec(ctx); err != nil {
-		if isUniqueViolation(err) {
-			existing, getErr := s.Get(ctx, providerID, deliveryID)
-			if getErr != nil {
-				return webhooks.DeliveryRecord{}, false, getErr
-			}
-			return existing, true, nil
-		}
+	if _, err := s.db.NewInsert().
+		Model(record).
+		On("CONFLICT (provider_id, delivery_id) DO NOTHING").
+		Exec(ctx); err != nil {
 		return webhooks.DeliveryRecord{}, false, err
 	}
-	return webhookDeliveryToDomain(record), false, nil
+
+	leaseUntil := now.Add(lease).UTC()
+	result, err := s.db.NewUpdate().
+		Model((*webhookDeliveryRecord)(nil)).
+		Set("status = ?", webhooks.DeliveryStatusProcessing).
+		Set("attempts = CASE WHEN attempts < 1 THEN 1 ELSE attempts + 1 END").
+		Set("next_attempt_at = ?", leaseUntil).
+		Set("updated_at = ?", now).
+		Where("provider_id = ?", providerID).
+		Where("delivery_id = ?", deliveryID).
+		Where(
+			"(status = ? OR (status = ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)) OR (status = ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)))",
+			webhooks.DeliveryStatusPending,
+			webhooks.DeliveryStatusRetryReady,
+			now,
+			webhooks.DeliveryStatusProcessing,
+			now,
+		).
+		Exec(ctx)
+	if err != nil {
+		return webhooks.DeliveryRecord{}, false, err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	claimed, getErr := s.Get(ctx, providerID, deliveryID)
+	if getErr != nil {
+		return webhooks.DeliveryRecord{}, false, getErr
+	}
+	if rowsAffected == 0 {
+		return claimed, false, nil
+	}
+
+	claimed.ClaimID = buildDeliveryClaimID(providerID, deliveryID, claimed.Attempts)
+	return claimed, true, nil
 }
 
 func (s *WebhookDeliveryStore) Get(
@@ -100,50 +136,83 @@ func (s *WebhookDeliveryStore) Get(
 	return webhookDeliveryToDomain(record), nil
 }
 
-func (s *WebhookDeliveryStore) MarkProcessed(
-	ctx context.Context,
-	providerID string,
-	deliveryID string,
-) error {
+func (s *WebhookDeliveryStore) Complete(ctx context.Context, claimID string) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("sqlstore: webhook delivery store is not configured")
 	}
+	providerID, deliveryID, attempt, err := parseDeliveryClaimID(claimID)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
-	_, err := s.db.NewUpdate().
+	result, err := s.db.NewUpdate().
 		Model((*webhookDeliveryRecord)(nil)).
 		Set("status = ?", webhooks.DeliveryStatusProcessed).
 		Set("next_attempt_at = NULL").
 		Set("updated_at = ?", now).
-		Where("provider_id = ?", strings.TrimSpace(providerID)).
-		Where("delivery_id = ?", strings.TrimSpace(deliveryID)).
+		Where("provider_id = ?", providerID).
+		Where("delivery_id = ?", deliveryID).
+		Where("status = ?", webhooks.DeliveryStatusProcessing).
+		Where("attempts = ?", attempt).
 		Exec(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	_, _ = result.RowsAffected()
+	return nil
 }
 
-func (s *WebhookDeliveryStore) MarkRetry(
+func (s *WebhookDeliveryStore) Fail(
 	ctx context.Context,
-	providerID string,
-	deliveryID string,
+	claimID string,
 	_ error,
 	nextAttemptAt time.Time,
+	maxAttempts int,
 ) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("sqlstore: webhook delivery store is not configured")
+	}
+	providerID, deliveryID, attempt, err := parseDeliveryClaimID(claimID)
+	if err != nil {
+		return err
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 8
 	}
 	record, err := s.Get(ctx, providerID, deliveryID)
 	if err != nil {
 		return err
 	}
+	if record.Status != webhooks.DeliveryStatusProcessing || record.Attempts != attempt {
+		return nil
+	}
+
+	status := webhooks.DeliveryStatusRetryReady
+	shouldSetNextAttempt := true
+	if record.Attempts >= maxAttempts {
+		status = webhooks.DeliveryStatusDead
+		shouldSetNextAttempt = false
+	}
 	now := time.Now().UTC()
-	_, err = s.db.NewUpdate().
+	query := s.db.NewUpdate().
 		Model((*webhookDeliveryRecord)(nil)).
-		Set("status = ?", webhooks.DeliveryStatusRetryReady).
-		Set("attempts = ?", record.Attempts+1).
-		Set("next_attempt_at = ?", nextAttemptAt.UTC()).
+		Set("status = ?", status).
 		Set("updated_at = ?", now).
-		Where("provider_id = ?", strings.TrimSpace(providerID)).
-		Where("delivery_id = ?", strings.TrimSpace(deliveryID)).
-		Exec(ctx)
+		Where("provider_id = ?", providerID).
+		Where("delivery_id = ?", deliveryID).
+		Where("status = ?", webhooks.DeliveryStatusProcessing).
+		Where("attempts = ?", attempt)
+
+	if shouldSetNextAttempt {
+		if nextAttemptAt.IsZero() {
+			nextAttemptAt = now
+		}
+		query = query.Set("next_attempt_at = ?", nextAttemptAt.UTC())
+	} else {
+		query = query.Set("next_attempt_at = NULL")
+	}
+
+	_, err = query.Exec(ctx)
 	return err
 }
 
@@ -165,6 +234,35 @@ func webhookDeliveryToDomain(record *webhookDeliveryRecord) webhooks.DeliveryRec
 		result.NextAttemptAt = &value
 	}
 	return result
+}
+
+func buildDeliveryClaimID(providerID, deliveryID string, attempt int) string {
+	return fmt.Sprintf(
+		"%s|%s|%d",
+		url.QueryEscape(strings.TrimSpace(providerID)),
+		url.QueryEscape(strings.TrimSpace(deliveryID)),
+		attempt,
+	)
+}
+
+func parseDeliveryClaimID(claimID string) (string, string, int, error) {
+	parts := strings.Split(strings.TrimSpace(claimID), "|")
+	if len(parts) != 3 {
+		return "", "", 0, fmt.Errorf("sqlstore: invalid delivery claim id")
+	}
+	providerID, err := url.QueryUnescape(parts[0])
+	if err != nil {
+		return "", "", 0, fmt.Errorf("sqlstore: invalid delivery claim id: %w", err)
+	}
+	deliveryID, err := url.QueryUnescape(parts[1])
+	if err != nil {
+		return "", "", 0, fmt.Errorf("sqlstore: invalid delivery claim id: %w", err)
+	}
+	attempt, err := strconv.Atoi(parts[2])
+	if err != nil || attempt <= 0 {
+		return "", "", 0, fmt.Errorf("sqlstore: invalid delivery claim id")
+	}
+	return strings.TrimSpace(providerID), strings.TrimSpace(deliveryID), attempt, nil
 }
 
 func isUniqueViolation(err error) bool {

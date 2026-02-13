@@ -146,6 +146,20 @@ func (s *ActivityStore) List(ctx context.Context, filter core.ServicesActivityFi
 	if filter.To != nil {
 		selectors = append(selectors, repository.SelectByTimetz("created_at", "<=", filter.To.UTC()))
 	}
+	if len(filter.Connections) > 0 {
+		connectionIDs := make([]string, 0, len(filter.Connections))
+		for _, connectionID := range filter.Connections {
+			trimmed := strings.TrimSpace(connectionID)
+			if trimmed != "" {
+				connectionIDs = append(connectionIDs, trimmed)
+			}
+		}
+		if len(connectionIDs) > 0 {
+			selectors = append(selectors, repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("?TableAlias.connection_id IN (?)", bun.In(connectionIDs))
+			}))
+		}
+	}
 
 	records, total, err := s.repo.List(ctx, selectors...)
 	if err != nil {

@@ -41,10 +41,20 @@ func (r *connectionRecord) toDomain() core.Connection {
 }
 
 func newCredentialRecord(in core.SaveCredentialInput, version int, now time.Time) *credentialRecord {
+	payloadFormat := in.PayloadFormat
+	if payloadFormat == "" {
+		payloadFormat = core.CredentialPayloadFormatLegacyToken
+	}
+	payloadVersion := in.PayloadVersion
+	if payloadVersion <= 0 {
+		payloadVersion = core.CredentialPayloadVersionV1
+	}
 	record := &credentialRecord{
 		ConnectionID:      in.ConnectionID,
 		Version:           version,
 		EncryptedPayload:  append([]byte(nil), in.EncryptedPayload...),
+		PayloadFormat:     payloadFormat,
+		PayloadVersion:    payloadVersion,
 		TokenType:         in.TokenType,
 		RequestedScopes:   append([]string(nil), in.RequestedScopes...),
 		GrantedScopes:     append([]string(nil), in.GrantedScopes...),
@@ -76,6 +86,8 @@ func (r *credentialRecord) toDomain() core.Credential {
 		ConnectionID:     r.ConnectionID,
 		Version:          r.Version,
 		EncryptedPayload: append([]byte(nil), r.EncryptedPayload...),
+		PayloadFormat:    r.PayloadFormat,
+		PayloadVersion:   r.PayloadVersion,
 		TokenType:        r.TokenType,
 		RequestedScopes:  append([]string(nil), r.RequestedScopes...),
 		GrantedScopes:    append([]string(nil), r.GrantedScopes...),

@@ -93,29 +93,46 @@ func (s *OutboxStore) ClaimBatch(ctx context.Context, limit int) ([]core.Lifecyc
 	now := time.Now().UTC()
 	var records []lifecycleOutboxRecord
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := tx.NewSelect().
-			Model(&records).
-			Where("status = ?", outboxStatusPending).
-			Where("next_attempt_at IS NULL OR next_attempt_at <= ?", now).
-			OrderExpr("occurred_at ASC").
-			Limit(limit).
-			Scan(ctx); err != nil {
-			return err
-		}
-		if len(records) == 0 {
-			return nil
-		}
-		ids := make([]string, 0, len(records))
-		for _, record := range records {
-			ids = append(ids, record.ID)
-		}
-		_, err := tx.NewUpdate().
-			Model((*lifecycleOutboxRecord)(nil)).
-			Set("status = ?", outboxStatusProcessing).
-			Set("updated_at = ?", now).
-			Where("id IN (?)", bun.In(ids)).
-			Exec(ctx)
-		return err
+		query := `
+WITH claimed AS (
+	SELECT id
+	FROM service_lifecycle_outbox
+	WHERE status = ?
+	  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+	ORDER BY occurred_at ASC
+	LIMIT ?
+)
+UPDATE service_lifecycle_outbox
+SET status = ?, updated_at = ?
+WHERE id IN (SELECT id FROM claimed)
+  AND status = ?
+RETURNING
+	id,
+	event_id,
+	event_name,
+	provider_id,
+	scope_type,
+	scope_id,
+	connection_id,
+	payload,
+	metadata,
+	status,
+	attempts,
+	next_attempt_at,
+	last_error,
+	occurred_at,
+	created_at,
+	updated_at
+`
+		return tx.NewRaw(
+			query,
+			outboxStatusPending,
+			now,
+			limit,
+			outboxStatusProcessing,
+			now,
+			outboxStatusPending,
+		).Scan(ctx, &records)
 	})
 	if err != nil {
 		return nil, err

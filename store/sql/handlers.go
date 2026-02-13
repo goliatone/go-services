@@ -152,6 +152,35 @@ func grantEventHandlers() repository.ModelHandlers[*grantEventRecord] {
 	}
 }
 
+func grantSnapshotHandlers() repository.ModelHandlers[*grantSnapshotRecord] {
+	return repository.ModelHandlers[*grantSnapshotRecord]{
+		NewRecord: func() *grantSnapshotRecord {
+			return &grantSnapshotRecord{}
+		},
+		GetID: func(record *grantSnapshotRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *grantSnapshotRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *grantSnapshotRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
 func subscriptionHandlers() repository.ModelHandlers[*subscriptionRecord] {
 	return repository.ModelHandlers[*subscriptionRecord]{
 		NewRecord: func() *subscriptionRecord {
