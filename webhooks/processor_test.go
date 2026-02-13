@@ -107,6 +107,120 @@ func TestProcessor_RejectsInvalidSignature(t *testing.T) {
 	}
 }
 
+func TestProcessor_CoalescesWebhookBurstsByChannel(t *testing.T) {
+	ledger := newMemoryDeliveryLedger()
+	handler := &stubWebhookHandler{
+		result: core.InboundResult{Accepted: true, StatusCode: 202},
+	}
+	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
+	processor := NewProcessor(stubVerifier{}, ledger, handler)
+	processor.Burst = NewBurstController(BurstOptions{
+		Mode:   BurstModeCoalesce,
+		Window: 10 * time.Second,
+		Now: func() time.Time {
+			return now
+		},
+	})
+
+	first, err := processor.Process(context.Background(), core.InboundRequest{
+		ProviderID: "github",
+		Metadata: map[string]any{
+			"delivery_id": "delivery-1",
+			"channel_id":  "channel-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("process first burst webhook: %v", err)
+	}
+	if !first.Accepted {
+		t.Fatalf("expected first webhook accepted")
+	}
+	if handler.calls != 1 {
+		t.Fatalf("expected handler calls=1, got %d", handler.calls)
+	}
+
+	now = now.Add(2 * time.Second)
+	second, err := processor.Process(context.Background(), core.InboundRequest{
+		ProviderID: "github",
+		Metadata: map[string]any{
+			"delivery_id": "delivery-2",
+			"channel_id":  "channel-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("process coalesced webhook: %v", err)
+	}
+	if !second.Accepted {
+		t.Fatalf("expected coalesced webhook accepted")
+	}
+	if second.Metadata["coalesced"] != true {
+		t.Fatalf("expected coalesced metadata marker")
+	}
+	if handler.calls != 1 {
+		t.Fatalf("expected handler calls to remain 1 for coalesced webhook")
+	}
+}
+
+func TestProcessor_DebounceWindowAllowsAfterQuietPeriod(t *testing.T) {
+	ledger := newMemoryDeliveryLedger()
+	handler := &stubWebhookHandler{
+		result: core.InboundResult{Accepted: true, StatusCode: 202},
+	}
+	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
+	processor := NewProcessor(stubVerifier{}, ledger, handler)
+	processor.Burst = NewBurstController(BurstOptions{
+		Mode:   BurstModeDebounce,
+		Window: 5 * time.Second,
+		Now: func() time.Time {
+			return now
+		},
+	})
+
+	_, err := processor.Process(context.Background(), core.InboundRequest{
+		ProviderID: "github",
+		Metadata: map[string]any{
+			"delivery_id": "delivery-1",
+			"channel_id":  "channel-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("process first webhook: %v", err)
+	}
+
+	now = now.Add(2 * time.Second)
+	second, err := processor.Process(context.Background(), core.InboundRequest{
+		ProviderID: "github",
+		Metadata: map[string]any{
+			"delivery_id": "delivery-2",
+			"channel_id":  "channel-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("process debounced webhook: %v", err)
+	}
+	if second.Metadata["debounced"] != true {
+		t.Fatalf("expected debounced metadata marker")
+	}
+	if handler.calls != 1 {
+		t.Fatalf("expected handler calls=1 while within debounce window")
+	}
+
+	now = now.Add(6 * time.Second)
+	_, err = processor.Process(context.Background(), core.InboundRequest{
+		ProviderID: "github",
+		Metadata: map[string]any{
+			"delivery_id": "delivery-3",
+			"channel_id":  "channel-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("process webhook after debounce window: %v", err)
+	}
+	if handler.calls != 2 {
+		t.Fatalf("expected handler calls=2 after quiet period, got %d", handler.calls)
+	}
+}
+
 type stubVerifier struct {
 	err error
 }

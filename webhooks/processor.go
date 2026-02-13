@@ -81,6 +81,7 @@ type Processor struct {
 	Ledger      DeliveryLedger
 	Handler     Handler
 	ExtractID   DeliveryIDExtractor
+	Burst       BurstController
 	RetryPolicy RetryPolicy
 	Now         func() time.Time
 }
@@ -145,6 +146,27 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 				"deduped":     true,
 			},
 		}, nil
+	}
+
+	if p.Burst != nil {
+		decision, burstErr := p.Burst.Allow(ctx, req)
+		if burstErr != nil {
+			return core.InboundResult{}, burstErr
+		}
+		if !decision.Allow {
+			if markErr := p.Ledger.MarkProcessed(ctx, providerID, deliveryID); markErr != nil {
+				return core.InboundResult{}, markErr
+			}
+			metadata := ensureMetadata(decision.Metadata)
+			metadata["provider_id"] = providerID
+			metadata["delivery_id"] = deliveryID
+			metadata["deduped"] = true
+			return core.InboundResult{
+				Accepted:   true,
+				StatusCode: http.StatusOK,
+				Metadata:   metadata,
+			}, nil
+		}
 	}
 
 	result, err := p.Handler.Handle(ctx, req)
