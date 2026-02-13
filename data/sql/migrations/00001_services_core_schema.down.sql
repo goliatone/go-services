@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS service_sync_jobs;
+DROP TABLE IF EXISTS service_rate_limit_state;
+DROP TABLE IF EXISTS service_installations;
+DROP TABLE IF EXISTS service_sync_cursors;
+DROP TABLE IF EXISTS service_subscriptions;
+DROP TABLE IF EXISTS service_webhook_deliveries;
+DROP TABLE IF EXISTS service_grant_events;
+DROP TABLE IF EXISTS service_notification_dispatches;
+DROP TABLE IF EXISTS service_lifecycle_outbox;
+DROP TABLE IF EXISTS service_activity_entries;
+DROP TABLE IF EXISTS service_events;
+DROP TABLE IF EXISTS service_credentials;
+DROP TABLE IF EXISTS service_connections;

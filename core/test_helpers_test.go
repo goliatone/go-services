@@ -130,6 +130,7 @@ func (s *memoryCredentialStore) SaveNewVersion(_ context.Context, in SaveCredent
 		ID:              fmt.Sprintf("cred_%d", s.next),
 		ConnectionID:    in.ConnectionID,
 		Version:         s.next,
+		EncryptedPayload: append([]byte(nil), in.EncryptedPayload...),
 		TokenType:       in.TokenType,
 		RequestedScopes: append([]string(nil), in.RequestedScopes...),
 		GrantedScopes:   append([]string(nil), in.GrantedScopes...),
