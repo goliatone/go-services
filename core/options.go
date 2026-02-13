@@ -28,24 +28,24 @@ type OptionsResolver interface {
 }
 
 type serviceBuilder struct {
-	runtimeConfig     Config
-	logger            Logger
-	loggerProvider    LoggerProvider
-	errorFactory      ErrorFactory
-	errorMapper       ErrorMapper
-	persistenceClient any
-	repositoryFactory any
-	configProvider    ConfigProvider
-	optionsResolver   OptionsResolver
-	oauthStateStore   OAuthStateStore
-	connectionLocker  ConnectionLocker
-	refreshScheduler  RefreshBackoffScheduler
-	signer            Signer
-	inheritancePolicy InheritancePolicy
-	registry          Registry
-	connectionStore   ConnectionStore
-	credentialStore   CredentialStore
-	grantStore        GrantStore
+	runtimeConfig       Config
+	logger              Logger
+	loggerProvider      LoggerProvider
+	errorFactory        ErrorFactory
+	errorMapper         ErrorMapper
+	persistenceClient   any
+	repositoryFactory   any
+	configProvider      ConfigProvider
+	optionsResolver     OptionsResolver
+	oauthStateStore     OAuthStateStore
+	connectionLocker    ConnectionLocker
+	refreshScheduler    RefreshBackoffScheduler
+	signer              Signer
+	inheritancePolicy   InheritancePolicy
+	registry            Registry
+	connectionStore     ConnectionStore
+	credentialStore     CredentialStore
+	grantStore          GrantStore
 	permissionEvaluator PermissionEvaluator
 }
 

@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	GrantEventExpanded          = "expanded"
-	GrantEventDowngraded        = "downgraded"
-	GrantEventRevoked           = "revoked"
+	GrantEventExpanded           = "expanded"
+	GrantEventDowngraded         = "downgraded"
+	GrantEventRevoked            = "revoked"
 	GrantEventReconsentRequested = "reconsent_requested"
 	GrantEventReconsentCompleted = "reconsent_completed"
 )

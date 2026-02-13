@@ -127,15 +127,15 @@ func (s *memoryCredentialStore) SaveNewVersion(_ context.Context, in SaveCredent
 	defer s.mu.Unlock()
 	s.next++
 	credential := Credential{
-		ID:              fmt.Sprintf("cred_%d", s.next),
-		ConnectionID:    in.ConnectionID,
-		Version:         s.next,
+		ID:               fmt.Sprintf("cred_%d", s.next),
+		ConnectionID:     in.ConnectionID,
+		Version:          s.next,
 		EncryptedPayload: append([]byte(nil), in.EncryptedPayload...),
-		TokenType:       in.TokenType,
-		RequestedScopes: append([]string(nil), in.RequestedScopes...),
-		GrantedScopes:   append([]string(nil), in.GrantedScopes...),
-		Status:          in.Status,
-		Refreshable:     in.Refreshable,
+		TokenType:        in.TokenType,
+		RequestedScopes:  append([]string(nil), in.RequestedScopes...),
+		GrantedScopes:    append([]string(nil), in.GrantedScopes...),
+		Status:           in.Status,
+		Refreshable:      in.Refreshable,
 	}
 	if in.ExpiresAt != nil {
 		credential.ExpiresAt = *in.ExpiresAt

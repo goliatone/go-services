@@ -116,4 +116,3 @@ func missingGrants(required []string, granted map[string]struct{}) []string {
 }
 
 var _ PermissionEvaluator = (*GrantPermissionEvaluator)(nil)
-

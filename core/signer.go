@@ -73,4 +73,3 @@ func (s *Service) SignRequest(
 	}
 	return nil
 }
-

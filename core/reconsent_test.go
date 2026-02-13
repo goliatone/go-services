@@ -140,4 +140,3 @@ func TestCompleteReconsent_RecoversExistingConnectionState(t *testing.T) {
 		t.Fatalf("expected reconsent_completed event")
 	}
 }
-

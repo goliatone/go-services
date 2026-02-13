@@ -127,4 +127,3 @@ func TestInvokeCapability_DegradesWhenOptionalGrantMissing(t *testing.T) {
 		t.Fatalf("expected degrade mode, got %q", result.Mode)
 	}
 }
-

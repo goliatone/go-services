@@ -17,47 +17,47 @@ var (
 )
 
 type Service struct {
-	config            Config
-	logger            Logger
-	loggerProvider    LoggerProvider
-	errorFactory      ErrorFactory
-	errorMapper       ErrorMapper
-	persistenceClient any
-	repositoryFactory any
-	configProvider    ConfigProvider
-	optionsResolver   OptionsResolver
-	oauthStateStore   OAuthStateStore
-	connectionLocker  ConnectionLocker
+	config                  Config
+	logger                  Logger
+	loggerProvider          LoggerProvider
+	errorFactory            ErrorFactory
+	errorMapper             ErrorMapper
+	persistenceClient       any
+	repositoryFactory       any
+	configProvider          ConfigProvider
+	optionsResolver         OptionsResolver
+	oauthStateStore         OAuthStateStore
+	connectionLocker        ConnectionLocker
 	refreshBackoffScheduler RefreshBackoffScheduler
-	signer            Signer
-	registry          Registry
-	connectionStore   ConnectionStore
-	credentialStore   CredentialStore
-	grantStore        GrantStore
-	permissionEvaluator PermissionEvaluator
-	strictPolicy      InheritancePolicy
-	inheritancePolicy InheritancePolicy
+	signer                  Signer
+	registry                Registry
+	connectionStore         ConnectionStore
+	credentialStore         CredentialStore
+	grantStore              GrantStore
+	permissionEvaluator     PermissionEvaluator
+	strictPolicy            InheritancePolicy
+	inheritancePolicy       InheritancePolicy
 }
 
 type ServiceDependencies struct {
-	Logger            Logger
-	LoggerProvider    LoggerProvider
-	ErrorFactory      ErrorFactory
-	ErrorMapper       ErrorMapper
-	PersistenceClient any
-	RepositoryFactory any
-	ConfigProvider    ConfigProvider
-	OptionsResolver   OptionsResolver
-	OAuthStateStore   OAuthStateStore
-	ConnectionLocker  ConnectionLocker
-	RefreshScheduler  RefreshBackoffScheduler
-	Signer            Signer
-	Registry          Registry
-	ConnectionStore   ConnectionStore
-	CredentialStore   CredentialStore
-	GrantStore        GrantStore
+	Logger              Logger
+	LoggerProvider      LoggerProvider
+	ErrorFactory        ErrorFactory
+	ErrorMapper         ErrorMapper
+	PersistenceClient   any
+	RepositoryFactory   any
+	ConfigProvider      ConfigProvider
+	OptionsResolver     OptionsResolver
+	OAuthStateStore     OAuthStateStore
+	ConnectionLocker    ConnectionLocker
+	RefreshScheduler    RefreshBackoffScheduler
+	Signer              Signer
+	Registry            Registry
+	ConnectionStore     ConnectionStore
+	CredentialStore     CredentialStore
+	GrantStore          GrantStore
 	PermissionEvaluator PermissionEvaluator
-	InheritancePolicy InheritancePolicy
+	InheritancePolicy   InheritancePolicy
 }
 
 func NewService(cfg Config, opts ...Option) (*Service, error) {
@@ -156,26 +156,26 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 	}
 
 	return &Service{
-		config:            finalConfig,
-		logger:            logger,
-		loggerProvider:    provider,
-		errorFactory:      builder.errorFactory,
-		errorMapper:       builder.errorMapper,
-		persistenceClient: builder.persistenceClient,
-		repositoryFactory: builder.repositoryFactory,
-		configProvider:    builder.configProvider,
-		optionsResolver:   builder.optionsResolver,
-		oauthStateStore:   builder.oauthStateStore,
-		connectionLocker:  builder.connectionLocker,
+		config:                  finalConfig,
+		logger:                  logger,
+		loggerProvider:          provider,
+		errorFactory:            builder.errorFactory,
+		errorMapper:             builder.errorMapper,
+		persistenceClient:       builder.persistenceClient,
+		repositoryFactory:       builder.repositoryFactory,
+		configProvider:          builder.configProvider,
+		optionsResolver:         builder.optionsResolver,
+		oauthStateStore:         builder.oauthStateStore,
+		connectionLocker:        builder.connectionLocker,
 		refreshBackoffScheduler: builder.refreshScheduler,
-		signer:            builder.signer,
-		registry:          builder.registry,
-		connectionStore:   builder.connectionStore,
-		credentialStore:   builder.credentialStore,
-		grantStore:        builder.grantStore,
-		permissionEvaluator: builder.permissionEvaluator,
-		strictPolicy:      strict,
-		inheritancePolicy: inheritancePolicy,
+		signer:                  builder.signer,
+		registry:                builder.registry,
+		connectionStore:         builder.connectionStore,
+		credentialStore:         builder.credentialStore,
+		grantStore:              builder.grantStore,
+		permissionEvaluator:     builder.permissionEvaluator,
+		strictPolicy:            strict,
+		inheritancePolicy:       inheritancePolicy,
 	}, nil
 }
 
@@ -209,24 +209,24 @@ func (s *Service) Dependencies() ServiceDependencies {
 		return ServiceDependencies{}
 	}
 	return ServiceDependencies{
-		Logger:            s.logger,
-		LoggerProvider:    s.loggerProvider,
-		ErrorFactory:      s.errorFactory,
-		ErrorMapper:       s.errorMapper,
-		PersistenceClient: s.persistenceClient,
-		RepositoryFactory: s.repositoryFactory,
-		ConfigProvider:    s.configProvider,
-		OptionsResolver:   s.optionsResolver,
-		OAuthStateStore:   s.oauthStateStore,
-		ConnectionLocker:  s.connectionLocker,
-		RefreshScheduler:  s.refreshBackoffScheduler,
-		Signer:            s.signer,
-		Registry:          s.registry,
-		ConnectionStore:   s.connectionStore,
-		CredentialStore:   s.credentialStore,
-		GrantStore:        s.grantStore,
+		Logger:              s.logger,
+		LoggerProvider:      s.loggerProvider,
+		ErrorFactory:        s.errorFactory,
+		ErrorMapper:         s.errorMapper,
+		PersistenceClient:   s.persistenceClient,
+		RepositoryFactory:   s.repositoryFactory,
+		ConfigProvider:      s.configProvider,
+		OptionsResolver:     s.optionsResolver,
+		OAuthStateStore:     s.oauthStateStore,
+		ConnectionLocker:    s.connectionLocker,
+		RefreshScheduler:    s.refreshBackoffScheduler,
+		Signer:              s.signer,
+		Registry:            s.registry,
+		ConnectionStore:     s.connectionStore,
+		CredentialStore:     s.credentialStore,
+		GrantStore:          s.grantStore,
 		PermissionEvaluator: s.permissionEvaluator,
-		InheritancePolicy: s.inheritancePolicy,
+		InheritancePolicy:   s.inheritancePolicy,
 	}
 }
 

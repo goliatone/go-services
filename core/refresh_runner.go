@@ -10,11 +10,13 @@ import (
 	goerrors "github.com/goliatone/go-errors"
 )
 
+type refreshLockContextKey struct{}
+
 const (
-	defaultRefreshMaxAttempts   = 3
+	defaultRefreshMaxAttempts    = 3
 	defaultRefreshInitialBackoff = 500 * time.Millisecond
-	defaultRefreshMaxBackoff    = 10 * time.Second
-	defaultRefreshLockTTL       = 30 * time.Second
+	defaultRefreshMaxBackoff     = 10 * time.Second
+	defaultRefreshLockTTL        = 30 * time.Second
 )
 
 type LockHandle interface {
@@ -99,6 +101,7 @@ func (s *Service) RunRefreshWithRetry(ctx context.Context, req RefreshRequest, o
 		}
 	}
 	defer unlock()
+	ctx = context.WithValue(ctx, refreshLockContextKey{}, connectionID)
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -127,6 +130,14 @@ func (s *Service) RunRefreshWithRetry(ctx context.Context, req RefreshRequest, o
 	}
 
 	return RefreshRunResult{Attempts: maxAttempts}, s.mapError(lastErr)
+}
+
+func isRefreshLockHeld(ctx context.Context, connectionID string) bool {
+	if ctx == nil {
+		return false
+	}
+	value, _ := ctx.Value(refreshLockContextKey{}).(string)
+	return strings.TrimSpace(value) == strings.TrimSpace(connectionID)
 }
 
 func (s *Service) transitionConnectionToPendingReauth(ctx context.Context, connectionID string, source error) error {
@@ -203,9 +214,9 @@ func waitWithContext(ctx context.Context, delay time.Duration) error {
 }
 
 type MemoryConnectionLocker struct {
-	mu     sync.Mutex
-	locks  map[string]time.Time
-	nowFn  func() time.Time
+	mu    sync.Mutex
+	locks map[string]time.Time
+	nowFn func() time.Time
 }
 
 func NewMemoryConnectionLocker() *MemoryConnectionLocker {

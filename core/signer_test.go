@@ -87,4 +87,3 @@ func (s staticSigner) Sign(_ context.Context, req *http.Request, _ ActiveCredent
 	req.Header.Set(s.header, s.value)
 	return nil
 }
-

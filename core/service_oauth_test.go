@@ -114,4 +114,3 @@ func (s *spyProvider) CompleteAuth(ctx context.Context, req CompleteAuthRequest)
 	s.completeCalls++
 	return s.testProvider.CompleteAuth(ctx, req)
 }
-

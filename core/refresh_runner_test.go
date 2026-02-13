@@ -172,4 +172,3 @@ func (p *scriptedRefreshProvider) Refresh(ctx context.Context, cred ActiveCreden
 	}
 	return p.testProvider.Refresh(ctx, cred)
 }
-

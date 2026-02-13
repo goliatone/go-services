@@ -187,9 +187,9 @@ type grantScenarioProvider struct {
 	refreshResponse  RefreshResult
 }
 
-func (p *grantScenarioProvider) ID() string { return p.id }
-func (p *grantScenarioProvider) AuthKind() string { return "oauth2" }
-func (p *grantScenarioProvider) SupportedScopeTypes() []string { return []string{"user", "org"} }
+func (p *grantScenarioProvider) ID() string                           { return p.id }
+func (p *grantScenarioProvider) AuthKind() string                     { return "oauth2" }
+func (p *grantScenarioProvider) SupportedScopeTypes() []string        { return []string{"user", "org"} }
 func (p *grantScenarioProvider) Capabilities() []CapabilityDescriptor { return nil }
 
 func (p *grantScenarioProvider) BeginAuth(_ context.Context, req BeginAuthRequest) (BeginAuthResponse, error) {
@@ -207,4 +207,3 @@ func (p *grantScenarioProvider) CompleteAuth(_ context.Context, _ CompleteAuthRe
 func (p *grantScenarioProvider) Refresh(_ context.Context, _ ActiveCredential) (RefreshResult, error) {
 	return p.refreshResponse, nil
 }
-
