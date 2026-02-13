@@ -33,6 +33,8 @@ type Service struct {
 	registry                Registry
 	connectionStore         ConnectionStore
 	credentialStore         CredentialStore
+	subscriptionStore       SubscriptionStore
+	syncCursorStore         SyncCursorStore
 	grantStore              GrantStore
 	permissionEvaluator     PermissionEvaluator
 	strictPolicy            InheritancePolicy
@@ -55,6 +57,8 @@ type ServiceDependencies struct {
 	Registry            Registry
 	ConnectionStore     ConnectionStore
 	CredentialStore     CredentialStore
+	SubscriptionStore   SubscriptionStore
+	SyncCursorStore     SyncCursorStore
 	GrantStore          GrantStore
 	PermissionEvaluator PermissionEvaluator
 	InheritancePolicy   InheritancePolicy
@@ -141,6 +145,16 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 			}
 		}
 	}
+	if builder.subscriptionStore == nil && builder.repositoryFactory != nil {
+		if provider, ok := builder.repositoryFactory.(interface{ SubscriptionStore() SubscriptionStore }); ok {
+			builder.subscriptionStore = provider.SubscriptionStore()
+		}
+	}
+	if builder.syncCursorStore == nil && builder.repositoryFactory != nil {
+		if provider, ok := builder.repositoryFactory.(interface{ SyncCursorStore() SyncCursorStore }); ok {
+			builder.syncCursorStore = provider.SyncCursorStore()
+		}
+	}
 	if builder.permissionEvaluator == nil {
 		builder.permissionEvaluator = NewGrantPermissionEvaluator(
 			builder.connectionStore,
@@ -172,6 +186,8 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		registry:                builder.registry,
 		connectionStore:         builder.connectionStore,
 		credentialStore:         builder.credentialStore,
+		subscriptionStore:       builder.subscriptionStore,
+		syncCursorStore:         builder.syncCursorStore,
 		grantStore:              builder.grantStore,
 		permissionEvaluator:     builder.permissionEvaluator,
 		strictPolicy:            strict,
@@ -224,6 +240,8 @@ func (s *Service) Dependencies() ServiceDependencies {
 		Registry:            s.registry,
 		ConnectionStore:     s.connectionStore,
 		CredentialStore:     s.credentialStore,
+		SubscriptionStore:   s.subscriptionStore,
+		SyncCursorStore:     s.syncCursorStore,
 		GrantStore:          s.grantStore,
 		PermissionEvaluator: s.permissionEvaluator,
 		InheritancePolicy:   s.inheritancePolicy,

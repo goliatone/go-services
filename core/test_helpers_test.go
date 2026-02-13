@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -256,6 +257,198 @@ func (s *memoryGrantStore) Events(connectionID string) []AppendGrantEventInput {
 		})
 	}
 	return out
+}
+
+type memorySubscriptionStore struct {
+	mu     sync.Mutex
+	next   int
+	byID   map[string]Subscription
+	byPair map[string]string
+}
+
+func newMemorySubscriptionStore() *memorySubscriptionStore {
+	return &memorySubscriptionStore{
+		byID:   map[string]Subscription{},
+		byPair: map[string]string{},
+	}
+}
+
+func (s *memorySubscriptionStore) Upsert(_ context.Context, in UpsertSubscriptionInput) (Subscription, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := in.ProviderID + ":" + in.ChannelID
+	id := s.byPair[key]
+	if id == "" {
+		s.next++
+		id = fmt.Sprintf("sub_%d", s.next)
+		s.byPair[key] = id
+	}
+
+	record := s.byID[id]
+	record.ID = id
+	record.ConnectionID = in.ConnectionID
+	record.ProviderID = in.ProviderID
+	record.ResourceType = in.ResourceType
+	record.ResourceID = in.ResourceID
+	record.ChannelID = in.ChannelID
+	record.RemoteSubscriptionID = in.RemoteSubscriptionID
+	record.CallbackURL = in.CallbackURL
+	record.VerificationTokenRef = in.VerificationTokenRef
+	record.Status = in.Status
+	record.Metadata = copyAnyMap(in.Metadata)
+	now := time.Now().UTC()
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = now
+	}
+	record.UpdatedAt = now
+	if in.ExpiresAt != nil {
+		record.ExpiresAt = *in.ExpiresAt
+	} else {
+		record.ExpiresAt = time.Time{}
+	}
+	s.byID[id] = record
+	return record, nil
+}
+
+func (s *memorySubscriptionStore) Get(_ context.Context, id string) (Subscription, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.byID[id]
+	if !ok {
+		return Subscription{}, fmt.Errorf("missing subscription")
+	}
+	return record, nil
+}
+
+func (s *memorySubscriptionStore) GetByChannelID(_ context.Context, providerID, channelID string) (Subscription, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := s.byPair[providerID+":"+channelID]
+	if id == "" {
+		return Subscription{}, fmt.Errorf("missing subscription")
+	}
+	return s.byID[id], nil
+}
+
+func (s *memorySubscriptionStore) ListExpiring(_ context.Context, before time.Time) ([]Subscription, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []Subscription{}
+	for _, record := range s.byID {
+		if record.Status != SubscriptionStatusActive || record.ExpiresAt.IsZero() {
+			continue
+		}
+		if record.ExpiresAt.Before(before) || record.ExpiresAt.Equal(before) {
+			out = append(out, record)
+		}
+	}
+	return out, nil
+}
+
+func (s *memorySubscriptionStore) UpdateState(_ context.Context, id string, status string, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.byID[id]
+	if !ok {
+		return fmt.Errorf("missing subscription")
+	}
+	record.Status = SubscriptionStatus(status)
+	record.Metadata = copyAnyMap(record.Metadata)
+	if strings.TrimSpace(reason) != "" {
+		record.Metadata["status_reason"] = strings.TrimSpace(reason)
+	}
+	record.UpdatedAt = time.Now().UTC()
+	s.byID[id] = record
+	return nil
+}
+
+type memorySyncCursorStore struct {
+	mu      sync.Mutex
+	next    int
+	records map[string]SyncCursor
+}
+
+func newMemorySyncCursorStore() *memorySyncCursorStore {
+	return &memorySyncCursorStore{
+		records: map[string]SyncCursor{},
+	}
+}
+
+func (s *memorySyncCursorStore) Get(_ context.Context, connectionID string, resourceType string, resourceID string) (SyncCursor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, record := range s.records {
+		if record.ConnectionID != connectionID {
+			continue
+		}
+		if record.ResourceType != resourceType || record.ResourceID != resourceID {
+			continue
+		}
+		return record, nil
+	}
+	return SyncCursor{}, fmt.Errorf("missing cursor")
+}
+
+func (s *memorySyncCursorStore) Upsert(_ context.Context, in UpsertSyncCursorInput) (SyncCursor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := syncCursorKey(in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
+	record := s.records[key]
+	if record.ID == "" {
+		s.next++
+		record.ID = fmt.Sprintf("cursor_%d", s.next)
+		record.CreatedAt = time.Now().UTC()
+	}
+	record.ConnectionID = in.ConnectionID
+	record.ProviderID = in.ProviderID
+	record.ResourceType = in.ResourceType
+	record.ResourceID = in.ResourceID
+	record.Cursor = in.Cursor
+	record.Status = in.Status
+	record.Metadata = copyAnyMap(in.Metadata)
+	record.UpdatedAt = time.Now().UTC()
+	if in.LastSyncedAt != nil {
+		record.LastSyncedAt = *in.LastSyncedAt
+	}
+	s.records[key] = record
+	return record, nil
+}
+
+func (s *memorySyncCursorStore) Advance(_ context.Context, in AdvanceSyncCursorInput) (SyncCursor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := syncCursorKey(in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
+	record, ok := s.records[key]
+	if !ok {
+		if strings.TrimSpace(in.ExpectedCursor) != "" {
+			return SyncCursor{}, ErrSyncCursorConflict
+		}
+		s.next++
+		record = SyncCursor{
+			ID:           fmt.Sprintf("cursor_%d", s.next),
+			ConnectionID: in.ConnectionID,
+			ProviderID:   in.ProviderID,
+			ResourceType: in.ResourceType,
+			ResourceID:   in.ResourceID,
+			CreatedAt:    time.Now().UTC(),
+		}
+	}
+	if strings.TrimSpace(in.ExpectedCursor) != "" && in.ExpectedCursor != record.Cursor {
+		return SyncCursor{}, ErrSyncCursorConflict
+	}
+	record.Cursor = in.Cursor
+	record.Status = in.Status
+	record.Metadata = copyAnyMap(in.Metadata)
+	record.UpdatedAt = time.Now().UTC()
+	if in.LastSyncedAt != nil {
+		record.LastSyncedAt = *in.LastSyncedAt
+	}
+	s.records[key] = record
+	return record, nil
+}
+
+func syncCursorKey(connectionID string, providerID string, resourceType string, resourceID string) string {
+	return connectionID + ":" + providerID + ":" + resourceType + ":" + resourceID
 }
 
 func scopeKey(providerID string, scope ScopeRef) string {

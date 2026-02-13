@@ -45,6 +45,8 @@ type serviceBuilder struct {
 	registry            Registry
 	connectionStore     ConnectionStore
 	credentialStore     CredentialStore
+	subscriptionStore   SubscriptionStore
+	syncCursorStore     SyncCursorStore
 	grantStore          GrantStore
 	permissionEvaluator PermissionEvaluator
 }
@@ -144,6 +146,18 @@ func WithConnectionStore(store ConnectionStore) Option {
 func WithCredentialStore(store CredentialStore) Option {
 	return func(b *serviceBuilder) {
 		b.credentialStore = store
+	}
+}
+
+func WithSubscriptionStore(store SubscriptionStore) Option {
+	return func(b *serviceBuilder) {
+		b.subscriptionStore = store
+	}
+}
+
+func WithSyncCursorStore(store SyncCursorStore) Option {
+	return func(b *serviceBuilder) {
+		b.syncCursorStore = store
 	}
 }
 

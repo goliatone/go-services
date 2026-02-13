@@ -135,6 +135,18 @@ type UpsertSyncCursorInput struct {
 	Metadata     map[string]any
 }
 
+type AdvanceSyncCursorInput struct {
+	ConnectionID   string
+	ProviderID     string
+	ResourceType   string
+	ResourceID     string
+	ExpectedCursor string
+	Cursor         string
+	LastSyncedAt   *time.Time
+	Status         string
+	Metadata       map[string]any
+}
+
 type SubscribeRequest struct {
 	ConnectionID string
 	ResourceType string
@@ -499,6 +511,7 @@ type WebhookRouter interface {
 
 type SubscriptionStore interface {
 	Upsert(ctx context.Context, in UpsertSubscriptionInput) (Subscription, error)
+	Get(ctx context.Context, id string) (Subscription, error)
 	GetByChannelID(ctx context.Context, providerID, channelID string) (Subscription, error)
 	ListExpiring(ctx context.Context, before time.Time) ([]Subscription, error)
 	UpdateState(ctx context.Context, id string, status string, reason string) error
@@ -507,6 +520,7 @@ type SubscriptionStore interface {
 type SyncCursorStore interface {
 	Get(ctx context.Context, connectionID string, resourceType string, resourceID string) (SyncCursor, error)
 	Upsert(ctx context.Context, in UpsertSyncCursorInput) (SyncCursor, error)
+	Advance(ctx context.Context, in AdvanceSyncCursorInput) (SyncCursor, error)
 }
 
 type LifecycleHooks interface {
@@ -633,4 +647,7 @@ type IntegrationService interface {
 	Revoke(ctx context.Context, connectionID string, reason string) error
 	InvokeCapability(ctx context.Context, req InvokeCapabilityRequest) (CapabilityResult, error)
 	SignRequest(ctx context.Context, providerID string, connectionID string, req *http.Request, cred *ActiveCredential) error
+	Subscribe(ctx context.Context, req SubscribeRequest) (Subscription, error)
+	RenewSubscription(ctx context.Context, req RenewSubscriptionRequest) (Subscription, error)
+	CancelSubscription(ctx context.Context, req CancelSubscriptionRequest) error
 }
