@@ -70,6 +70,26 @@ function _install:envset {
     fi
 }
 
+function _install:gosec {
+    if hash gosec 2>/dev/null; then
+        lgr OK "gosec already installed..."
+    else
+        lgr I "Installing gosec..."
+        go install github.com/securego/gosec/v2/cmd/gosec@latest
+        lgr OK "gosec installed..."
+    fi
+}
+
+function _install:govulncheck {
+    if hash govulncheck 2>/dev/null; then
+        lgr OK "govulncheck already installed..."
+    else
+        lgr I "Installing govulncheck..."
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        lgr OK "govulncheck installed..."
+    fi
+}
+
 ##########################################
 # Application management
 ##########################################
@@ -96,6 +116,62 @@ function dev:test {
 
 function dev:cover {
     go test -coverprofile=coverage.out ./... && go tool cover -func coverage.out
+}
+
+function dev:init {
+    _install:gosec
+    _install:govulncheck
+}
+
+##
+## -----
+##
+## test:sec
+##
+## Run a security scan with practical CI defaults.
+## Use this in day-to-day development and CI gating.
+##
+## Notes:
+## - Excludes G101 and G117 because this codebase intentionally defines
+##   auth/token field names and provider endpoint constants that create
+##   persistent low-signal noise.
+## - Run `test:sec:full` for a complete/noisy audit pass.
+##
+## Arguments:
+## @arg 1 {string} [target=./...]
+function test:sec {
+    local target=${1:-./...}
+    gosec -exclude=G101,G117 "${target}"
+}
+
+##
+## -----
+##
+## test:sec:full
+##
+## Run full gosec checks with no exclusions.
+## Use for periodic audits and before releases.
+##
+## Arguments:
+## @arg 1 {string} [target=./...]
+function test:sec:full {
+    local target=${1:-./...}
+    gosec "${target}"
+}
+
+##
+## -----
+##
+## test:vuln
+##
+## Scan modules/packages for known vulnerabilities.
+## Use this in CI and before release cut.
+##
+## Arguments:
+## @arg 1 {string} [target=./...]
+function test:vuln {
+    local target=${1:-./...}
+    govulncheck "${target}"
 }
 
 
