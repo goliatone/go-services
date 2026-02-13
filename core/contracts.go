@@ -600,9 +600,25 @@ type LifecycleEventBus interface {
 	Subscribe(handler LifecycleEventHandler)
 }
 
+type DispatchStats struct {
+	Claimed   int
+	Delivered int
+	Retried   int
+	Failed    int
+}
+
+type LifecycleDispatcher interface {
+	DispatchPending(ctx context.Context, batchSize int) (DispatchStats, error)
+}
+
 type LifecycleHook interface {
 	Name() string
 	OnEvent(ctx context.Context, event LifecycleEvent) error
+}
+
+type ProjectorRegistry interface {
+	Register(name string, handler LifecycleEventHandler)
+	Handlers() []LifecycleEventHandler
 }
 
 type OutboxStore interface {
@@ -618,6 +634,41 @@ type NotificationProjector interface {
 
 type ActivityProjector interface {
 	Handle(ctx context.Context, event LifecycleEvent) error
+}
+
+type NotificationDefinitionResolver interface {
+	Resolve(ctx context.Context, event LifecycleEvent) (definitionCode string, ok bool, err error)
+}
+
+type NotificationRecipientResolver interface {
+	Resolve(ctx context.Context, event LifecycleEvent) ([]Recipient, error)
+}
+
+type NotificationSendRequest struct {
+	DefinitionCode string
+	Recipients     []Recipient
+	Event          LifecycleEvent
+	Metadata       map[string]any
+}
+
+type NotificationSender interface {
+	Send(ctx context.Context, req NotificationSendRequest) error
+}
+
+type NotificationDispatchRecord struct {
+	EventID        string
+	Projector      string
+	DefinitionCode string
+	RecipientKey   string
+	IdempotencyKey string
+	Status         string
+	Error          string
+	Metadata       map[string]any
+}
+
+type NotificationDispatchLedger interface {
+	Seen(ctx context.Context, idempotencyKey string) (bool, error)
+	Record(ctx context.Context, record NotificationDispatchRecord) error
 }
 
 type GrantStore interface {
