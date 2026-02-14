@@ -221,14 +221,15 @@ type AuthCompleteResponse struct {
 }
 
 type TransportRequest struct {
-	Method      string
-	URL         string
-	Headers     map[string]string
-	Query       map[string]string
-	Body        []byte
-	Metadata    map[string]any
-	Timeout     time.Duration
-	Idempotency string
+	Method               string
+	URL                  string
+	Headers              map[string]string
+	Query                map[string]string
+	Body                 []byte
+	Metadata             map[string]any
+	Timeout              time.Duration
+	MaxResponseBodyBytes int64
+	Idempotency          string
 }
 
 type TransportResponse struct {
