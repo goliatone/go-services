@@ -103,10 +103,7 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 	}
 	defer httpRes.Body.Close()
 
-	maxBodyBytes := a.MaxResponseBodyBytes
-	if maxBodyBytes <= 0 {
-		maxBodyBytes = defaultRESTResponseBodyLimit
-	}
+	maxBodyBytes := resolveResponseBodyLimit(req.MaxResponseBodyBytes, a.MaxResponseBodyBytes)
 	body, err := io.ReadAll(io.LimitReader(httpRes.Body, maxBodyBytes+1))
 	if err != nil {
 		return core.TransportResponse{}, err
@@ -142,6 +139,16 @@ func flattenHeaders(headers http.Header) map[string]string {
 		flat[key] = strings.Join(values, ",")
 	}
 	return flat
+}
+
+func resolveResponseBodyLimit(requestLimit int64, adapterLimit int64) int64 {
+	if requestLimit > 0 {
+		return requestLimit
+	}
+	if adapterLimit > 0 {
+		return adapterLimit
+	}
+	return defaultRESTResponseBodyLimit
 }
 
 var _ core.TransportAdapter = (*RESTAdapter)(nil)

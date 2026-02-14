@@ -63,12 +63,13 @@ func (a *GraphQLAdapter) Do(ctx context.Context, req core.TransportRequest) (cor
 	}
 
 	response, err := a.REST.Do(ctx, core.TransportRequest{
-		Method:   "POST",
-		URL:      endpoint,
-		Headers:  headers,
-		Body:     body,
-		Metadata: req.Metadata,
-		Timeout:  req.Timeout,
+		Method:               "POST",
+		URL:                  endpoint,
+		Headers:              headers,
+		Body:                 body,
+		Metadata:             req.Metadata,
+		Timeout:              req.Timeout,
+		MaxResponseBodyBytes: req.MaxResponseBodyBytes,
 	})
 	if err != nil {
 		return core.TransportResponse{}, err

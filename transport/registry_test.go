@@ -156,6 +156,29 @@ func TestRESTAdapter_DoFailsOnResponseBodyOverLimit(t *testing.T) {
 	}
 }
 
+func TestRESTAdapter_RequestBodyLimitOverridesAdapterLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("12345"))
+	}))
+	defer server.Close()
+
+	adapter := NewRESTAdapter(server.Client())
+	adapter.MaxResponseBodyBytes = 1024
+
+	_, err := adapter.Do(context.Background(), core.TransportRequest{
+		Method:               "GET",
+		URL:                  server.URL,
+		MaxResponseBodyBytes: 4,
+	})
+	if err == nil {
+		t.Fatalf("expected response body limit error")
+	}
+	if !strings.Contains(err.Error(), "response body exceeds limit of 4 bytes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestGraphQLAdapter_UsesMetadataQueryAndVariables(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -203,5 +226,27 @@ func TestGraphQLAdapter_UsesMetadataQueryAndVariables(t *testing.T) {
 	}
 	if result.Metadata["kind"] != KindGraphQL {
 		t.Fatalf("expected graphql metadata kind")
+	}
+}
+
+func TestGraphQLAdapter_ForwardsResponseBodyLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("12345"))
+	}))
+	defer server.Close()
+
+	adapter := NewGraphQLAdapter(server.URL, server.Client())
+	_, err := adapter.Do(context.Background(), core.TransportRequest{
+		Metadata: map[string]any{
+			"query": "query Ping { ping }",
+		},
+		MaxResponseBodyBytes: 4,
+	})
+	if err == nil {
+		t.Fatalf("expected response body limit error")
+	}
+	if !strings.Contains(err.Error(), "response body exceeds limit of 4 bytes") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
