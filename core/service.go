@@ -34,11 +34,14 @@ type Service struct {
 	connectionLocker        ConnectionLocker
 	refreshBackoffScheduler RefreshBackoffScheduler
 	signer                  Signer
+	transportResolver       TransportResolver
+	rateLimitPolicy         RateLimitPolicy
 	registry                Registry
 	connectionStore         ConnectionStore
 	credentialStore         CredentialStore
 	subscriptionStore       SubscriptionStore
 	syncCursorStore         SyncCursorStore
+	installationStore       InstallationStore
 	grantStore              GrantStore
 	permissionEvaluator     PermissionEvaluator
 	credentialCodec         CredentialCodec
@@ -61,11 +64,14 @@ type ServiceDependencies struct {
 	ConnectionLocker    ConnectionLocker
 	RefreshScheduler    RefreshBackoffScheduler
 	Signer              Signer
+	TransportResolver   TransportResolver
+	RateLimitPolicy     RateLimitPolicy
 	Registry            Registry
 	ConnectionStore     ConnectionStore
 	CredentialStore     CredentialStore
 	SubscriptionStore   SubscriptionStore
 	SyncCursorStore     SyncCursorStore
+	InstallationStore   InstallationStore
 	GrantStore          GrantStore
 	PermissionEvaluator PermissionEvaluator
 	CredentialCodec     CredentialCodec
@@ -169,12 +175,22 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 			builder.syncCursorStore = provider.SyncCursorStore()
 		}
 	}
+	if builder.installationStore == nil && builder.repositoryFactory != nil {
+		if provider, ok := builder.repositoryFactory.(interface{ InstallationStore() InstallationStore }); ok {
+			builder.installationStore = provider.InstallationStore()
+		}
+	}
 	if builder.permissionEvaluator == nil {
 		builder.permissionEvaluator = NewGrantPermissionEvaluator(
 			builder.connectionStore,
 			builder.grantStore,
 			builder.registry,
 		)
+	}
+	if builder.rateLimitPolicy == nil && builder.repositoryFactory != nil {
+		if provider, ok := builder.repositoryFactory.(interface{ RateLimitPolicy() RateLimitPolicy }); ok {
+			builder.rateLimitPolicy = provider.RateLimitPolicy()
+		}
 	}
 
 	strict := &StrictIsolationPolicy{ConnectionStore: builder.connectionStore}
@@ -199,11 +215,14 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		connectionLocker:        builder.connectionLocker,
 		refreshBackoffScheduler: builder.refreshScheduler,
 		signer:                  builder.signer,
+		transportResolver:       builder.transportResolver,
+		rateLimitPolicy:         builder.rateLimitPolicy,
 		registry:                builder.registry,
 		connectionStore:         builder.connectionStore,
 		credentialStore:         builder.credentialStore,
 		subscriptionStore:       builder.subscriptionStore,
 		syncCursorStore:         builder.syncCursorStore,
+		installationStore:       builder.installationStore,
 		grantStore:              builder.grantStore,
 		permissionEvaluator:     builder.permissionEvaluator,
 		credentialCodec:         builder.credentialCodec,
@@ -256,11 +275,14 @@ func (s *Service) Dependencies() ServiceDependencies {
 		ConnectionLocker:    s.connectionLocker,
 		RefreshScheduler:    s.refreshBackoffScheduler,
 		Signer:              s.signer,
+		TransportResolver:   s.transportResolver,
+		RateLimitPolicy:     s.rateLimitPolicy,
 		Registry:            s.registry,
 		ConnectionStore:     s.connectionStore,
 		CredentialStore:     s.credentialStore,
 		SubscriptionStore:   s.subscriptionStore,
 		SyncCursorStore:     s.syncCursorStore,
+		InstallationStore:   s.installationStore,
 		GrantStore:          s.grantStore,
 		PermissionEvaluator: s.permissionEvaluator,
 		CredentialCodec:     s.credentialCodec,
