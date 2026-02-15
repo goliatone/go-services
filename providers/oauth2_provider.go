@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -138,7 +140,11 @@ func (p *OAuth2Provider) BeginAuth(_ context.Context, req core.BeginAuthRequest)
 	}
 	state := strings.TrimSpace(req.State)
 	if state == "" {
-		state = fmt.Sprintf("state_%s_%d", p.cfg.ID, p.cfg.Now().UTC().UnixNano())
+		generated, err := generateOAuthProviderState()
+		if err != nil {
+			return core.BeginAuthResponse{}, err
+		}
+		state = generated
 	}
 	requested := normalizeGrants(req.RequestedGrants)
 	if len(requested) == 0 {
@@ -651,6 +657,14 @@ func readStringSlice(metadata map[string]any, key string) []string {
 		}
 		return items
 	}
+}
+
+func generateOAuthProviderState() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("providers: generate oauth state: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 var _ core.Provider = (*OAuth2Provider)(nil)
