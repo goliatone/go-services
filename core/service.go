@@ -654,10 +654,14 @@ func (s *Service) requireCallbackRedirect(metadata map[string]any) bool {
 		return required
 	}
 	if override, ok := parseBoolOverride(metadata["require_callback_redirect"]); ok {
-		return override
+		if override {
+			return true
+		}
 	}
 	if override, ok := parseBoolOverride(metadata["strict_redirect_validation"]); ok {
-		return override
+		if override {
+			return true
+		}
 	}
 	return required
 }
