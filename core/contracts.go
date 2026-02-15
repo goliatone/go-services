@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -237,6 +238,94 @@ type TransportResponse struct {
 	Headers    map[string]string
 	Body       []byte
 	Metadata   map[string]any
+}
+
+type ProviderOperationRetryPolicy struct {
+	MaxAttempts          int
+	InitialBackoff       time.Duration
+	MaxBackoff           time.Duration
+	RetryableStatusCodes []int
+	Sleep                func(ctx context.Context, delay time.Duration) error
+	ShouldRetry          func(
+		ctx context.Context,
+		provider Provider,
+		attempt int,
+		maxAttempts int,
+		err error,
+		meta ProviderResponseMeta,
+	) (retry bool, delay time.Duration)
+}
+
+type ProviderResponseNormalizer func(
+	ctx context.Context,
+	response TransportResponse,
+) (ProviderResponseMeta, error)
+
+type ProviderOperationRequest struct {
+	ProviderID       string
+	ConnectionID     string
+	Scope            ScopeRef
+	Operation        string
+	BucketKey        string
+	TransportKind    string
+	TransportConfig  map[string]any
+	TransportRequest TransportRequest
+	Adapter          TransportAdapter
+	Credential       *ActiveCredential
+	IdempotencyKey   string
+	Retry            ProviderOperationRetryPolicy
+	Metadata         map[string]any
+	Normalize        ProviderResponseNormalizer
+}
+
+type ProviderOperationResult struct {
+	ProviderID    string
+	ConnectionID  string
+	Operation     string
+	TransportKind string
+	AuthStrategy  string
+	Idempotency   string
+	Response      TransportResponse
+	Meta          ProviderResponseMeta
+	Attempts      int
+	Retried       bool
+	Metadata      map[string]any
+}
+
+type ProviderOperationError struct {
+	ProviderID    string
+	Operation     string
+	Attempt       int
+	MaxAttempts   int
+	StatusCode    int
+	Retryable     bool
+	Idempotency   string
+	TransportKind string
+	Cause         error
+}
+
+func (e *ProviderOperationError) Error() string {
+	if e == nil {
+		return "core: provider operation failed"
+	}
+	base := "core: provider operation failed"
+	if e.ProviderID != "" {
+		base += " provider=" + e.ProviderID
+	}
+	if e.Operation != "" {
+		base += " operation=" + e.Operation
+	}
+	if e.StatusCode > 0 {
+		base += " status=" + fmt.Sprint(e.StatusCode)
+	}
+	return base
+}
+
+func (e *ProviderOperationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 type UpsertInstallationInput struct {
@@ -578,6 +667,10 @@ type TransportAdapter interface {
 	Do(ctx context.Context, req TransportRequest) (TransportResponse, error)
 }
 
+type TransportResolver interface {
+	Build(kind string, config map[string]any) (TransportAdapter, error)
+}
+
 type InstallationStore interface {
 	Upsert(ctx context.Context, in UpsertInstallationInput) (Installation, error)
 	Get(ctx context.Context, id string) (Installation, error)
@@ -742,4 +835,9 @@ type IntegrationService interface {
 	Subscribe(ctx context.Context, req SubscribeRequest) (Subscription, error)
 	RenewSubscription(ctx context.Context, req RenewSubscriptionRequest) (Subscription, error)
 	CancelSubscription(ctx context.Context, req CancelSubscriptionRequest) error
+	UpsertInstallation(ctx context.Context, in UpsertInstallationInput) (Installation, error)
+	GetInstallation(ctx context.Context, id string) (Installation, error)
+	ListInstallations(ctx context.Context, providerID string, scope ScopeRef) ([]Installation, error)
+	UpdateInstallationStatus(ctx context.Context, id string, status string, reason string) error
+	ExecuteProviderOperation(ctx context.Context, req ProviderOperationRequest) (ProviderOperationResult, error)
 }
