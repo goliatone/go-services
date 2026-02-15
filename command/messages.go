@@ -19,6 +19,8 @@ const (
 	TypeRenewSubscription  = "services.command.subscription.renew"
 	TypeCancelSubscription = "services.command.subscription.cancel"
 	TypeAdvanceSyncCursor  = "services.command.sync_cursor.advance"
+	TypeUpsertInstallation = "services.command.installation.upsert"
+	TypeUpdateInstallation = "services.command.installation.update_status"
 )
 
 type ConnectMessage struct {
@@ -202,6 +204,43 @@ func (m AdvanceSyncCursorMessage) Validate() error {
 	}
 	if strings.TrimSpace(m.Input.Cursor) == "" {
 		return fmt.Errorf("command: cursor is required")
+	}
+	return nil
+}
+
+type UpsertInstallationMessage struct {
+	Input core.UpsertInstallationInput
+}
+
+func (UpsertInstallationMessage) Type() string { return TypeUpsertInstallation }
+
+func (m UpsertInstallationMessage) Validate() error {
+	if strings.TrimSpace(m.Input.ProviderID) == "" {
+		return fmt.Errorf("command: provider id is required")
+	}
+	if err := validateScope(m.Input.Scope); err != nil {
+		return err
+	}
+	if strings.TrimSpace(m.Input.InstallType) == "" {
+		return fmt.Errorf("command: install type is required")
+	}
+	return nil
+}
+
+type UpdateInstallationStatusMessage struct {
+	InstallationID string
+	Status         string
+	Reason         string
+}
+
+func (UpdateInstallationStatusMessage) Type() string { return TypeUpdateInstallation }
+
+func (m UpdateInstallationStatusMessage) Validate() error {
+	if strings.TrimSpace(m.InstallationID) == "" {
+		return fmt.Errorf("command: installation id is required")
+	}
+	if strings.TrimSpace(m.Status) == "" {
+		return fmt.Errorf("command: installation status is required")
 	}
 	return nil
 }
