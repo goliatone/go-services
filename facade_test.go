@@ -19,11 +19,11 @@ func TestNewFacade_WiresCommandsAndQueries(t *testing.T) {
 	}
 
 	commands := facade.Commands()
-	if commands.Connect == nil || commands.Refresh == nil || commands.AdvanceSyncCursor == nil {
+	if commands.Connect == nil || commands.Refresh == nil || commands.AdvanceSyncCursor == nil || commands.UpsertInstallation == nil || commands.UpdateInstallation == nil {
 		t.Fatalf("expected command handlers to be wired")
 	}
 	queries := facade.Queries()
-	if queries.LoadSyncCursor == nil || queries.ListServicesActivity == nil {
+	if queries.LoadSyncCursor == nil || queries.ListServicesActivity == nil || queries.GetInstallation == nil || queries.ListInstallations == nil {
 		t.Fatalf("expected query handlers to be wired")
 	}
 }
@@ -68,6 +68,27 @@ func TestFacade_CommandAndQueryDelegation(t *testing.T) {
 	if page.Total != 1 {
 		t.Fatalf("unexpected activity page result: %#v", page)
 	}
+
+	if err := facade.Commands().UpdateInstallation.Execute(context.Background(), servicescommand.UpdateInstallationStatusMessage{
+		InstallationID: "inst_1",
+		Status:         string(core.InstallationStatusSuspended),
+		Reason:         "policy",
+	}); err != nil {
+		t.Fatalf("execute update installation command: %v", err)
+	}
+	if svc.lastInstallationID != "inst_1" || svc.lastInstallationStatus != string(core.InstallationStatusSuspended) {
+		t.Fatalf("unexpected installation status delegation payload")
+	}
+
+	installation, err := facade.Queries().GetInstallation.Query(context.Background(), servicesquery.GetInstallationMessage{
+		InstallationID: "inst_1",
+	})
+	if err != nil {
+		t.Fatalf("query get installation: %v", err)
+	}
+	if installation.ID != "inst_1" || installation.ProviderID != "github" {
+		t.Fatalf("unexpected installation query result: %#v", installation)
+	}
 }
 
 func TestNewFacade_RequiresService(t *testing.T) {
@@ -104,6 +125,8 @@ func TestNewFacade_TypedNilRepositoryFactoryDoesNotPanic(t *testing.T) {
 type stubFacadeService struct {
 	lastRevokeConnectionID string
 	lastRevokeReason       string
+	lastInstallationID     string
+	lastInstallationStatus string
 }
 
 func (s *stubFacadeService) Connect(context.Context, core.ConnectRequest) (core.BeginAuthResponse, error) {
@@ -152,6 +175,16 @@ func (s *stubFacadeService) AdvanceSyncCursor(context.Context, core.AdvanceSyncC
 	return core.SyncCursor{ConnectionID: "conn_1", Cursor: "cursor_2"}, nil
 }
 
+func (s *stubFacadeService) UpsertInstallation(context.Context, core.UpsertInstallationInput) (core.Installation, error) {
+	return core.Installation{ID: "inst_1", ProviderID: "github"}, nil
+}
+
+func (s *stubFacadeService) UpdateInstallationStatus(_ context.Context, id string, status string, _ string) error {
+	s.lastInstallationID = id
+	s.lastInstallationStatus = status
+	return nil
+}
+
 func (s *stubFacadeService) LoadSyncCursor(
 	context.Context,
 	string,
@@ -159,6 +192,14 @@ func (s *stubFacadeService) LoadSyncCursor(
 	string,
 ) (core.SyncCursor, error) {
 	return core.SyncCursor{ConnectionID: "conn_1", ResourceType: "drive.file", ResourceID: "file_1", Cursor: "cursor_1"}, nil
+}
+
+func (s *stubFacadeService) GetInstallation(context.Context, string) (core.Installation, error) {
+	return core.Installation{ID: "inst_1", ProviderID: "github", ScopeType: "org", ScopeID: "org_1"}, nil
+}
+
+func (s *stubFacadeService) ListInstallations(context.Context, string, core.ScopeRef) ([]core.Installation, error) {
+	return []core.Installation{{ID: "inst_1", ProviderID: "github"}}, nil
 }
 
 type stubFacadeActivityReader struct{}

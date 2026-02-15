@@ -174,6 +174,57 @@ func TestMutationCommands_DelegateToService(t *testing.T) {
 		}
 	})
 
+	t.Run("installation commands", func(t *testing.T) {
+		calledUpsert := false
+		calledUpdate := false
+		svc := stubMutatingService{
+			upsertInstallationFn: func(_ context.Context, in core.UpsertInstallationInput) (core.Installation, error) {
+				calledUpsert = true
+				if in.ProviderID != "github" || in.InstallType != "marketplace_app" {
+					t.Fatalf("unexpected installation input: %#v", in)
+				}
+				return core.Installation{ID: "inst_1", ProviderID: "github"}, nil
+			},
+			updateInstallationStatusFn: func(_ context.Context, id string, status string, reason string) error {
+				calledUpdate = true
+				if id != "inst_1" || status != string(core.InstallationStatusSuspended) || reason != "policy" {
+					t.Fatalf("unexpected installation status payload: %q %q %q", id, status, reason)
+				}
+				return nil
+			},
+		}
+
+		upsertCollector := gocmd.NewResult[core.Installation]()
+		upsertCtx := gocmd.ContextWithResult(context.Background(), upsertCollector)
+		if err := NewUpsertInstallationCommand(svc).Execute(upsertCtx, UpsertInstallationMessage{
+			Input: core.UpsertInstallationInput{
+				ProviderID:  "github",
+				Scope:       core.ScopeRef{Type: "org", ID: "org_1"},
+				InstallType: "marketplace_app",
+				Status:      core.InstallationStatusActive,
+			},
+		}); err != nil {
+			t.Fatalf("execute upsert installation: %v", err)
+		}
+		if !calledUpsert {
+			t.Fatalf("expected upsert installation invocation")
+		}
+		if _, ok := upsertCollector.Load(); !ok {
+			t.Fatalf("expected upsert installation result")
+		}
+
+		if err := NewUpdateInstallationStatusCommand(svc).Execute(context.Background(), UpdateInstallationStatusMessage{
+			InstallationID: "inst_1",
+			Status:         string(core.InstallationStatusSuspended),
+			Reason:         "policy",
+		}); err != nil {
+			t.Fatalf("execute update installation status: %v", err)
+		}
+		if !calledUpdate {
+			t.Fatalf("expected update installation invocation")
+		}
+	})
+
 	t.Run("callback and refresh commands", func(t *testing.T) {
 		calledCallback := false
 		calledCompleteReconsent := false
@@ -305,6 +356,20 @@ func TestMessageValidation(t *testing.T) {
 			}},
 			wantErr: false,
 		},
+		{
+			name: "upsert installation valid",
+			msg: UpsertInstallationMessage{Input: core.UpsertInstallationInput{
+				ProviderID:  "github",
+				Scope:       core.ScopeRef{Type: "org", ID: "org_1"},
+				InstallType: "marketplace_app",
+			}},
+			wantErr: false,
+		},
+		{
+			name:    "update installation missing id",
+			msg:     UpdateInstallationStatusMessage{Status: string(core.InstallationStatusActive)},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -318,17 +383,19 @@ func TestMessageValidation(t *testing.T) {
 }
 
 type stubMutatingService struct {
-	connectFn            func(ctx context.Context, req core.ConnectRequest) (core.BeginAuthResponse, error)
-	startReconsentFn     func(ctx context.Context, req core.ReconsentRequest) (core.BeginAuthResponse, error)
-	completeReconsentFn  func(ctx context.Context, req core.CompleteAuthRequest) (core.CallbackCompletion, error)
-	completeCallbackFn   func(ctx context.Context, req core.CompleteAuthRequest) (core.CallbackCompletion, error)
-	refreshFn            func(ctx context.Context, req core.RefreshRequest) (core.RefreshResult, error)
-	revokeFn             func(ctx context.Context, connectionID string, reason string) error
-	invokeCapabilityFn   func(ctx context.Context, req core.InvokeCapabilityRequest) (core.CapabilityResult, error)
-	subscribeFn          func(ctx context.Context, req core.SubscribeRequest) (core.Subscription, error)
-	renewSubscriptionFn  func(ctx context.Context, req core.RenewSubscriptionRequest) (core.Subscription, error)
-	cancelSubscriptionFn func(ctx context.Context, req core.CancelSubscriptionRequest) error
-	advanceSyncCursorFn  func(ctx context.Context, in core.AdvanceSyncCursorInput) (core.SyncCursor, error)
+	connectFn                  func(ctx context.Context, req core.ConnectRequest) (core.BeginAuthResponse, error)
+	startReconsentFn           func(ctx context.Context, req core.ReconsentRequest) (core.BeginAuthResponse, error)
+	completeReconsentFn        func(ctx context.Context, req core.CompleteAuthRequest) (core.CallbackCompletion, error)
+	completeCallbackFn         func(ctx context.Context, req core.CompleteAuthRequest) (core.CallbackCompletion, error)
+	refreshFn                  func(ctx context.Context, req core.RefreshRequest) (core.RefreshResult, error)
+	revokeFn                   func(ctx context.Context, connectionID string, reason string) error
+	invokeCapabilityFn         func(ctx context.Context, req core.InvokeCapabilityRequest) (core.CapabilityResult, error)
+	subscribeFn                func(ctx context.Context, req core.SubscribeRequest) (core.Subscription, error)
+	renewSubscriptionFn        func(ctx context.Context, req core.RenewSubscriptionRequest) (core.Subscription, error)
+	cancelSubscriptionFn       func(ctx context.Context, req core.CancelSubscriptionRequest) error
+	advanceSyncCursorFn        func(ctx context.Context, in core.AdvanceSyncCursorInput) (core.SyncCursor, error)
+	upsertInstallationFn       func(ctx context.Context, in core.UpsertInstallationInput) (core.Installation, error)
+	updateInstallationStatusFn func(ctx context.Context, id string, status string, reason string) error
 }
 
 func (s stubMutatingService) Connect(ctx context.Context, req core.ConnectRequest) (core.BeginAuthResponse, error) {
@@ -406,6 +473,25 @@ func (s stubMutatingService) AdvanceSyncCursor(ctx context.Context, in core.Adva
 		return core.SyncCursor{}, fmt.Errorf("advance sync cursor not configured")
 	}
 	return s.advanceSyncCursorFn(ctx, in)
+}
+
+func (s stubMutatingService) UpsertInstallation(ctx context.Context, in core.UpsertInstallationInput) (core.Installation, error) {
+	if s.upsertInstallationFn == nil {
+		return core.Installation{}, fmt.Errorf("upsert installation not configured")
+	}
+	return s.upsertInstallationFn(ctx, in)
+}
+
+func (s stubMutatingService) UpdateInstallationStatus(
+	ctx context.Context,
+	id string,
+	status string,
+	reason string,
+) error {
+	if s.updateInstallationStatusFn == nil {
+		return fmt.Errorf("update installation status not configured")
+	}
+	return s.updateInstallationStatusFn(ctx, id, status, reason)
 }
 
 var _ MutatingService = stubMutatingService{}

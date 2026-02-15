@@ -78,6 +78,48 @@ func TestListServicesActivityQuery_QueryDelegates(t *testing.T) {
 	}
 }
 
+func TestInstallationQueries_Delegate(t *testing.T) {
+	calledGet := false
+	calledList := false
+	reader := stubInstallationReader{
+		getFn: func(_ context.Context, id string) (core.Installation, error) {
+			calledGet = true
+			if id != "inst_1" {
+				t.Fatalf("unexpected installation id %q", id)
+			}
+			return core.Installation{ID: id, ProviderID: "github"}, nil
+		},
+		listFn: func(_ context.Context, providerID string, scope core.ScopeRef) ([]core.Installation, error) {
+			calledList = true
+			if providerID != "github" || scope.Type != "org" || scope.ID != "org_1" {
+				t.Fatalf("unexpected list input: %q %#v", providerID, scope)
+			}
+			return []core.Installation{{ID: "inst_1", ProviderID: "github"}}, nil
+		},
+	}
+
+	getResult, err := NewGetInstallationQuery(reader).Query(context.Background(), GetInstallationMessage{
+		InstallationID: "inst_1",
+	})
+	if err != nil {
+		t.Fatalf("query installation: %v", err)
+	}
+	if !calledGet || getResult.ID != "inst_1" {
+		t.Fatalf("expected get installation delegation")
+	}
+
+	listResult, err := NewListInstallationsQuery(reader).Query(context.Background(), ListInstallationsMessage{
+		ProviderID: "github",
+		Scope:      core.ScopeRef{Type: "org", ID: "org_1"},
+	})
+	if err != nil {
+		t.Fatalf("list installations query: %v", err)
+	}
+	if !calledList || len(listResult) != 1 {
+		t.Fatalf("expected list installation delegation")
+	}
+}
+
 func TestQueryMessageValidation(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -114,6 +156,19 @@ func TestQueryMessageValidation(t *testing.T) {
 				Page:    1,
 				PerPage: 50,
 			}},
+			wantErr: false,
+		},
+		{
+			name:    "get installation missing id",
+			msg:     GetInstallationMessage{},
+			wantErr: true,
+		},
+		{
+			name: "list installations valid",
+			msg: ListInstallationsMessage{
+				ProviderID: "github",
+				Scope:      core.ScopeRef{Type: "org", ID: "org_1"},
+			},
 			wantErr: false,
 		},
 	}
@@ -163,7 +218,31 @@ func (s stubServicesActivityReader) List(
 	return s.listFn(ctx, filter)
 }
 
+type stubInstallationReader struct {
+	getFn  func(ctx context.Context, id string) (core.Installation, error)
+	listFn func(ctx context.Context, providerID string, scope core.ScopeRef) ([]core.Installation, error)
+}
+
+func (s stubInstallationReader) GetInstallation(ctx context.Context, id string) (core.Installation, error) {
+	if s.getFn == nil {
+		return core.Installation{}, fmt.Errorf("get installation not configured")
+	}
+	return s.getFn(ctx, id)
+}
+
+func (s stubInstallationReader) ListInstallations(
+	ctx context.Context,
+	providerID string,
+	scope core.ScopeRef,
+) ([]core.Installation, error) {
+	if s.listFn == nil {
+		return nil, fmt.Errorf("list installations not configured")
+	}
+	return s.listFn(ctx, providerID, scope)
+}
+
 var (
 	_ SyncCursorReader       = stubSyncCursorReader{}
 	_ ServicesActivityReader = stubServicesActivityReader{}
+	_ InstallationReader     = stubInstallationReader{}
 )

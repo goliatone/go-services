@@ -71,6 +71,22 @@ func TestRegistry_RegisterFactoryBuildsCustomAdapter(t *testing.T) {
 	}
 }
 
+func TestDefaultRegistry_BuildsNoopExtendedKinds(t *testing.T) {
+	registry := NewDefaultRegistry()
+	for _, kind := range []string{KindSOAP, KindBulk, KindStream, KindFile} {
+		adapter, err := registry.Build(kind, map[string]any{"reason": "hook not configured"})
+		if err != nil {
+			t.Fatalf("build %s adapter: %v", kind, err)
+		}
+		if adapter.Kind() != kind {
+			t.Fatalf("expected adapter kind %q, got %q", kind, adapter.Kind())
+		}
+		if _, err := adapter.Do(context.Background(), core.TransportRequest{}); err == nil {
+			t.Fatalf("expected noop adapter error for kind %s", kind)
+		}
+	}
+}
+
 func TestRESTAdapter_DoSendsMethodHeadersAndQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

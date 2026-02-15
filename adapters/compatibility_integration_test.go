@@ -264,6 +264,14 @@ func (s *compatMutatingService) AdvanceSyncCursor(context.Context, core.AdvanceS
 	return core.SyncCursor{}, nil
 }
 
+func (s *compatMutatingService) UpsertInstallation(context.Context, core.UpsertInstallationInput) (core.Installation, error) {
+	return core.Installation{}, nil
+}
+
+func (s *compatMutatingService) UpdateInstallationStatus(context.Context, string, string, string) error {
+	return nil
+}
+
 func metadataString(metadata map[string]any, key string) string {
 	if len(metadata) == 0 {
 		return ""

@@ -518,6 +518,97 @@ func syncCursorKey(connectionID string, providerID string, resourceType string, 
 	return connectionID + ":" + providerID + ":" + resourceType + ":" + resourceID
 }
 
+type memoryInstallationStore struct {
+	mu     sync.Mutex
+	next   int
+	byID   map[string]Installation
+	byKey  map[string]string
+	scopes map[string][]string
+}
+
+func newMemoryInstallationStore() *memoryInstallationStore {
+	return &memoryInstallationStore{
+		byID:   map[string]Installation{},
+		byKey:  map[string]string{},
+		scopes: map[string][]string{},
+	}
+}
+
+func (s *memoryInstallationStore) Upsert(_ context.Context, in UpsertInstallationInput) (Installation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := in.ProviderID + ":" + in.Scope.Type + ":" + in.Scope.ID + ":" + in.InstallType
+	id := s.byKey[key]
+	if id == "" {
+		s.next++
+		id = fmt.Sprintf("inst_%d", s.next)
+		s.byKey[key] = id
+		scopeKey := in.ProviderID + ":" + in.Scope.Type + ":" + in.Scope.ID
+		s.scopes[scopeKey] = append(s.scopes[scopeKey], id)
+	}
+	record := s.byID[id]
+	record.ID = id
+	record.ProviderID = in.ProviderID
+	record.ScopeType = in.Scope.Type
+	record.ScopeID = in.Scope.ID
+	record.InstallType = in.InstallType
+	record.Status = in.Status
+	record.Metadata = copyAnyMap(in.Metadata)
+	now := time.Now().UTC()
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = now
+	}
+	record.UpdatedAt = now
+	record.GrantedAt = in.GrantedAt
+	record.RevokedAt = in.RevokedAt
+	s.byID[id] = record
+	return record, nil
+}
+
+func (s *memoryInstallationStore) Get(_ context.Context, id string) (Installation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.byID[id]
+	if !ok {
+		return Installation{}, fmt.Errorf("missing installation")
+	}
+	return record, nil
+}
+
+func (s *memoryInstallationStore) ListByScope(
+	_ context.Context,
+	providerID string,
+	scope ScopeRef,
+) ([]Installation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	scopeLookup := providerID + ":" + scope.Type + ":" + scope.ID
+	ids := s.scopes[scopeLookup]
+	out := make([]Installation, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, s.byID[id])
+	}
+	return out, nil
+}
+
+func (s *memoryInstallationStore) UpdateStatus(_ context.Context, id string, status string, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.byID[id]
+	if !ok {
+		return fmt.Errorf("missing installation")
+	}
+	record.Status = InstallationStatus(status)
+	record.Metadata = copyAnyMap(record.Metadata)
+	if strings.TrimSpace(reason) != "" {
+		record.Metadata["status_reason"] = strings.TrimSpace(reason)
+	}
+	record.UpdatedAt = time.Now().UTC()
+	s.byID[id] = record
+	return nil
+}
+
 func scopeKey(providerID string, scope ScopeRef) string {
 	return providerID + ":" + scope.Type + ":" + scope.ID
 }

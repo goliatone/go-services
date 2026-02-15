@@ -15,6 +15,7 @@ import (
 	persistence "github.com/goliatone/go-persistence-bun"
 	"github.com/goliatone/go-services/core"
 	servicemigrations "github.com/goliatone/go-services/migrations"
+	servicesratelimit "github.com/goliatone/go-services/ratelimit"
 	servicessecurity "github.com/goliatone/go-services/security"
 	sqlstore "github.com/goliatone/go-services/store/sql"
 	servicesync "github.com/goliatone/go-services/sync"
@@ -1121,6 +1122,175 @@ func TestSyncOrchestrator_PersistsCheckpointAndResume(t *testing.T) {
 	}
 	if stored.Checkpoint != "checkpoint_next" {
 		t.Fatalf("expected checkpoint durability across resume")
+	}
+}
+
+func TestInstallationStore_UpsertListAndStatusTransitions(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	installationStore := repoFactory.InstallationStore()
+	if installationStore == nil {
+		t.Fatalf("expected installation store from repository factory")
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	installation, err := installationStore.Upsert(ctx, core.UpsertInstallationInput{
+		ProviderID:  "github",
+		Scope:       core.ScopeRef{Type: "org", ID: "org_install_1"},
+		InstallType: "marketplace_app",
+		Status:      core.InstallationStatusActive,
+		GrantedAt:   &now,
+		Metadata:    map[string]any{"installer": "admin_1"},
+	})
+	if err != nil {
+		t.Fatalf("upsert installation: %v", err)
+	}
+	if installation.ID == "" {
+		t.Fatalf("expected persisted installation id")
+	}
+	if installation.Status != core.InstallationStatusActive {
+		t.Fatalf("expected active status, got %q", installation.Status)
+	}
+
+	stored, err := installationStore.Get(ctx, installation.ID)
+	if err != nil {
+		t.Fatalf("get installation: %v", err)
+	}
+	if stored.InstallType != "marketplace_app" {
+		t.Fatalf("expected install type marketplace_app, got %q", stored.InstallType)
+	}
+	if stored.Metadata["installer"] != "admin_1" {
+		t.Fatalf("expected installer metadata")
+	}
+
+	listed, err := installationStore.ListByScope(ctx, "github", core.ScopeRef{Type: "org", ID: "org_install_1"})
+	if err != nil {
+		t.Fatalf("list installations by scope: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected exactly one installation, got %d", len(listed))
+	}
+
+	if err := installationStore.UpdateStatus(ctx, installation.ID, string(core.InstallationStatusSuspended), "quota exhausted"); err != nil {
+		t.Fatalf("update installation status suspended: %v", err)
+	}
+	suspended, err := installationStore.Get(ctx, installation.ID)
+	if err != nil {
+		t.Fatalf("get suspended installation: %v", err)
+	}
+	if suspended.Status != core.InstallationStatusSuspended {
+		t.Fatalf("expected suspended status, got %q", suspended.Status)
+	}
+	if suspended.Metadata["status_reason"] != "quota exhausted" {
+		t.Fatalf("expected status reason metadata")
+	}
+
+	updated, err := installationStore.Upsert(ctx, core.UpsertInstallationInput{
+		ProviderID:  "github",
+		Scope:       core.ScopeRef{Type: "org", ID: "org_install_1"},
+		InstallType: "marketplace_app",
+		Status:      core.InstallationStatusActive,
+		Metadata:    map[string]any{"installer": "admin_2"},
+	})
+	if err != nil {
+		t.Fatalf("upsert installation second pass: %v", err)
+	}
+	if updated.ID != installation.ID {
+		t.Fatalf("expected upsert to update existing installation id, got %q want %q", updated.ID, installation.ID)
+	}
+	if updated.Metadata["installer"] != "admin_2" {
+		t.Fatalf("expected metadata refresh on upsert")
+	}
+}
+
+func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	store := repoFactory.RateLimitStateStore()
+	if store == nil {
+		t.Fatalf("expected rate-limit state store from repository factory")
+	}
+
+	key := core.RateLimitKey{
+		ProviderID: "github",
+		ScopeType:  "org",
+		ScopeID:    "org_rl_1",
+		BucketKey:  "api",
+	}
+	if _, err := store.Get(ctx, key); !errors.Is(err, servicesratelimit.ErrStateNotFound) {
+		t.Fatalf("expected state not found error, got %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	retryAfter := 15 * time.Second
+	throttledUntil := now.Add(retryAfter)
+	if err := store.Upsert(ctx, servicesratelimit.State{
+		Key:            key,
+		Limit:          5000,
+		Remaining:      0,
+		ResetAt:        ptrTime(now.Add(30 * time.Second)),
+		RetryAfter:     &retryAfter,
+		ThrottledUntil: &throttledUntil,
+		LastStatus:     429,
+		Attempts:       2,
+		UpdatedAt:      now,
+		Metadata:       map[string]any{"endpoint": "issues"},
+	}); err != nil {
+		t.Fatalf("upsert rate-limit state: %v", err)
+	}
+
+	stored, err := store.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("get rate-limit state: %v", err)
+	}
+	if stored.Limit != 5000 || stored.Remaining != 0 {
+		t.Fatalf("unexpected persisted quota numbers: %#v", stored)
+	}
+	if stored.Attempts != 2 || stored.LastStatus != 429 {
+		t.Fatalf("expected attempts/last status persistence, got %#v", stored)
+	}
+	if stored.RetryAfter == nil || *stored.RetryAfter != retryAfter {
+		t.Fatalf("expected retry_after=%s, got %+v", retryAfter, stored.RetryAfter)
+	}
+	if stored.Metadata["endpoint"] != "issues" {
+		t.Fatalf("expected metadata endpoint")
+	}
+
+	policy := servicesratelimit.NewAdaptivePolicy(store)
+	policy.Now = func() time.Time { return now }
+	beforeErr := policy.BeforeCall(ctx, key)
+	var throttledErr servicesratelimit.ThrottledError
+	if !errors.As(beforeErr, &throttledErr) {
+		t.Fatalf("expected throttled error from persisted state, got %v", beforeErr)
+	}
+
+	if err := policy.AfterCall(ctx, key, core.ProviderResponseMeta{
+		StatusCode: 200,
+		Headers: map[string]string{
+			"X-RateLimit-Limit":     "5000",
+			"X-RateLimit-Remaining": "4999",
+		},
+	}); err != nil {
+		t.Fatalf("policy after-call success transition: %v", err)
+	}
+	updated, err := store.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("get updated rate-limit state: %v", err)
+	}
+	if updated.Attempts != 0 || updated.ThrottledUntil != nil {
+		t.Fatalf("expected throttle state reset after success, got %#v", updated)
 	}
 }
 
