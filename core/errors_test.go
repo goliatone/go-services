@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	stderrors "errors"
+	"strings"
 	"testing"
 
 	goerrors "github.com/goliatone/go-errors"
@@ -60,5 +61,49 @@ func TestServiceMethods_MapErrorsToStableServiceCodes(t *testing.T) {
 	}
 	if richErr.TextCode != ServiceErrorProviderNotFound {
 		t.Fatalf("expected provider not found code, got %q", richErr.TextCode)
+	}
+}
+
+func TestRefresh_RejectsProviderConnectionMismatch(t *testing.T) {
+	ctx := context.Background()
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "github"}); err != nil {
+		t.Fatalf("register github provider: %v", err)
+	}
+	if err := registry.Register(testProvider{id: "slack"}); err != nil {
+		t.Fatalf("register slack provider: %v", err)
+	}
+
+	connectionStore := newMemoryConnectionStore()
+	connection, err := connectionStore.Create(ctx, CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             ScopeRef{Type: "user", ID: "u_mismatch"},
+		ExternalAccountID: "acct",
+		Status:            ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	svc, err := NewService(
+		Config{},
+		WithRegistry(registry),
+		WithConnectionStore(connectionStore),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	_, err = svc.Refresh(ctx, RefreshRequest{
+		ProviderID:   "slack",
+		ConnectionID: connection.ID,
+		Credential: &ActiveCredential{
+			TokenType:   "bearer",
+			AccessToken: "token",
+			Refreshable: true,
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider mismatch") {
+		t.Fatalf("expected provider mismatch error, got %v", err)
 	}
 }

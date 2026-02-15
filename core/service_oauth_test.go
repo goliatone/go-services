@@ -146,12 +146,131 @@ func TestCompleteCallback_RequiresSecretProviderForCredentialPersistence(t *test
 	}
 }
 
+func TestCompleteCallback_UsesStateContextWhenCallbackOmitsRedirectAndMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	provider := &spyProvider{testProvider: testProvider{id: "github"}}
+	registry := NewProviderRegistry()
+	if err := registry.Register(provider); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	svc, err := NewService(
+		Config{},
+		WithRegistry(registry),
+		WithOAuthStateStore(NewMemoryOAuthStateStore(time.Minute)),
+		WithConnectionStore(newMemoryConnectionStore()),
+		WithCredentialStore(newMemoryCredentialStore()),
+		WithSecretProvider(testSecretProvider{}),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	connectResp, err := svc.Connect(ctx, ConnectRequest{
+		ProviderID:      "github",
+		Scope:           ScopeRef{Type: "user", ID: "u3"},
+		RedirectURI:     "https://app.example/callback",
+		RequestedGrants: []string{"repo:read"},
+		Metadata:        map[string]any{"source": "connect"},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	_, err = svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID: "github",
+		Scope:      ScopeRef{Type: "user", ID: "u3"},
+		Code:       "code",
+		State:      connectResp.State,
+	})
+	if err != nil {
+		t.Fatalf("complete callback: %v", err)
+	}
+	if provider.lastCompleteAuthRequest.RedirectURI != "https://app.example/callback" {
+		t.Fatalf("expected redirect uri to be restored from oauth state")
+	}
+	requestedRaw, ok := provider.lastCompleteAuthRequest.Metadata["requested_grants"]
+	if !ok {
+		t.Fatalf("expected requested grants in callback metadata")
+	}
+	requested, ok := requestedRaw.([]string)
+	if !ok || len(requested) == 0 || requested[0] != "repo:read" {
+		t.Fatalf("expected requested grants to be restored from oauth state metadata, got %#v", requestedRaw)
+	}
+}
+
+func TestCompleteCallback_RedirectValidationIsConfigurable(t *testing.T) {
+	ctx := context.Background()
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "github"}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	svc, err := NewService(
+		Config{
+			OAuth: OAuthConfig{RequireCallbackRedirect: true},
+		},
+		WithRegistry(registry),
+		WithOAuthStateStore(NewMemoryOAuthStateStore(time.Minute)),
+		WithConnectionStore(newMemoryConnectionStore()),
+		WithCredentialStore(newMemoryCredentialStore()),
+		WithSecretProvider(testSecretProvider{}),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	connectResp, err := svc.Connect(ctx, ConnectRequest{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "user", ID: "u4"},
+		RedirectURI: "https://app.example/callback",
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	_, err = svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID: "github",
+		Scope:      ScopeRef{Type: "user", ID: "u4"},
+		Code:       "code",
+		State:      connectResp.State,
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect uri is required") {
+		t.Fatalf("expected strict redirect validation error, got %v", err)
+	}
+
+	connectResp, err = svc.Connect(ctx, ConnectRequest{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "user", ID: "u5"},
+		RedirectURI: "https://app.example/callback",
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	_, err = svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID: "github",
+		Scope:      ScopeRef{Type: "user", ID: "u5"},
+		Code:       "code",
+		State:      connectResp.State,
+		Metadata: map[string]any{
+			"require_callback_redirect": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected metadata override to relax strict redirect validation: %v", err)
+	}
+}
+
 type spyProvider struct {
 	testProvider
-	completeCalls int
+	completeCalls           int
+	lastCompleteAuthRequest CompleteAuthRequest
 }
 
 func (s *spyProvider) CompleteAuth(ctx context.Context, req CompleteAuthRequest) (CompleteAuthResponse, error) {
 	s.completeCalls++
+	s.lastCompleteAuthRequest = req
 	return s.testProvider.CompleteAuth(ctx, req)
 }

@@ -116,6 +116,30 @@ func TestOutboxDispatcher_MaxAttemptsMarkedFailed(t *testing.T) {
 	}
 }
 
+func TestOutboxDispatcher_MissingProjectorsDoesNotAckEvents(t *testing.T) {
+	store := &stubOutboxStore{
+		claimed: []LifecycleEvent{{
+			ID:   "evt_missing_projector",
+			Name: "connection.connected",
+		}},
+	}
+	dispatcher, err := NewOutboxDispatcher(store, nil, DefaultOutboxDispatcherConfig())
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+
+	stats, dispatchErr := dispatcher.DispatchPending(context.Background(), 1)
+	if dispatchErr == nil {
+		t.Fatalf("expected dispatch error when projector registry is missing")
+	}
+	if stats.Delivered != 0 || len(store.acked) != 0 {
+		t.Fatalf("expected event to remain unacked, stats=%+v acked=%v", stats, store.acked)
+	}
+	if len(store.retried) != 1 {
+		t.Fatalf("expected retry scheduling when projector registry is missing")
+	}
+}
+
 type stubOutboxStore struct {
 	claimed []LifecycleEvent
 	acked   []string

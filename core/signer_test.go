@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,6 +77,45 @@ func TestSignRequest_UsesProviderSignerOverride(t *testing.T) {
 	}
 	if got := req.Header.Get("X-Signed-By"); got != "provider" {
 		t.Fatalf("expected provider signer header, got %q", got)
+	}
+}
+
+func TestSignRequest_RejectsProviderMismatchForConnection(t *testing.T) {
+	ctx := context.Background()
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "github"}); err != nil {
+		t.Fatalf("register github provider: %v", err)
+	}
+	if err := registry.Register(testProvider{id: "slack"}); err != nil {
+		t.Fatalf("register slack provider: %v", err)
+	}
+
+	connectionStore := newMemoryConnectionStore()
+	connection, err := connectionStore.Create(ctx, CreateConnectionInput{
+		ProviderID:        "github",
+		Scope:             ScopeRef{Type: "user", ID: "u_mismatch"},
+		ExternalAccountID: "acct",
+		Status:            ConnectionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	svc, err := NewService(Config{},
+		WithRegistry(registry),
+		WithConnectionStore(connectionStore),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.example/resource", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	err = svc.SignRequest(ctx, "slack", connection.ID, req, &ActiveCredential{AccessToken: "token"})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider mismatch") {
+		t.Fatalf("expected provider mismatch error, got %v", err)
 	}
 }
 

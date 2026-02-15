@@ -2,6 +2,9 @@ package providers_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/goliatone/go-services/core"
@@ -18,35 +21,75 @@ type providerFactory struct {
 }
 
 func TestBuiltInProviders_ExposeOAuth2AndBaselineCapabilities(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if r.Form.Get("grant_type") != "authorization_code" {
+			http.Error(w, "unsupported grant type", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "access_token",
+			"refresh_token": "refresh_token",
+			"token_type":    "bearer",
+			"expires_in":    3600,
+			"scope":         "repo",
+		})
+	}))
+	defer tokenServer.Close()
+
 	factories := []providerFactory{
 		{
 			name: "github",
 			factory: func() (core.Provider, error) {
-				return github.New(github.Config{ClientID: "client", ClientSecret: "secret"})
+				return github.New(github.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
 			},
 		},
 		{
 			name: "gmail",
 			factory: func() (core.Provider, error) {
-				return gmail.New(gmail.Config{ClientID: "client", ClientSecret: "secret"})
+				return gmail.New(gmail.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
 			},
 		},
 		{
 			name: "drive",
 			factory: func() (core.Provider, error) {
-				return drive.New(drive.Config{ClientID: "client", ClientSecret: "secret"})
+				return drive.New(drive.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
 			},
 		},
 		{
 			name: "docs",
 			factory: func() (core.Provider, error) {
-				return docs.New(docs.Config{ClientID: "client", ClientSecret: "secret"})
+				return docs.New(docs.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
 			},
 		},
 		{
 			name: "calendar",
 			factory: func() (core.Provider, error) {
-				return calendar.New(calendar.Config{ClientID: "client", ClientSecret: "secret"})
+				return calendar.New(calendar.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
 			},
 		},
 	}
