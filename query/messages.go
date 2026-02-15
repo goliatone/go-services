@@ -10,6 +10,8 @@ import (
 const (
 	TypeLoadSyncCursor       = "services.query.sync_cursor.load"
 	TypeListServicesActivity = "services.query.activity.list"
+	TypeGetInstallation      = "services.query.installation.get"
+	TypeListInstallations    = "services.query.installation.list_by_scope"
 )
 
 type LoadSyncCursorMessage struct {
@@ -45,6 +47,36 @@ func (m ListServicesActivityMessage) Validate() error {
 	}
 	if m.Filter.PerPage < 0 {
 		return fmt.Errorf("query: per_page must be >= 0")
+	}
+	return nil
+}
+
+type GetInstallationMessage struct {
+	InstallationID string
+}
+
+func (GetInstallationMessage) Type() string { return TypeGetInstallation }
+
+func (m GetInstallationMessage) Validate() error {
+	if strings.TrimSpace(m.InstallationID) == "" {
+		return fmt.Errorf("query: installation id is required")
+	}
+	return nil
+}
+
+type ListInstallationsMessage struct {
+	ProviderID string
+	Scope      core.ScopeRef
+}
+
+func (ListInstallationsMessage) Type() string { return TypeListInstallations }
+
+func (m ListInstallationsMessage) Validate() error {
+	if strings.TrimSpace(m.ProviderID) == "" {
+		return fmt.Errorf("query: provider id is required")
+	}
+	if err := m.Scope.Validate(); err != nil {
+		return fmt.Errorf("query: %w", err)
 	}
 	return nil
 }
