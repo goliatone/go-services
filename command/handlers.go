@@ -20,6 +20,8 @@ type MutatingService interface {
 	RenewSubscription(ctx context.Context, req core.RenewSubscriptionRequest) (core.Subscription, error)
 	CancelSubscription(ctx context.Context, req core.CancelSubscriptionRequest) error
 	AdvanceSyncCursor(ctx context.Context, in core.AdvanceSyncCursorInput) (core.SyncCursor, error)
+	UpsertInstallation(ctx context.Context, in core.UpsertInstallationInput) (core.Installation, error)
+	UpdateInstallationStatus(ctx context.Context, id string, status string, reason string) error
 }
 
 type ConnectCommand struct {
@@ -230,6 +232,41 @@ func (c *AdvanceSyncCursorCommand) Execute(ctx context.Context, msg AdvanceSyncC
 	}
 	storeResult(ctx, out)
 	return nil
+}
+
+type UpsertInstallationCommand struct {
+	service MutatingService
+}
+
+func NewUpsertInstallationCommand(service MutatingService) *UpsertInstallationCommand {
+	return &UpsertInstallationCommand{service: service}
+}
+
+func (c *UpsertInstallationCommand) Execute(ctx context.Context, msg UpsertInstallationMessage) error {
+	if c == nil || c.service == nil {
+		return fmt.Errorf("command: installation service is required")
+	}
+	out, err := c.service.UpsertInstallation(ctx, msg.Input)
+	if err != nil {
+		return err
+	}
+	storeResult(ctx, out)
+	return nil
+}
+
+type UpdateInstallationStatusCommand struct {
+	service MutatingService
+}
+
+func NewUpdateInstallationStatusCommand(service MutatingService) *UpdateInstallationStatusCommand {
+	return &UpdateInstallationStatusCommand{service: service}
+}
+
+func (c *UpdateInstallationStatusCommand) Execute(ctx context.Context, msg UpdateInstallationStatusMessage) error {
+	if c == nil || c.service == nil {
+		return fmt.Errorf("command: installation service is required")
+	}
+	return c.service.UpdateInstallationStatus(ctx, msg.InstallationID, msg.Status, msg.Reason)
 }
 
 func storeResult[T any](ctx context.Context, value T) {
