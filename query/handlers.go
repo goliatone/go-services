@@ -20,6 +20,11 @@ type ServicesActivityReader interface {
 	List(ctx context.Context, filter core.ServicesActivityFilter) (core.ServicesActivityPage, error)
 }
 
+type InstallationReader interface {
+	GetInstallation(ctx context.Context, id string) (core.Installation, error)
+	ListInstallations(ctx context.Context, providerID string, scope core.ScopeRef) ([]core.Installation, error)
+}
+
 type LoadSyncCursorQuery struct {
 	reader SyncCursorReader
 }
@@ -51,4 +56,37 @@ func (q *ListServicesActivityQuery) Query(
 		return core.ServicesActivityPage{}, fmt.Errorf("query: services activity reader is required")
 	}
 	return q.reader.List(ctx, msg.Filter)
+}
+
+type GetInstallationQuery struct {
+	reader InstallationReader
+}
+
+func NewGetInstallationQuery(reader InstallationReader) *GetInstallationQuery {
+	return &GetInstallationQuery{reader: reader}
+}
+
+func (q *GetInstallationQuery) Query(ctx context.Context, msg GetInstallationMessage) (core.Installation, error) {
+	if q == nil || q.reader == nil {
+		return core.Installation{}, fmt.Errorf("query: installation reader is required")
+	}
+	return q.reader.GetInstallation(ctx, msg.InstallationID)
+}
+
+type ListInstallationsQuery struct {
+	reader InstallationReader
+}
+
+func NewListInstallationsQuery(reader InstallationReader) *ListInstallationsQuery {
+	return &ListInstallationsQuery{reader: reader}
+}
+
+func (q *ListInstallationsQuery) Query(
+	ctx context.Context,
+	msg ListInstallationsMessage,
+) ([]core.Installation, error) {
+	if q == nil || q.reader == nil {
+		return nil, fmt.Errorf("query: installation reader is required")
+	}
+	return q.reader.ListInstallations(ctx, msg.ProviderID, msg.Scope)
 }
