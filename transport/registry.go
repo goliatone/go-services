@@ -28,6 +28,9 @@ func NewDefaultRegistry() *Registry {
 	registry := NewRegistry()
 	_ = registry.Register(NewRESTAdapter(nil))
 	_ = registry.Register(NewGraphQLAdapter("", nil))
+	for _, kind := range []string{KindSOAP, KindBulk, KindStream, KindFile} {
+		_ = registry.RegisterFactory(kind, defaultNoopFactory(kind))
+	}
 	return registry
 }
 
@@ -133,6 +136,13 @@ func (r *Registry) List() []core.TransportAdapter {
 
 func normalizeKind(kind string) string {
 	return strings.TrimSpace(strings.ToLower(kind))
+}
+
+func defaultNoopFactory(kind string) AdapterFactory {
+	return func(config map[string]any) (core.TransportAdapter, error) {
+		reason := strings.TrimSpace(fmt.Sprint(config["reason"]))
+		return NewUnsupportedAdapter(kind, reason), nil
+	}
 }
 
 func cloneMap(input map[string]any) map[string]any {
