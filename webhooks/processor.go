@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -189,7 +190,12 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 	result, err := p.Handler.Handle(ctx, req)
 	if err != nil {
 		nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
-		_ = p.Ledger.Fail(ctx, delivery.ClaimID, err, nextAttemptAt, p.maxAttempts())
+		if failErr := p.Ledger.Fail(ctx, delivery.ClaimID, err, nextAttemptAt, p.maxAttempts()); failErr != nil {
+			return core.InboundResult{}, errors.Join(
+				err,
+				fmt.Errorf("webhooks: mark delivery failed: %w", failErr),
+			)
+		}
 		return core.InboundResult{}, err
 	}
 
@@ -198,7 +204,12 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 	if !result.Accepted || retryableServerFailure {
 		retryErr := fmt.Errorf("webhooks: delivery handler returned retryable status %d", result.StatusCode)
 		nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
-		_ = p.Ledger.Fail(ctx, delivery.ClaimID, retryErr, nextAttemptAt, p.maxAttempts())
+		if failErr := p.Ledger.Fail(ctx, delivery.ClaimID, retryErr, nextAttemptAt, p.maxAttempts()); failErr != nil {
+			return result, errors.Join(
+				retryErr,
+				fmt.Errorf("webhooks: mark delivery failed: %w", failErr),
+			)
+		}
 		if !result.Accepted || retryableServerFailure {
 			return result, retryErr
 		}
