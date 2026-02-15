@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -428,10 +429,13 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		return CallbackCompletion{}, err
 	}
 	if strategyRequiresCallbackState(strategy) {
-		if err = s.validateOAuthCallbackState(ctx, req); err != nil {
+		stateRecord, stateErr := s.consumeOAuthCallbackState(ctx, req)
+		if stateErr != nil {
+			err = stateErr
 			err = s.mapError(err)
 			return CallbackCompletion{}, err
 		}
+		req = applyOAuthStateContext(req, stateRecord)
 	}
 	result, err := strategy.Complete(ctx, AuthCompleteRequest{
 		Scope:       req.Scope,
@@ -566,32 +570,89 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 }
 
 func (s *Service) validateOAuthCallbackState(ctx context.Context, req CompleteAuthRequest) error {
+	_, err := s.consumeOAuthCallbackState(ctx, req)
+	return err
+}
+
+func (s *Service) consumeOAuthCallbackState(ctx context.Context, req CompleteAuthRequest) (OAuthStateRecord, error) {
 	if s == nil || s.oauthStateStore == nil {
-		return nil
+		return OAuthStateRecord{}, nil
 	}
 	state := strings.TrimSpace(req.State)
 	if state == "" {
-		return fmt.Errorf("core: oauth callback state is required")
+		return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state is required")
 	}
 
 	record, err := s.oauthStateStore.Consume(ctx, state)
 	if err != nil {
-		return err
+		return OAuthStateRecord{}, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(record.ProviderID), strings.TrimSpace(req.ProviderID)) {
-		return fmt.Errorf("core: oauth callback state provider mismatch")
+		return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state provider mismatch")
 	}
 	if !strings.EqualFold(strings.TrimSpace(record.Scope.Type), strings.TrimSpace(req.Scope.Type)) ||
 		strings.TrimSpace(record.Scope.ID) != strings.TrimSpace(req.Scope.ID) {
-		return fmt.Errorf("core: oauth callback state scope mismatch")
+		return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state scope mismatch")
 	}
 
 	savedRedirect := strings.TrimSpace(record.RedirectURI)
 	requestRedirect := strings.TrimSpace(req.RedirectURI)
-	if savedRedirect != "" && requestRedirect != "" && savedRedirect != requestRedirect {
-		return fmt.Errorf("core: oauth callback state redirect mismatch")
+	if savedRedirect != "" {
+		if requestRedirect != "" && savedRedirect != requestRedirect {
+			return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state redirect mismatch")
+		}
+		if requestRedirect == "" && s.requireCallbackRedirect(req.Metadata) {
+			return OAuthStateRecord{}, fmt.Errorf("core: oauth callback redirect uri is required")
+		}
 	}
-	return nil
+	return cloneOAuthStateRecord(record), nil
+}
+
+func applyOAuthStateContext(req CompleteAuthRequest, record OAuthStateRecord) CompleteAuthRequest {
+	if strings.TrimSpace(req.RedirectURI) == "" && strings.TrimSpace(record.RedirectURI) != "" {
+		req.RedirectURI = strings.TrimSpace(record.RedirectURI)
+	}
+	mergedMetadata := copyAnyMap(record.Metadata)
+	for key, value := range req.Metadata {
+		mergedMetadata[key] = value
+	}
+	if len(record.RequestedGrants) > 0 {
+		mergedMetadata["requested_grants"] = append([]string(nil), record.RequestedGrants...)
+	}
+	req.Metadata = mergedMetadata
+	return req
+}
+
+func (s *Service) requireCallbackRedirect(metadata map[string]any) bool {
+	required := false
+	if s != nil {
+		required = s.config.OAuth.RequireCallbackRedirect
+	}
+	if len(metadata) == 0 {
+		return required
+	}
+	if override, ok := parseBoolOverride(metadata["require_callback_redirect"]); ok {
+		return override
+	}
+	if override, ok := parseBoolOverride(metadata["strict_redirect_validation"]); ok {
+		return override
+	}
+	return required
+}
+
+func parseBoolOverride(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(typed))
+		if err != nil {
+			return false, false
+		}
+		return parsed, true
+	default:
+		return false, false
+	}
 }
 
 func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result RefreshResult, err error) {
@@ -625,7 +686,38 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 	}
 	defer unlock()
 
-	provider, err := s.resolveProvider(req.ProviderID)
+	resolvedProviderID := strings.TrimSpace(req.ProviderID)
+	if s.connectionStore != nil {
+		connection, loadErr := s.connectionStore.Get(ctx, req.ConnectionID)
+		if loadErr != nil {
+			err = s.mapError(loadErr)
+			return RefreshResult{}, err
+		}
+		connectionProviderID := strings.TrimSpace(connection.ProviderID)
+		if connectionProviderID == "" {
+			err = s.mapError(fmt.Errorf("core: connection %q has no provider id", req.ConnectionID))
+			return RefreshResult{}, err
+		}
+		if resolvedProviderID == "" {
+			resolvedProviderID = connectionProviderID
+		} else if !strings.EqualFold(resolvedProviderID, connectionProviderID) {
+			err = s.mapError(
+				fmt.Errorf(
+					"core: provider mismatch for connection %q: got %q want %q",
+					req.ConnectionID,
+					resolvedProviderID,
+					connectionProviderID,
+				),
+			)
+			return RefreshResult{}, err
+		}
+	}
+	if resolvedProviderID == "" {
+		err = s.mapError(fmt.Errorf("core: provider id is required"))
+		return RefreshResult{}, err
+	}
+	req.ProviderID = resolvedProviderID
+	provider, err := s.resolveProvider(resolvedProviderID)
 	if err != nil {
 		return RefreshResult{}, err
 	}
