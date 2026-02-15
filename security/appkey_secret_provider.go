@@ -16,14 +16,18 @@ import (
 	"github.com/goliatone/go-services/core"
 )
 
-const envelopePrefix = "services.secret.v1:"
+const (
+	envelopePrefix    = "services.secret.v1:"
+	envelopeAlgorithm = "aes-256-gcm"
+)
 
 type Option func(*AppKeySecretProvider)
 
 type AppKeySecretProvider struct {
-	key     []byte
-	keyID   string
-	version int
+	key                []byte
+	keyID              string
+	version            int
+	allowLegacyDecrypt bool
 }
 
 type envelope struct {
@@ -51,6 +55,12 @@ func WithVersion(version int) Option {
 	}
 }
 
+func WithAllowLegacyDecrypt(allow bool) Option {
+	return func(provider *AppKeySecretProvider) {
+		provider.allowLegacyDecrypt = allow
+	}
+}
+
 func NewAppKeySecretProvider(keyMaterial []byte, opts ...Option) (*AppKeySecretProvider, error) {
 	key := bytes.TrimSpace(keyMaterial)
 	if len(key) == 0 {
@@ -58,9 +68,10 @@ func NewAppKeySecretProvider(keyMaterial []byte, opts ...Option) (*AppKeySecretP
 	}
 	normalized := normalizeKey(key)
 	provider := &AppKeySecretProvider{
-		key:     normalized,
-		keyID:   "app-key",
-		version: 1,
+		key:                normalized,
+		keyID:              "app-key",
+		version:            1,
+		allowLegacyDecrypt: false,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -82,6 +93,12 @@ func (p *AppKeySecretProvider) Encrypt(_ context.Context, plaintext []byte) ([]b
 	if len(plaintext) == 0 {
 		return nil, fmt.Errorf("security: plaintext is required")
 	}
+	if strings.TrimSpace(p.keyID) == "" {
+		return nil, fmt.Errorf("security: key id is required")
+	}
+	if p.version <= 0 {
+		return nil, fmt.Errorf("security: key version must be greater than zero")
+	}
 	block, err := aes.NewCipher(p.key)
 	if err != nil {
 		return nil, fmt.Errorf("security: create cipher: %w", err)
@@ -96,11 +113,12 @@ func (p *AppKeySecretProvider) Encrypt(_ context.Context, plaintext []byte) ([]b
 		return nil, fmt.Errorf("security: nonce generation failed: %w", err)
 	}
 
-	sealed := gcm.Seal(nil, nonce, plaintext, nil)
+	aad := envelopeAAD(p.keyID, p.version, envelopeAlgorithm)
+	sealed := gcm.Seal(nil, nonce, plaintext, aad)
 	data, err := json.Marshal(envelope{
 		KeyID:      p.keyID,
 		Version:    p.version,
-		Algorithm:  "aes-256-gcm",
+		Algorithm:  envelopeAlgorithm,
 		Nonce:      base64.StdEncoding.EncodeToString(nonce),
 		Ciphertext: base64.StdEncoding.EncodeToString(sealed),
 	})
@@ -121,11 +139,30 @@ func (p *AppKeySecretProvider) Decrypt(_ context.Context, ciphertext []byte) ([]
 	}
 
 	payload := string(ciphertext)
-	payload = strings.TrimPrefix(payload, envelopePrefix)
+	hasPrefix := strings.HasPrefix(payload, envelopePrefix)
+	if hasPrefix {
+		payload = strings.TrimPrefix(payload, envelopePrefix)
+	} else if !p.allowLegacyDecrypt {
+		return nil, fmt.Errorf("security: invalid ciphertext envelope prefix")
+	}
 
 	var parsed envelope
 	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
 		return nil, fmt.Errorf("security: decode envelope: %w", err)
+	}
+
+	parsed.KeyID = strings.TrimSpace(parsed.KeyID)
+	parsed.Algorithm = strings.ToLower(strings.TrimSpace(parsed.Algorithm))
+	if parsed.Algorithm == "" {
+		parsed.Algorithm = envelopeAlgorithm
+	}
+	if parsed.Algorithm != envelopeAlgorithm {
+		return nil, fmt.Errorf("security: unsupported envelope algorithm %q", parsed.Algorithm)
+	}
+	if parsed.KeyID == "" || parsed.Version <= 0 {
+		if !p.allowLegacyDecrypt {
+			return nil, fmt.Errorf("security: envelope metadata is incomplete")
+		}
 	}
 
 	if parsed.KeyID != "" && parsed.KeyID != p.keyID {
@@ -138,6 +175,9 @@ func (p *AppKeySecretProvider) Decrypt(_ context.Context, ciphertext []byte) ([]
 	nonce, err := base64.StdEncoding.DecodeString(parsed.Nonce)
 	if err != nil {
 		return nil, fmt.Errorf("security: decode nonce: %w", err)
+	}
+	if len(nonce) == 0 {
+		return nil, fmt.Errorf("security: nonce is required")
 	}
 	encryptedPayload, err := base64.StdEncoding.DecodeString(parsed.Ciphertext)
 	if err != nil {
@@ -152,8 +192,18 @@ func (p *AppKeySecretProvider) Decrypt(_ context.Context, ciphertext []byte) ([]
 	if err != nil {
 		return nil, fmt.Errorf("security: create gcm: %w", err)
 	}
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("security: invalid nonce length")
+	}
 
-	plaintext, err := gcm.Open(nil, nonce, encryptedPayload, nil)
+	var aad []byte
+	if parsed.KeyID != "" && parsed.Version > 0 {
+		aad = envelopeAAD(parsed.KeyID, parsed.Version, parsed.Algorithm)
+	}
+	plaintext, err := gcm.Open(nil, nonce, encryptedPayload, aad)
+	if err != nil && p.allowLegacyDecrypt && len(aad) > 0 {
+		plaintext, err = gcm.Open(nil, nonce, encryptedPayload, nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("security: decrypt payload: %w", err)
 	}
@@ -188,6 +238,18 @@ func normalizeKey(value []byte) []byte {
 	key := make([]byte, len(sum))
 	copy(key, sum[:])
 	return key
+}
+
+func envelopeAAD(keyID string, version int, algorithm string) []byte {
+	return []byte(
+		fmt.Sprintf(
+			"%s|%s|%d|%s",
+			envelopePrefix,
+			strings.TrimSpace(keyID),
+			version,
+			strings.ToLower(strings.TrimSpace(algorithm)),
+		),
+	)
 }
 
 var _ core.SecretProvider = (*AppKeySecretProvider)(nil)
