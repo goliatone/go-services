@@ -168,6 +168,39 @@ type syncCursorRecord struct {
 	UpdatedAt    time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
 }
 
+type installationRecord struct {
+	bun.BaseModel `bun:"table:service_installations,alias:si"`
+
+	ID          string         `bun:"id,pk"`
+	ProviderID  string         `bun:"provider_id,notnull"`
+	ScopeType   string         `bun:"scope_type,notnull"`
+	ScopeID     string         `bun:"scope_id,notnull"`
+	InstallType string         `bun:"install_type,notnull"`
+	Status      string         `bun:"status,notnull"`
+	GrantedAt   *time.Time     `bun:"granted_at,nullzero"`
+	RevokedAt   *time.Time     `bun:"revoked_at,nullzero"`
+	Metadata    map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CreatedAt   time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt   time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type rateLimitStateRecord struct {
+	bun.BaseModel `bun:"table:service_rate_limit_state,alias:srls"`
+
+	ID         string         `bun:"id,pk"`
+	ProviderID string         `bun:"provider_id,notnull"`
+	ScopeType  string         `bun:"scope_type,notnull"`
+	ScopeID    string         `bun:"scope_id,notnull"`
+	BucketKey  string         `bun:"bucket_key,notnull"`
+	Limit      int            `bun:"limit,notnull"`
+	Remaining  int            `bun:"remaining,notnull"`
+	ResetAt    *time.Time     `bun:"reset_at,nullzero"`
+	RetryAfter *int           `bun:"retry_after,nullzero"`
+	Metadata   map[string]any `bun:"metadata,type:jsonb,notnull"`
+	CreatedAt  time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt  time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
 type syncJobRecord struct {
 	bun.BaseModel `bun:"table:service_sync_jobs,alias:ssj"`
 

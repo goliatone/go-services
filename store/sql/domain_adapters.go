@@ -193,6 +193,54 @@ func (r *syncCursorRecord) toDomain() core.SyncCursor {
 	return cursor
 }
 
+func newInstallationRecord(in core.UpsertInstallationInput, now time.Time) *installationRecord {
+	record := &installationRecord{
+		ProviderID:  in.ProviderID,
+		ScopeType:   in.Scope.Type,
+		ScopeID:     in.Scope.ID,
+		InstallType: in.InstallType,
+		Status:      string(in.Status),
+		Metadata:    copyAnyMap(in.Metadata),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if in.GrantedAt != nil {
+		value := *in.GrantedAt
+		record.GrantedAt = &value
+	}
+	if in.RevokedAt != nil {
+		value := *in.RevokedAt
+		record.RevokedAt = &value
+	}
+	return record
+}
+
+func (r *installationRecord) toDomain() core.Installation {
+	if r == nil {
+		return core.Installation{}
+	}
+	installation := core.Installation{
+		ID:          r.ID,
+		ProviderID:  r.ProviderID,
+		ScopeType:   r.ScopeType,
+		ScopeID:     r.ScopeID,
+		InstallType: r.InstallType,
+		Status:      core.InstallationStatus(r.Status),
+		Metadata:    copyAnyMap(r.Metadata),
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+	if r.GrantedAt != nil {
+		value := *r.GrantedAt
+		installation.GrantedAt = &value
+	}
+	if r.RevokedAt != nil {
+		value := *r.RevokedAt
+		installation.RevokedAt = &value
+	}
+	return installation
+}
+
 func (r *syncJobRecord) toDomain() core.SyncJob {
 	if r == nil {
 		return core.SyncJob{}

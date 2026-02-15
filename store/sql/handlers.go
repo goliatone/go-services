@@ -268,6 +268,64 @@ func syncCursorHandlers() repository.ModelHandlers[*syncCursorRecord] {
 	}
 }
 
+func installationHandlers() repository.ModelHandlers[*installationRecord] {
+	return repository.ModelHandlers[*installationRecord]{
+		NewRecord: func() *installationRecord {
+			return &installationRecord{}
+		},
+		GetID: func(record *installationRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *installationRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *installationRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
+func rateLimitStateHandlers() repository.ModelHandlers[*rateLimitStateRecord] {
+	return repository.ModelHandlers[*rateLimitStateRecord]{
+		NewRecord: func() *rateLimitStateRecord {
+			return &rateLimitStateRecord{}
+		},
+		GetID: func(record *rateLimitStateRecord) uuid.UUID {
+			if record == nil {
+				return uuid.Nil
+			}
+			return parseUUID(record.ID)
+		},
+		SetID: func(record *rateLimitStateRecord, id uuid.UUID) {
+			if record == nil {
+				return
+			}
+			record.ID = id.String()
+		},
+		GetIdentifier: func() string {
+			return "id"
+		},
+		GetIdentifierValue: func(record *rateLimitStateRecord) string {
+			if record == nil {
+				return ""
+			}
+			return strings.TrimSpace(record.ID)
+		},
+	}
+}
+
 func syncJobHandlers() repository.ModelHandlers[*syncJobRecord] {
 	return repository.ModelHandlers[*syncJobRecord]{
 		NewRecord: func() *syncJobRecord {

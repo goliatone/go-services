@@ -6,6 +6,7 @@ import (
 	persistence "github.com/goliatone/go-persistence-bun"
 	repository "github.com/goliatone/go-repository-bun"
 	"github.com/goliatone/go-services/core"
+	"github.com/goliatone/go-services/ratelimit"
 	"github.com/uptrace/bun"
 )
 
@@ -16,6 +17,9 @@ type RepositoryFactory struct {
 	credentialStore           *CredentialStore
 	subscriptionStore         *SubscriptionStore
 	syncCursorStore           *SyncCursorStore
+	installationStore         *InstallationStore
+	rateLimitStateStore       *RateLimitStateStore
+	rateLimitPolicy           core.RateLimitPolicy
 	syncJobStore              *SyncJobStore
 	outboxStore               *OutboxStore
 	notificationDispatchStore *NotificationDispatchStore
@@ -97,6 +101,34 @@ func (f *RepositoryFactory) SyncCursorStore() core.SyncCursorStore {
 	return f.syncCursorStore
 }
 
+func (f *RepositoryFactory) InstallationStore() core.InstallationStore {
+	if f == nil {
+		return nil
+	}
+	return f.installationStore
+}
+
+func (f *RepositoryFactory) RateLimitStateStore() *RateLimitStateStore {
+	if f == nil {
+		return nil
+	}
+	return f.rateLimitStateStore
+}
+
+func (f *RepositoryFactory) RateLimitPolicy() core.RateLimitPolicy {
+	if f == nil {
+		return nil
+	}
+	if f.rateLimitPolicy != nil {
+		return f.rateLimitPolicy
+	}
+	if f.rateLimitStateStore == nil {
+		return nil
+	}
+	f.rateLimitPolicy = ratelimit.NewAdaptivePolicy(f.rateLimitStateStore)
+	return f.rateLimitPolicy
+}
+
 func (f *RepositoryFactory) SyncJobStore() *SyncJobStore {
 	if f == nil {
 		return nil
@@ -158,6 +190,16 @@ func (f *RepositoryFactory) initStores() error {
 		return err
 	}
 	f.syncCursorStore = syncCursorStore
+	installationStore, err := NewInstallationStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.installationStore = installationStore
+	rateLimitStateStore, err := NewRateLimitStateStore(f.db)
+	if err != nil {
+		return err
+	}
+	f.rateLimitStateStore = rateLimitStateStore
 	syncJobStore, err := NewSyncJobStore(f.db)
 	if err != nil {
 		return err
