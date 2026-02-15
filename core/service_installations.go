@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func (s *Service) UpsertInstallation(ctx context.Context, in UpsertInstallationInput) (Installation, error) {
@@ -26,8 +27,29 @@ func (s *Service) UpsertInstallation(ctx context.Context, in UpsertInstallationI
 	if in.InstallType == "" {
 		return Installation{}, s.mapError(fmt.Errorf("core: install type is required"))
 	}
-	if strings.TrimSpace(string(in.Status)) == "" {
-		in.Status = InstallationStatusActive
+	status, parseErr := parseInstallationStatus(in.Status)
+	if parseErr != nil {
+		return Installation{}, s.mapError(parseErr)
+	}
+	in.Status = status
+
+	existingByScope, err := s.installationStore.ListByScope(ctx, in.ProviderID, in.Scope)
+	if err != nil {
+		return Installation{}, s.mapError(err)
+	}
+	found := false
+	for _, item := range existingByScope {
+		if strings.EqualFold(strings.TrimSpace(item.InstallType), in.InstallType) {
+			found = true
+			candidate := item
+			if transitionErr := candidate.TransitionTo(status, time.Now().UTC()); transitionErr != nil {
+				return Installation{}, s.mapError(transitionErr)
+			}
+			break
+		}
+	}
+	if !found && status != InstallationStatusActive {
+		return Installation{}, s.mapError(fmt.Errorf("core: installation must be created with status active"))
 	}
 
 	record, err := s.installationStore.Upsert(ctx, in)
@@ -92,8 +114,36 @@ func (s *Service) UpdateInstallationStatus(
 	if id == "" || status == "" {
 		return s.mapError(fmt.Errorf("core: installation id and status are required"))
 	}
-	if err := s.installationStore.UpdateStatus(ctx, id, status, strings.TrimSpace(reason)); err != nil {
+	targetStatus, parseErr := parseInstallationStatus(InstallationStatus(status))
+	if parseErr != nil {
+		return s.mapError(parseErr)
+	}
+	current, err := s.installationStore.Get(ctx, id)
+	if err != nil {
+		return s.mapError(err)
+	}
+	candidate := current
+	if transitionErr := candidate.TransitionTo(targetStatus, time.Now().UTC()); transitionErr != nil {
+		return s.mapError(transitionErr)
+	}
+	if err := s.installationStore.UpdateStatus(ctx, id, string(targetStatus), strings.TrimSpace(reason)); err != nil {
 		return s.mapError(err)
 	}
 	return nil
+}
+
+func parseInstallationStatus(status InstallationStatus) (InstallationStatus, error) {
+	normalized := InstallationStatus(strings.TrimSpace(strings.ToLower(string(status))))
+	if normalized == "" {
+		return InstallationStatusActive, nil
+	}
+	switch normalized {
+	case InstallationStatusActive,
+		InstallationStatusSuspended,
+		InstallationStatusUninstalled,
+		InstallationStatusNeedsReconsent:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("core: invalid installation status %q", status)
+	}
 }
