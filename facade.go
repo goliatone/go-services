@@ -12,6 +12,7 @@ import (
 type CommandQueryService interface {
 	servicescommand.MutatingService
 	servicesquery.SyncCursorReader
+	servicesquery.InstallationReader
 }
 
 type Commands struct {
@@ -26,11 +27,15 @@ type Commands struct {
 	RenewSubscription  *servicescommand.RenewSubscriptionCommand
 	CancelSubscription *servicescommand.CancelSubscriptionCommand
 	AdvanceSyncCursor  *servicescommand.AdvanceSyncCursorCommand
+	UpsertInstallation *servicescommand.UpsertInstallationCommand
+	UpdateInstallation *servicescommand.UpdateInstallationStatusCommand
 }
 
 type Queries struct {
 	LoadSyncCursor       *servicesquery.LoadSyncCursorQuery
 	ListServicesActivity *servicesquery.ListServicesActivityQuery
+	GetInstallation      *servicesquery.GetInstallationQuery
+	ListInstallations    *servicesquery.ListInstallationsQuery
 }
 
 type Facade struct {
@@ -81,10 +86,14 @@ func NewFacade(service CommandQueryService, opts ...FacadeOption) (*Facade, erro
 		RenewSubscription:  servicescommand.NewRenewSubscriptionCommand(service),
 		CancelSubscription: servicescommand.NewCancelSubscriptionCommand(service),
 		AdvanceSyncCursor:  servicescommand.NewAdvanceSyncCursorCommand(service),
+		UpsertInstallation: servicescommand.NewUpsertInstallationCommand(service),
+		UpdateInstallation: servicescommand.NewUpdateInstallationStatusCommand(service),
 	}
 	facade.queries = Queries{
 		LoadSyncCursor:       servicesquery.NewLoadSyncCursorQuery(service),
 		ListServicesActivity: servicesquery.NewListServicesActivityQuery(reader),
+		GetInstallation:      servicesquery.NewGetInstallationQuery(service),
+		ListInstallations:    servicesquery.NewListInstallationsQuery(service),
 	}
 
 	return facade, nil
