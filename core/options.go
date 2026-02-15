@@ -43,12 +43,15 @@ type serviceBuilder struct {
 	connectionLocker    ConnectionLocker
 	refreshScheduler    RefreshBackoffScheduler
 	signer              Signer
+	transportResolver   TransportResolver
+	rateLimitPolicy     RateLimitPolicy
 	inheritancePolicy   InheritancePolicy
 	registry            Registry
 	connectionStore     ConnectionStore
 	credentialStore     CredentialStore
 	subscriptionStore   SubscriptionStore
 	syncCursorStore     SyncCursorStore
+	installationStore   InstallationStore
 	grantStore          GrantStore
 	permissionEvaluator PermissionEvaluator
 	credentialCodec     CredentialCodec
@@ -140,6 +143,18 @@ func WithSigner(signer Signer) Option {
 	}
 }
 
+func WithTransportResolver(resolver TransportResolver) Option {
+	return func(b *serviceBuilder) {
+		b.transportResolver = resolver
+	}
+}
+
+func WithRateLimitPolicy(policy RateLimitPolicy) Option {
+	return func(b *serviceBuilder) {
+		b.rateLimitPolicy = policy
+	}
+}
+
 func WithInheritancePolicy(policy InheritancePolicy) Option {
 	return func(b *serviceBuilder) {
 		b.inheritancePolicy = policy
@@ -173,6 +188,12 @@ func WithSubscriptionStore(store SubscriptionStore) Option {
 func WithSyncCursorStore(store SyncCursorStore) Option {
 	return func(b *serviceBuilder) {
 		b.syncCursorStore = store
+	}
+}
+
+func WithInstallationStore(store InstallationStore) Option {
+	return func(b *serviceBuilder) {
+		b.installationStore = store
 	}
 }
 
