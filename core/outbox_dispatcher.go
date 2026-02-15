@@ -104,9 +104,12 @@ func (d *OutboxDispatcher) DispatchPending(ctx context.Context, batchSize int) (
 
 func (d *OutboxDispatcher) dispatchOne(ctx context.Context, event LifecycleEvent) error {
 	if d == nil || d.registry == nil {
-		return nil
+		return fmt.Errorf("core: outbox projector registry is not configured")
 	}
 	handlers := d.registry.Handlers()
+	if len(handlers) == 0 {
+		return fmt.Errorf("core: outbox projector registry has no handlers")
+	}
 	for i, handler := range handlers {
 		if handler == nil {
 			continue
