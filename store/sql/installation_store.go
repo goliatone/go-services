@@ -53,9 +53,11 @@ func (s *InstallationStore) Upsert(ctx context.Context, in core.UpsertInstallati
 	if in.InstallType == "" {
 		return core.Installation{}, fmt.Errorf("sqlstore: install type is required")
 	}
-	if strings.TrimSpace(string(in.Status)) == "" {
-		in.Status = core.InstallationStatusActive
+	status, statusErr := parseInstallationStatusValue(string(in.Status))
+	if statusErr != nil {
+		return core.Installation{}, statusErr
 	}
+	in.Status = status
 
 	now := time.Now().UTC()
 	var out core.Installation
@@ -65,6 +67,9 @@ func (s *InstallationStore) Upsert(ctx context.Context, in core.UpsertInstallati
 			return err
 		}
 		if record == nil {
+			if status != core.InstallationStatusActive {
+				return fmt.Errorf("sqlstore: installation must be created with status active")
+			}
 			record = newInstallationRecord(in, now)
 			record.ID = uuid.NewString()
 			if _, insertErr := tx.NewInsert().Model(record).Exec(ctx); insertErr != nil {
@@ -74,7 +79,12 @@ func (s *InstallationStore) Upsert(ctx context.Context, in core.UpsertInstallati
 			return nil
 		}
 
-		record.Status = string(in.Status)
+		candidate := record.toDomain()
+		if transitionErr := candidate.TransitionTo(status, now); transitionErr != nil {
+			return transitionErr
+		}
+
+		record.Status = string(status)
 		record.Metadata = copyAnyMap(in.Metadata)
 		record.UpdatedAt = now
 		if in.GrantedAt != nil {
@@ -84,6 +94,9 @@ func (s *InstallationStore) Upsert(ctx context.Context, in core.UpsertInstallati
 		if in.RevokedAt != nil {
 			value := *in.RevokedAt
 			record.RevokedAt = &value
+		}
+		if status == core.InstallationStatusUninstalled && record.RevokedAt == nil {
+			record.RevokedAt = &now
 		}
 		if _, updateErr := tx.NewUpdate().
 			Model(record).
@@ -152,9 +165,13 @@ func (s *InstallationStore) UpdateStatus(ctx context.Context, id string, status 
 		return fmt.Errorf("sqlstore: installation store is not configured")
 	}
 	id = strings.TrimSpace(id)
-	status = strings.TrimSpace(status)
+	status = strings.TrimSpace(strings.ToLower(status))
 	if id == "" || status == "" {
 		return fmt.Errorf("sqlstore: installation id and status are required")
+	}
+	targetStatus, parseErr := parseInstallationStatusValue(status)
+	if parseErr != nil {
+		return parseErr
 	}
 
 	record, err := s.repo.GetByID(ctx, id)
@@ -162,7 +179,11 @@ func (s *InstallationStore) UpdateStatus(ctx context.Context, id string, status 
 		return err
 	}
 	now := time.Now().UTC()
-	record.Status = status
+	candidate := record.toDomain()
+	if transitionErr := candidate.TransitionTo(targetStatus, now); transitionErr != nil {
+		return transitionErr
+	}
+	record.Status = string(targetStatus)
 	record.UpdatedAt = now
 	record.Metadata = copyAnyMap(record.Metadata)
 	if strings.TrimSpace(reason) != "" {
@@ -202,4 +223,20 @@ func findInstallationTx(
 		return nil, err
 	}
 	return record, nil
+}
+
+func parseInstallationStatusValue(status string) (core.InstallationStatus, error) {
+	normalized := core.InstallationStatus(strings.TrimSpace(strings.ToLower(status)))
+	if normalized == "" {
+		return core.InstallationStatusActive, nil
+	}
+	switch normalized {
+	case core.InstallationStatusActive,
+		core.InstallationStatusSuspended,
+		core.InstallationStatusUninstalled,
+		core.InstallationStatusNeedsReconsent:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("sqlstore: invalid installation status %q", status)
+	}
 }
