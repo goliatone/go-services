@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	ServiceErrorBadInput              = "SERVICE_BAD_INPUT"
-	ServiceErrorProviderNotFound      = "SERVICE_PROVIDER_NOT_FOUND"
-	ServiceErrorCapabilityUnsupported = "SERVICE_CAPABILITY_UNSUPPORTED"
-	ServiceErrorOAuthStateInvalid     = "SERVICE_OAUTH_STATE_INVALID"
-	ServiceErrorRefreshLocked         = "SERVICE_REFRESH_LOCKED"
-	ServiceErrorPermissionDenied      = "SERVICE_PERMISSION_DENIED"
-	ServiceErrorInternal              = "SERVICE_INTERNAL_ERROR"
+	ServiceErrorBadInput                = "SERVICE_BAD_INPUT"
+	ServiceErrorProviderNotFound        = "SERVICE_PROVIDER_NOT_FOUND"
+	ServiceErrorCapabilityUnsupported   = "SERVICE_CAPABILITY_UNSUPPORTED"
+	ServiceErrorOAuthStateInvalid       = "SERVICE_OAUTH_STATE_INVALID"
+	ServiceErrorRefreshLocked           = "SERVICE_REFRESH_LOCKED"
+	ServiceErrorPermissionDenied        = "SERVICE_PERMISSION_DENIED"
+	ServiceErrorRateLimited             = "SERVICE_RATE_LIMITED"
+	ServiceErrorProviderOperationFailed = "SERVICE_PROVIDER_OPERATION_FAILED"
+	ServiceErrorInternal                = "SERVICE_INTERNAL_ERROR"
 )
 
 func serviceErrorMapper(err error) *goerrors.Error {
@@ -37,6 +39,8 @@ func serviceErrorMapper(err error) *goerrors.Error {
 		return newServiceError(err.Error(), goerrors.CategoryAuth, ServiceErrorOAuthStateInvalid)
 	case strings.Contains(msg, "lock already held"), strings.Contains(msg, "refresh lock"):
 		return newServiceError(err.Error(), goerrors.CategoryConflict, ServiceErrorRefreshLocked)
+	case strings.Contains(msg, "throttl"), strings.Contains(msg, "rate limit"):
+		return newServiceError(err.Error(), goerrors.CategoryRateLimit, ServiceErrorRateLimited)
 	case strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "mismatch"):
 		return newServiceError(err.Error(), goerrors.CategoryBadInput, ServiceErrorBadInput)
 	}
@@ -78,6 +82,8 @@ func defaultServiceTextCode(category goerrors.Category) string {
 		return ServiceErrorPermissionDenied
 	case goerrors.CategoryConflict:
 		return ServiceErrorRefreshLocked
+	case goerrors.CategoryRateLimit:
+		return ServiceErrorRateLimited
 	case goerrors.CategoryOperation:
 		return ServiceErrorCapabilityUnsupported
 	default:
