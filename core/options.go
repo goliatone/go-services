@@ -317,5 +317,10 @@ func configToLayerMap(cfg Config, includeZero bool) map[string]any {
 			"enabled_providers": append([]string(nil), cfg.Inheritance.EnabledProviders...),
 		}
 	}
+	if includeZero || cfg.OAuth.RequireCallbackRedirect {
+		layer["oauth"] = map[string]any{
+			"require_callback_redirect": cfg.OAuth.RequireCallbackRedirect,
+		}
+	}
 	return layer
 }
