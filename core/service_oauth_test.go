@@ -200,7 +200,7 @@ func TestCompleteCallback_UsesStateContextWhenCallbackOmitsRedirectAndMetadata(t
 	}
 }
 
-func TestCompleteCallback_RedirectValidationIsConfigurable(t *testing.T) {
+func TestCompleteCallback_RedirectValidationCannotBeRelaxedByMetadata(t *testing.T) {
 	ctx := context.Background()
 	registry := NewProviderRegistry()
 	if err := registry.Register(testProvider{id: "github"}); err != nil {
@@ -258,8 +258,52 @@ func TestCompleteCallback_RedirectValidationIsConfigurable(t *testing.T) {
 			"require_callback_redirect": false,
 		},
 	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect uri is required") {
+		t.Fatalf("expected metadata to be unable to relax redirect validation, got %v", err)
+	}
+}
+
+func TestCompleteCallback_RedirectValidationCanBeHardenedPerRequest(t *testing.T) {
+	ctx := context.Background()
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "github"}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	svc, err := NewService(
+		Config{
+			OAuth: OAuthConfig{RequireCallbackRedirect: false},
+		},
+		WithRegistry(registry),
+		WithOAuthStateStore(NewMemoryOAuthStateStore(time.Minute)),
+		WithConnectionStore(newMemoryConnectionStore()),
+		WithCredentialStore(newMemoryCredentialStore()),
+		WithSecretProvider(testSecretProvider{}),
+	)
 	if err != nil {
-		t.Fatalf("expected metadata override to relax strict redirect validation: %v", err)
+		t.Fatalf("new service: %v", err)
+	}
+
+	connectResp, err := svc.Connect(ctx, ConnectRequest{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "user", ID: "u6"},
+		RedirectURI: "https://app.example/callback",
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	_, err = svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID: "github",
+		Scope:      ScopeRef{Type: "user", ID: "u6"},
+		Code:       "code",
+		State:      connectResp.State,
+		Metadata: map[string]any{
+			"strict_redirect_validation": true,
+		},
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect uri is required") {
+		t.Fatalf("expected metadata to harden redirect validation, got %v", err)
 	}
 }
 

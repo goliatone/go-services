@@ -87,6 +87,32 @@ func TestProcessor_RecordsRetryOnHandlerFailure(t *testing.T) {
 	}
 }
 
+func TestProcessor_ReturnsFailPersistenceErrorOnHandlerFailure(t *testing.T) {
+	handlerErr := errors.New("temporary failure")
+	ledger := &failingDeliveryLedger{
+		memoryDeliveryLedger: newMemoryDeliveryLedger(),
+		failErr:              errors.New("ledger unavailable"),
+	}
+	handler := &stubWebhookHandler{err: handlerErr}
+	processor := NewProcessor(stubVerifier{}, ledger, handler)
+
+	_, err := processor.Process(context.Background(), core.InboundRequest{
+		ProviderID: "google",
+		Headers: map[string]string{
+			"X-Goog-Message-Number": "99",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected processor error")
+	}
+	if !errors.Is(err, handlerErr) {
+		t.Fatalf("expected original handler error to be preserved, got %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "mark delivery failed") {
+		t.Fatalf("expected delivery fail persistence context, got %v", err)
+	}
+}
+
 func TestProcessor_AcceptedServerErrorsRetryByDefault(t *testing.T) {
 	ledger := newMemoryDeliveryLedger()
 	handler := &stubWebhookHandler{
@@ -552,4 +578,19 @@ func parseMemoryClaimID(claimID string) (string, int, error) {
 	}
 	key := strings.Join(parts[:len(parts)-1], ":")
 	return key, attempt, nil
+}
+
+type failingDeliveryLedger struct {
+	*memoryDeliveryLedger
+	failErr error
+}
+
+func (l *failingDeliveryLedger) Fail(
+	_ context.Context,
+	_ string,
+	_ error,
+	_ time.Time,
+	_ int,
+) error {
+	return l.failErr
 }

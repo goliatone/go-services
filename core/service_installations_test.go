@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +82,47 @@ func TestService_InstallationLifecycle_ValidatesInput(t *testing.T) {
 	}
 	if err := svc.UpdateInstallationStatus(ctx, "", string(InstallationStatusActive), ""); err == nil {
 		t.Fatalf("expected missing id error")
+	}
+}
+
+func TestService_InstallationLifecycle_EnforcesStatusTransitions(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryInstallationStore()
+	svc, err := NewService(Config{}, WithInstallationStore(store))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	installation, err := svc.UpsertInstallation(ctx, UpsertInstallationInput{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "org", ID: "org_2"},
+		InstallType: "marketplace_app",
+		Status:      InstallationStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("upsert installation: %v", err)
+	}
+
+	if err := svc.UpdateInstallationStatus(ctx, installation.ID, string(InstallationStatusUninstalled), "removed"); err != nil {
+		t.Fatalf("uninstall transition: %v", err)
+	}
+	err = svc.UpdateInstallationStatus(ctx, installation.ID, string(InstallationStatusActive), "reactivate")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid installation status transition") {
+		t.Fatalf("expected invalid transition error, got %v", err)
+	}
+
+	_, err = svc.UpsertInstallation(ctx, UpsertInstallationInput{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "org", ID: "org_3"},
+		InstallType: "marketplace_app",
+		Status:      InstallationStatusSuspended,
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "created with status active") {
+		t.Fatalf("expected active-on-create enforcement error, got %v", err)
+	}
+
+	err = svc.UpdateInstallationStatus(ctx, installation.ID, "invalid_status", "bad")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid installation status") {
+		t.Fatalf("expected invalid status error, got %v", err)
 	}
 }

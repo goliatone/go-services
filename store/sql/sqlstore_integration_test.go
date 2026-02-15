@@ -1207,6 +1207,29 @@ func TestInstallationStore_UpsertListAndStatusTransitions(t *testing.T) {
 	if updated.Metadata["installer"] != "admin_2" {
 		t.Fatalf("expected metadata refresh on upsert")
 	}
+
+	if err := installationStore.UpdateStatus(ctx, installation.ID, string(core.InstallationStatusUninstalled), "removed"); err != nil {
+		t.Fatalf("update installation status uninstalled: %v", err)
+	}
+	if err := installationStore.UpdateStatus(ctx, installation.ID, string(core.InstallationStatusActive), "reactivate"); err == nil {
+		t.Fatalf("expected invalid transition from uninstalled to active")
+	} else if !strings.Contains(strings.ToLower(err.Error()), "invalid installation status transition") {
+		t.Fatalf("expected transition validation error, got %v", err)
+	}
+
+	if _, err := installationStore.Upsert(ctx, core.UpsertInstallationInput{
+		ProviderID:  "github",
+		Scope:       core.ScopeRef{Type: "org", ID: "org_install_2"},
+		InstallType: "marketplace_app",
+		Status:      core.InstallationStatusSuspended,
+		Metadata:    map[string]any{"installer": "admin_3"},
+	}); err == nil {
+		t.Fatalf("expected create-time status validation for non-active installation")
+	}
+
+	if err := installationStore.UpdateStatus(ctx, installation.ID, "bogus_status", "bad"); err == nil {
+		t.Fatalf("expected invalid status validation error")
+	}
 }
 
 func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {

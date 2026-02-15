@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,6 +14,17 @@ import (
 func TestStrategyConformanceByMode(t *testing.T) {
 	now := time.Date(2026, 2, 13, 18, 0, 0, 0, time.UTC)
 	privateKeyPEM := generateTestRSAPrivateKeyPEM(t)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "cc_conformance_token",
+			"token_type":   "bearer",
+			"expires_in":   1800,
+			"scope":        "read",
+		})
+	}))
+	defer tokenServer.Close()
+
 	tests := []struct {
 		name         string
 		expectedType string
@@ -67,6 +81,7 @@ func TestStrategyConformanceByMode(t *testing.T) {
 			strategy: NewOAuth2ClientCredentialsStrategy(OAuth2ClientCredentialsStrategyConfig{
 				ClientID:     "client_1",
 				ClientSecret: "secret_1",
+				TokenURL:     tokenServer.URL,
 				Now: func() time.Time {
 					return now
 				},

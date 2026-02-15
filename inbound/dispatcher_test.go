@@ -3,6 +3,7 @@ package inbound
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +156,40 @@ func TestDispatcher_RetriesAfterTransientHandlerFailure(t *testing.T) {
 	}
 }
 
+func TestDispatcher_ReturnsFailPersistenceErrorOnHandlerFailure(t *testing.T) {
+	baseStore := NewInMemoryClaimStore()
+	store := &failingIdempotencyStore{
+		delegate: baseStore,
+		failErr:  errors.New("store unavailable"),
+	}
+	handlerErr := errors.New("temporary inbound failure")
+	handler := &stubInboundHandler{
+		surface: SurfaceCommand,
+		err:     handlerErr,
+	}
+	dispatcher := NewDispatcher(stubInboundVerifier{}, store)
+	if err := dispatcher.Register(handler); err != nil {
+		t.Fatalf("register handler: %v", err)
+	}
+
+	_, err := dispatcher.Dispatch(context.Background(), core.InboundRequest{
+		ProviderID: "github",
+		Surface:    SurfaceCommand,
+		Metadata: map[string]any{
+			"idempotency_key": "fail-claim-key",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected dispatch error")
+	}
+	if !errors.Is(err, handlerErr) {
+		t.Fatalf("expected original handler error to be preserved, got %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "mark idempotency claim failed") {
+		t.Fatalf("expected idempotency fail persistence context, got %v", err)
+	}
+}
+
 func TestInMemoryClaimStore_RecoversAfterLeaseExpiry(t *testing.T) {
 	store := NewInMemoryClaimStore()
 	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
@@ -276,4 +311,21 @@ func (h *stubInboundHandler) Handle(context.Context, core.InboundRequest) (core.
 		return core.InboundResult{}, h.err
 	}
 	return h.result, nil
+}
+
+type failingIdempotencyStore struct {
+	delegate *InMemoryClaimStore
+	failErr  error
+}
+
+func (s *failingIdempotencyStore) Claim(ctx context.Context, key string, lease time.Duration) (string, bool, error) {
+	return s.delegate.Claim(ctx, key, lease)
+}
+
+func (s *failingIdempotencyStore) Complete(ctx context.Context, claimID string) error {
+	return s.delegate.Complete(ctx, claimID)
+}
+
+func (s *failingIdempotencyStore) Fail(context.Context, string, error, time.Time) error {
+	return s.failErr
 }

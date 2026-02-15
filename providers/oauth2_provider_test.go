@@ -152,3 +152,40 @@ func TestNewOAuth2Provider_RequiresIDAuthURLTokenURLAndClientID(t *testing.T) {
 		t.Fatalf("expected missing client id validation error")
 	}
 }
+
+func TestOAuth2Provider_BeginAuth_GeneratesRandomStateWhenMissing(t *testing.T) {
+	provider, err := NewOAuth2Provider(OAuth2Config{
+		ID:            "github",
+		AuthURL:       "https://github.com/login/oauth/authorize",
+		TokenURL:      "https://github.com/login/oauth/access_token",
+		ClientID:      "client-123",
+		ClientSecret:  "secret-456",
+		DefaultScopes: []string{"repo"},
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	first, err := provider.BeginAuth(context.Background(), core.BeginAuthRequest{
+		Scope: core.ScopeRef{Type: "user", ID: "usr_1"},
+	})
+	if err != nil {
+		t.Fatalf("begin auth first: %v", err)
+	}
+	second, err := provider.BeginAuth(context.Background(), core.BeginAuthRequest{
+		Scope: core.ScopeRef{Type: "user", ID: "usr_1"},
+	})
+	if err != nil {
+		t.Fatalf("begin auth second: %v", err)
+	}
+
+	if strings.TrimSpace(first.State) == "" || strings.TrimSpace(second.State) == "" {
+		t.Fatalf("expected generated oauth states")
+	}
+	if first.State == second.State {
+		t.Fatalf("expected generated states to differ")
+	}
+	if strings.HasPrefix(first.State, "state_github_") || strings.HasPrefix(second.State, "state_github_") {
+		t.Fatalf("expected cryptographically generated state, not deterministic fallback format")
+	}
+}
