@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -125,7 +126,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 	result, err := handler.Handle(ctx, req)
 	if err != nil {
 		if d.Store != nil && claimID != "" {
-			_ = d.Store.Fail(ctx, claimID, err, time.Time{})
+			if failErr := d.Store.Fail(ctx, claimID, err, time.Time{}); failErr != nil {
+				return core.InboundResult{}, errors.Join(
+					err,
+					fmt.Errorf("inbound: mark idempotency claim failed: %w", failErr),
+				)
+			}
 		}
 		return core.InboundResult{}, err
 	}
@@ -133,7 +139,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 	if retryableFailure {
 		retryErr := fmt.Errorf("inbound: handler returned retryable status %d", result.StatusCode)
 		if d.Store != nil && claimID != "" {
-			_ = d.Store.Fail(ctx, claimID, retryErr, time.Time{})
+			if failErr := d.Store.Fail(ctx, claimID, retryErr, time.Time{}); failErr != nil {
+				return result, errors.Join(
+					retryErr,
+					fmt.Errorf("inbound: mark idempotency claim failed: %w", failErr),
+				)
+			}
 		}
 		return result, retryErr
 	}
