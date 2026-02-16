@@ -10,7 +10,8 @@ require (
 	github.com/goliatone/go-logger v0.8.0
 	github.com/goliatone/go-options v0.7.1
 	github.com/goliatone/go-persistence-bun v0.7.0
-	github.com/goliatone/go-repository-bun v0.13.0
+	github.com/goliatone/go-repository-bun v0.15.0
+	github.com/goliatone/go-repository-cache v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/uptrace/bun v1.2.14
@@ -21,6 +22,7 @@ require (
 	cel.dev/expr v0.25.1 // indirect
 	github.com/alecthomas/kong v1.13.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dop251/base64dec v0.0.0-20231022112746-c6c9f9a96217 // indirect
 	github.com/dop251/goja v0.0.0-20251201205617-2bb4c724c0f9 // indirect
@@ -50,6 +52,7 @@ require (
 	github.com/uptrace/bun/extra/bundebug v1.2.14 // indirect
 	github.com/uptrace/bun/extra/bunotel v1.2.14 // indirect
 	github.com/uptrace/opentelemetry-go-extra/otelsql v0.3.2 // indirect
+	github.com/viccon/sturdyc v1.1.5 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
