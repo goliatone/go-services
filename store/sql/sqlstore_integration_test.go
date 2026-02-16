@@ -13,6 +13,7 @@ import (
 	"time"
 
 	persistence "github.com/goliatone/go-persistence-bun"
+	repositorycache "github.com/goliatone/go-repository-cache/cache"
 	"github.com/goliatone/go-services/core"
 	servicemigrations "github.com/goliatone/go-services/migrations"
 	servicesratelimit "github.com/goliatone/go-services/ratelimit"
@@ -1314,6 +1315,199 @@ func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {
 	}
 	if updated.Attempts != 0 || updated.ThrottledUntil != nil {
 		t.Fatalf("expected throttle state reset after success, got %#v", updated)
+	}
+}
+
+func TestRateLimitStateStore_UpsertUsesResolverLookupPath(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	repoFactory, err := sqlstore.NewRepositoryFactoryFromPersistence(client)
+	if err != nil {
+		t.Fatalf("new repository factory: %v", err)
+	}
+	store := repoFactory.RateLimitStateStore()
+	if store == nil {
+		t.Fatalf("expected rate-limit state store from repository factory")
+	}
+
+	existingID := "rls-existing"
+	if _, err := client.DB().NewRaw(
+		`INSERT INTO service_rate_limit_state
+			(id, provider_id, scope_type, scope_id, bucket_key, "limit", remaining, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		existingID,
+		"github",
+		"org",
+		"org_resolver_1",
+		"api",
+		5000,
+		4999,
+		"{}",
+		"2026-01-01T00:00:00Z",
+		"2026-01-01T00:00:00Z",
+	).Exec(ctx); err != nil {
+		t.Fatalf("seed existing rate-limit state: %v", err)
+	}
+
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	if err := store.Upsert(ctx, servicesratelimit.State{
+		Key: core.RateLimitKey{
+			ProviderID: " GitHub ",
+			ScopeType:  " ORG ",
+			ScopeID:    "org_resolver_1",
+			BucketKey:  " API ",
+		},
+		Limit:     5000,
+		Remaining: 4500,
+		UpdatedAt: updatedAt,
+		Metadata:  map[string]any{"source": "resolver-upsert"},
+	}); err != nil {
+		t.Fatalf("upsert existing state via resolver path: %v", err)
+	}
+
+	var count int
+	if err := client.DB().NewRaw(
+		`SELECT COUNT(*) FROM service_rate_limit_state WHERE provider_id=? AND scope_type=? AND scope_id=? AND bucket_key=?`,
+		"github",
+		"org",
+		"org_resolver_1",
+		"api",
+	).Scan(ctx, &count); err != nil {
+		t.Fatalf("count natural-key rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one row for natural key after upsert, got %d", count)
+	}
+
+	var persistedID string
+	var remaining int
+	if err := client.DB().NewRaw(
+		`SELECT id, remaining FROM service_rate_limit_state WHERE provider_id=? AND scope_type=? AND scope_id=? AND bucket_key=?`,
+		"github",
+		"org",
+		"org_resolver_1",
+		"api",
+	).Scan(ctx, &persistedID, &remaining); err != nil {
+		t.Fatalf("select persisted row: %v", err)
+	}
+	if persistedID != existingID {
+		t.Fatalf("expected upsert to update existing id %q, got %q", existingID, persistedID)
+	}
+	if remaining != 4500 {
+		t.Fatalf("expected remaining=4500 after resolver upsert, got %d", remaining)
+	}
+}
+
+func TestRateLimitStateStore_ConcurrentDuplicateInsertIsPrevented(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	const workers = 8
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := client.DB().NewRaw(
+				`INSERT INTO service_rate_limit_state
+					(id, provider_id, scope_type, scope_id, bucket_key, "limit", remaining, metadata, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				fmt.Sprintf("rls-concurrency-%d", i),
+				"github",
+				"org",
+				"org_concurrency_1",
+				"api",
+				5000,
+				4999-i,
+				"{}",
+				"2026-01-01T00:00:00Z",
+				fmt.Sprintf("2026-01-01T00:00:%02dZ", i),
+			).Exec(ctx)
+			errCh <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+
+	successCount := 0
+	duplicateCount := 0
+	for err := range errCh {
+		if err == nil {
+			successCount++
+			continue
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			duplicateCount++
+			continue
+		}
+		t.Fatalf("unexpected concurrent insert error: %v", err)
+	}
+
+	if successCount != 1 {
+		t.Fatalf("expected exactly one concurrent insert success, got %d", successCount)
+	}
+	if duplicateCount != workers-1 {
+		t.Fatalf("expected %d duplicate-key failures, got %d", workers-1, duplicateCount)
+	}
+
+	var count int
+	if err := client.DB().NewRaw(
+		`SELECT COUNT(*) FROM service_rate_limit_state WHERE provider_id=? AND scope_type=? AND scope_id=? AND bucket_key=?`,
+		"github",
+		"org",
+		"org_concurrency_1",
+		"api",
+	).Scan(ctx, &count); err != nil {
+		t.Fatalf("count concurrent rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected duplicate prevention to keep a single row, got %d", count)
+	}
+}
+
+func TestRepositoryFactory_RateLimitPolicyUsesCachedStoreWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	cacheConfig := repositorycache.DefaultConfig()
+	cacheConfig.TTL = time.Minute
+	cacheService, err := repositorycache.NewCacheService(cacheConfig)
+	if err != nil {
+		t.Fatalf("new cache service: %v", err)
+	}
+
+	factory := sqlstore.NewRepositoryFactory(sqlstore.WithRateLimitStateCache(cacheService))
+	if _, err := factory.BuildStores(client); err != nil {
+		t.Fatalf("build stores: %v", err)
+	}
+
+	policy := factory.RateLimitPolicy()
+	if policy == nil {
+		t.Fatalf("expected rate-limit policy from factory")
+	}
+	adaptive, ok := policy.(*servicesratelimit.AdaptivePolicy)
+	if !ok {
+		t.Fatalf("expected adaptive policy type, got %T", policy)
+	}
+	if _, ok := adaptive.Store.(*sqlstore.CachedRateLimitStateStore); !ok {
+		t.Fatalf("expected cached rate-limit state store, got %T", adaptive.Store)
+	}
+
+	// Smoke check policy with cached state store wiring.
+	err = adaptive.BeforeCall(ctx, core.RateLimitKey{
+		ProviderID: "github",
+		ScopeType:  "org",
+		ScopeID:    "org_cache_wiring",
+		BucketKey:  "api",
+	})
+	if err != nil {
+		t.Fatalf("before call with empty state should not fail: %v", err)
 	}
 }
 
