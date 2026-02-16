@@ -5,29 +5,50 @@ import (
 
 	persistence "github.com/goliatone/go-persistence-bun"
 	repository "github.com/goliatone/go-repository-bun"
+	repositorycache "github.com/goliatone/go-repository-cache/cache"
 	"github.com/goliatone/go-services/core"
 	"github.com/goliatone/go-services/ratelimit"
 	"github.com/uptrace/bun"
 )
 
+type RepositoryFactoryOption func(*RepositoryFactory)
+
+func WithRateLimitStateCache(cacheService repositorycache.CacheService) RepositoryFactoryOption {
+	return func(factory *RepositoryFactory) {
+		if factory == nil || cacheService == nil {
+			return
+		}
+		factory.rateLimitStateCacheService = cacheService
+	}
+}
+
 type RepositoryFactory struct {
 	db *bun.DB
 
-	connectionStore           *ConnectionStore
-	credentialStore           *CredentialStore
-	subscriptionStore         *SubscriptionStore
-	syncCursorStore           *SyncCursorStore
-	installationStore         *InstallationStore
-	rateLimitStateStore       *RateLimitStateStore
-	rateLimitPolicy           core.RateLimitPolicy
-	syncJobStore              *SyncJobStore
-	outboxStore               *OutboxStore
-	notificationDispatchStore *NotificationDispatchStore
-	activityStore             *ActivityStore
+	connectionStore            *ConnectionStore
+	credentialStore            *CredentialStore
+	subscriptionStore          *SubscriptionStore
+	syncCursorStore            *SyncCursorStore
+	installationStore          *InstallationStore
+	rateLimitStateStore        *RateLimitStateStore
+	rateLimitPolicyStore       ratelimit.StateStore
+	rateLimitStateCacheService repositorycache.CacheService
+	rateLimitPolicy            core.RateLimitPolicy
+	syncJobStore               *SyncJobStore
+	outboxStore                *OutboxStore
+	notificationDispatchStore  *NotificationDispatchStore
+	activityStore              *ActivityStore
 }
 
-func NewRepositoryFactory() *RepositoryFactory {
-	return &RepositoryFactory{}
+func NewRepositoryFactory(opts ...RepositoryFactoryOption) *RepositoryFactory {
+	factory := &RepositoryFactory{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(factory)
+	}
+	return factory
 }
 
 func NewRepositoryFactoryFromPersistence(client *persistence.Client) (*RepositoryFactory, error) {
@@ -122,10 +143,10 @@ func (f *RepositoryFactory) RateLimitPolicy() core.RateLimitPolicy {
 	if f.rateLimitPolicy != nil {
 		return f.rateLimitPolicy
 	}
-	if f.rateLimitStateStore == nil {
+	if f.rateLimitPolicyStore == nil {
 		return nil
 	}
-	f.rateLimitPolicy = ratelimit.NewAdaptivePolicy(f.rateLimitStateStore)
+	f.rateLimitPolicy = ratelimit.NewAdaptivePolicy(f.rateLimitPolicyStore)
 	return f.rateLimitPolicy
 }
 
@@ -200,6 +221,17 @@ func (f *RepositoryFactory) initStores() error {
 		return err
 	}
 	f.rateLimitStateStore = rateLimitStateStore
+	f.rateLimitPolicyStore = rateLimitStateStore
+	if f.rateLimitStateCacheService != nil {
+		cachedStore, cacheErr := NewCachedRateLimitStateStore(
+			rateLimitStateStore,
+			f.rateLimitStateCacheService,
+		)
+		if cacheErr != nil {
+			return cacheErr
+		}
+		f.rateLimitPolicyStore = cachedStore
+	}
 	syncJobStore, err := NewSyncJobStore(f.db)
 	if err != nil {
 		return err
