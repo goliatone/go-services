@@ -13,6 +13,7 @@ var (
 	_ core.SyncCursorStore            = (*SyncCursorStore)(nil)
 	_ core.InstallationStore          = (*InstallationStore)(nil)
 	_ ratelimit.StateStore            = (*RateLimitStateStore)(nil)
+	_ ratelimit.StateStore            = (*CachedRateLimitStateStore)(nil)
 	_ core.GrantStore                 = (*GrantStore)(nil)
 	_ core.OutboxStore                = (*OutboxStore)(nil)
 	_ core.NotificationDispatchLedger = (*NotificationDispatchStore)(nil)
