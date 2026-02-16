@@ -63,8 +63,8 @@ github.com/goliatone/go-persistence-bun v0.7.0 h1:ajOGHBB/QG3zIjd6qbU0rrSpUandGw
 github.com/goliatone/go-persistence-bun v0.7.0/go.mod h1:F9cM1x7FFxM5YzMUjyj7lVjXqQFmqLv+9+/2yMxV0dg=
 github.com/goliatone/go-repository-bun v0.15.0 h1:xCobJswNOaI0nKA6f616vrxkUjeQF8A2CZXMbr77ywc=
 github.com/goliatone/go-repository-bun v0.15.0/go.mod h1:bOFyQOGKyPJX+tkd7A7DhASqcPMvwdhDq41AmWujFqs=
-github.com/goliatone/go-repository-cache v0.6.0 h1:FipPsUZwlYsP+jzEI4POdy6Z7oCxYZ3D57aVvKGYW4k=
-github.com/goliatone/go-repository-cache v0.6.0/go.mod h1:SaGDxDSI2ZOmQWUo5VMHlkqroU4BkDopMDVs4nUJy7U=
+github.com/goliatone/go-repository-cache v0.7.0 h1:3g/Sfhf85f/uoR18ZDofQJF+ETslY0PQCFfIAvDTrks=
+github.com/goliatone/go-repository-cache v0.7.0/go.mod h1:vv+5iv/FjDBoasIzy8Tb0t/lpswK1W6+l3piar4+w1o=
 github.com/goliatone/hashid v0.1.1 h1:VfZZf7s0uM+JZ3ZBkqaEM1mL/CJfiTmFOzZ1QuXY3EM=
 github.com/goliatone/hashid v0.1.1/go.mod h1:K9jzegsVvT8S+Nn5wL1AuGVKcz2jcwYMxwe4g1UGz4E=
 github.com/google/cel-go v0.26.1 h1:iPbVVEdkhTX++hpe3lzSk7D3G3QSYqLGoHOcEio+UXQ=

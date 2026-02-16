@@ -11,7 +11,7 @@ require (
 	github.com/goliatone/go-options v0.7.1
 	github.com/goliatone/go-persistence-bun v0.7.0
 	github.com/goliatone/go-repository-bun v0.15.0
-	github.com/goliatone/go-repository-cache v0.6.0
+	github.com/goliatone/go-repository-cache v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/uptrace/bun v1.2.14
