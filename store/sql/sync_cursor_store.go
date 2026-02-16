@@ -85,6 +85,9 @@ func (s *SyncCursorStore) Upsert(ctx context.Context, in core.UpsertSyncCursorIn
 	if in.ResourceType == "" || in.ResourceID == "" {
 		return core.SyncCursor{}, fmt.Errorf("sqlstore: resource type and resource id are required")
 	}
+	if in.Cursor == "" {
+		return core.SyncCursor{}, fmt.Errorf("sqlstore: cursor is required")
+	}
 	if in.Status == "" {
 		in.Status = "active"
 	}
@@ -155,6 +158,15 @@ func (s *SyncCursorStore) Advance(ctx context.Context, in core.AdvanceSyncCursor
 	expectedCursor := strings.TrimSpace(in.ExpectedCursor)
 	if upsertInput.Status == "" {
 		upsertInput.Status = "active"
+	}
+	if upsertInput.ConnectionID == "" || upsertInput.ProviderID == "" {
+		return core.SyncCursor{}, fmt.Errorf("sqlstore: connection id and provider id are required")
+	}
+	if upsertInput.ResourceType == "" || upsertInput.ResourceID == "" {
+		return core.SyncCursor{}, fmt.Errorf("sqlstore: resource type and resource id are required")
+	}
+	if upsertInput.Cursor == "" {
+		return core.SyncCursor{}, fmt.Errorf("sqlstore: cursor is required")
 	}
 
 	var out core.SyncCursor

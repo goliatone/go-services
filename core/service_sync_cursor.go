@@ -37,6 +37,15 @@ func (s *Service) AdvanceSyncCursor(ctx context.Context, in AdvanceSyncCursorInp
 	in.ExpectedCursor = strings.TrimSpace(in.ExpectedCursor)
 	in.Cursor = strings.TrimSpace(in.Cursor)
 	in.Status = strings.TrimSpace(in.Status)
+	if in.ConnectionID == "" || in.ProviderID == "" {
+		return SyncCursor{}, s.mapError(fmt.Errorf("core: connection id and provider id are required"))
+	}
+	if in.ResourceType == "" || in.ResourceID == "" {
+		return SyncCursor{}, s.mapError(fmt.Errorf("core: resource type and resource id are required"))
+	}
+	if in.Cursor == "" {
+		return SyncCursor{}, s.mapError(fmt.Errorf("core: cursor is required"))
+	}
 
 	cursor, err := s.syncCursorStore.Advance(ctx, in)
 	if err != nil {
