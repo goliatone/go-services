@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS uq_service_rate_limit_state_natural_key;
