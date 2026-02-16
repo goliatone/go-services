@@ -2,7 +2,6 @@ package sqlstore
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,7 +29,12 @@ func NewRateLimitStateStore(db *bun.DB) (*RateLimitStateStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("sqlstore: bun db is required")
 	}
-	repo := repository.NewRepository[*rateLimitStateRecord](db, rateLimitStateHandlers())
+	repo := repository.NewRepositoryWithConfig[*rateLimitStateRecord](
+		db,
+		rateLimitStateHandlers(),
+		nil,
+		repository.WithRecordLookupResolver(rateLimitStateLookupResolver),
+	)
 	if validator, ok := repo.(repository.Validator); ok {
 		if err := validator.Validate(); err != nil {
 			return nil, fmt.Errorf("sqlstore: invalid rate-limit state repository wiring: %w", err)
@@ -43,7 +47,7 @@ func NewRateLimitStateStore(db *bun.DB) (*RateLimitStateStore, error) {
 }
 
 func (s *RateLimitStateStore) Get(ctx context.Context, key core.RateLimitKey) (ratelimit.State, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.repo == nil {
 		return ratelimit.State{}, fmt.Errorf("sqlstore: rate-limit state store is not configured")
 	}
 	key = normalizeRateLimitKey(key)
@@ -51,27 +55,28 @@ func (s *RateLimitStateStore) Get(ctx context.Context, key core.RateLimitKey) (r
 		return ratelimit.State{}, err
 	}
 
-	record := &rateLimitStateRecord{}
-	err := s.db.NewSelect().
-		Model(record).
-		Where("?TableAlias.provider_id = ?", key.ProviderID).
-		Where("?TableAlias.scope_type = ?", key.ScopeType).
-		Where("?TableAlias.scope_id = ?", key.ScopeID).
-		Where("?TableAlias.bucket_key = ?", key.BucketKey).
-		OrderExpr("?TableAlias.updated_at DESC").
-		Limit(1).
-		Scan(ctx)
+	record, err := s.repo.Get(ctx,
+		repository.SelectBy("provider_id", "=", key.ProviderID),
+		repository.SelectBy("scope_type", "=", key.ScopeType),
+		repository.SelectBy("scope_id", "=", key.ScopeID),
+		repository.SelectBy("bucket_key", "=", key.BucketKey),
+		repository.SelectOrderDesc("updated_at"),
+		repository.SelectOrderAsc("id"),
+	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if repository.IsRecordNotFound(err) {
 			return ratelimit.State{}, ratelimit.ErrStateNotFound
 		}
 		return ratelimit.State{}, err
+	}
+	if record == nil {
+		return ratelimit.State{}, ratelimit.ErrStateNotFound
 	}
 	return record.toDomain(), nil
 }
 
 func (s *RateLimitStateStore) Upsert(ctx context.Context, state ratelimit.State) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.repo == nil {
 		return fmt.Errorf("sqlstore: rate-limit state store is not configured")
 	}
 	state.Key = normalizeRateLimitKey(state.Key)
@@ -82,49 +87,22 @@ func (s *RateLimitStateStore) Upsert(ctx context.Context, state ratelimit.State)
 		state.UpdatedAt = time.Now().UTC()
 	}
 	state.Metadata = copyAnyMap(state.Metadata)
+	record := rateLimitStateFromDomain(state)
 
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		record, err := findRateLimitStateTx(ctx, tx, state.Key)
-		if err != nil {
-			return err
-		}
-		created := false
-		if record == nil {
-			created = true
-			record = &rateLimitStateRecord{
-				ID:         uuid.NewString(),
-				ProviderID: state.Key.ProviderID,
-				ScopeType:  state.Key.ScopeType,
-				ScopeID:    state.Key.ScopeID,
-				BucketKey:  state.Key.BucketKey,
-				CreatedAt:  state.UpdatedAt,
-			}
-		}
-		record.ProviderID = state.Key.ProviderID
-		record.ScopeType = state.Key.ScopeType
-		record.ScopeID = state.Key.ScopeID
-		record.BucketKey = state.Key.BucketKey
-		record.Limit = state.Limit
-		record.Remaining = state.Remaining
-		record.Metadata = composeRateLimitMetadata(state)
-		record.UpdatedAt = state.UpdatedAt.UTC()
-		record.ResetAt = copyTimePointer(state.ResetAt)
-		record.RetryAfter = durationToSecondsPointer(state.RetryAfter)
-
-		if created {
-			if _, insertErr := tx.NewInsert().Model(record).Exec(ctx); insertErr != nil {
-				return insertErr
-			}
-			return nil
-		}
-		if _, updateErr := tx.NewUpdate().
-			Model(record).
-			Where("id = ?", record.ID).
-			Exec(ctx); updateErr != nil {
-			return updateErr
-		}
+	_, err := s.repo.Upsert(ctx, record, repository.UpdateExcludeColumns("created_at"))
+	if err == nil {
 		return nil
-	})
+	}
+	if !repository.IsDuplicatedKey(err) {
+		return err
+	}
+
+	_, retryErr := s.repo.Upsert(
+		ctx,
+		rateLimitStateFromDomain(state),
+		repository.UpdateExcludeColumns("created_at"),
+	)
+	return retryErr
 }
 
 func (r *rateLimitStateRecord) toDomain() ratelimit.State {
@@ -170,28 +148,35 @@ func (r *rateLimitStateRecord) toDomain() ratelimit.State {
 	return state
 }
 
-func findRateLimitStateTx(
-	ctx context.Context,
-	tx bun.Tx,
-	key core.RateLimitKey,
-) (*rateLimitStateRecord, error) {
-	record := &rateLimitStateRecord{}
-	err := tx.NewSelect().
-		Model(record).
-		Where("?TableAlias.provider_id = ?", key.ProviderID).
-		Where("?TableAlias.scope_type = ?", key.ScopeType).
-		Where("?TableAlias.scope_id = ?", key.ScopeID).
-		Where("?TableAlias.bucket_key = ?", key.BucketKey).
-		OrderExpr("?TableAlias.updated_at DESC").
-		Limit(1).
-		Scan(ctx)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
+func rateLimitStateLookupResolver(record *rateLimitStateRecord) []repository.SelectCriteria {
+	if record == nil {
+		return nil
 	}
-	return record, nil
+	return []repository.SelectCriteria{
+		repository.SelectBy("provider_id", "=", strings.TrimSpace(strings.ToLower(record.ProviderID))),
+		repository.SelectBy("scope_type", "=", strings.TrimSpace(strings.ToLower(record.ScopeType))),
+		repository.SelectBy("scope_id", "=", strings.TrimSpace(record.ScopeID)),
+		repository.SelectBy("bucket_key", "=", strings.TrimSpace(strings.ToLower(record.BucketKey))),
+		repository.SelectOrderDesc("updated_at"),
+	}
+}
+
+func rateLimitStateFromDomain(state ratelimit.State) *rateLimitStateRecord {
+	updatedAt := state.UpdatedAt.UTC()
+	return &rateLimitStateRecord{
+		ID:         uuid.NewString(),
+		ProviderID: state.Key.ProviderID,
+		ScopeType:  state.Key.ScopeType,
+		ScopeID:    state.Key.ScopeID,
+		BucketKey:  state.Key.BucketKey,
+		Limit:      state.Limit,
+		Remaining:  state.Remaining,
+		ResetAt:    copyTimePointer(state.ResetAt),
+		RetryAfter: durationToSecondsPointer(state.RetryAfter),
+		Metadata:   composeRateLimitMetadata(state),
+		CreatedAt:  updatedAt,
+		UpdatedAt:  updatedAt,
+	}
 }
 
 func composeRateLimitMetadata(state ratelimit.State) map[string]any {
