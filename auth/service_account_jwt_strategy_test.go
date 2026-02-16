@@ -64,6 +64,41 @@ func TestServiceAccountJWTStrategy_CompleteAndRefresh(t *testing.T) {
 	}
 }
 
+func TestServiceAccountJWTStrategy_RefreshUsesMetadataSigningKey(t *testing.T) {
+	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
+	privateKeyPEM := generateTestRSAPrivateKeyPEM(t)
+	strategy := NewServiceAccountJWTStrategy(ServiceAccountJWTStrategyConfig{
+		Issuer:   "svc@example.iam.gserviceaccount.com",
+		Audience: "https://oauth2.googleapis.com/token",
+		TokenTTL: 30 * time.Minute,
+		Now: func() time.Time {
+			return now
+		},
+	})
+
+	complete, err := strategy.Complete(context.Background(), core.AuthCompleteRequest{
+		Scope: core.ScopeRef{Type: "org", ID: "svc@example.iam.gserviceaccount.com"},
+		Metadata: map[string]any{
+			"signing_key": privateKeyPEM,
+		},
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if got := strings.TrimSpace(readString(complete.Credential.Metadata, "signing_key")); got == "" {
+		t.Fatalf("expected metadata signing key to be preserved for refresh")
+	}
+
+	now = now.Add(10 * time.Minute)
+	refreshed, err := strategy.Refresh(context.Background(), complete.Credential)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if refreshed.Credential.AccessToken == complete.Credential.AccessToken {
+		t.Fatalf("expected refreshed jwt token")
+	}
+}
+
 func TestServiceAccountJWTStrategy_CompleteRequiresConfig(t *testing.T) {
 	strategy := NewServiceAccountJWTStrategy(ServiceAccountJWTStrategyConfig{})
 	_, err := strategy.Complete(context.Background(), core.AuthCompleteRequest{

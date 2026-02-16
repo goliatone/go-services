@@ -104,6 +104,20 @@ func TestCompleteCallback_RejectsMismatchedStateContextBeforeProviderCall(t *tes
 	if provider.completeCalls != 0 {
 		t.Fatalf("expected provider callback not to be called on state mismatch")
 	}
+
+	_, err = svc.CompleteCallback(ctx, CompleteAuthRequest{
+		ProviderID:  "github",
+		Scope:       ScopeRef{Type: "user", ID: "u1"},
+		Code:        "code",
+		State:       connectResp.State,
+		RedirectURI: "https://app.example/callback",
+	})
+	if err != nil {
+		t.Fatalf("expected valid callback to succeed after mismatch, got %v", err)
+	}
+	if provider.completeCalls != 1 {
+		t.Fatalf("expected provider callback to be called once for valid retry, got %d", provider.completeCalls)
+	}
 }
 
 func TestCompleteCallback_RequiresSecretProviderForCredentialPersistence(t *testing.T) {

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,5 +70,23 @@ func TestService_AdvanceSyncCursorConflict(t *testing.T) {
 	})
 	if !errors.Is(err, ErrSyncCursorConflict) {
 		t.Fatalf("expected sync cursor conflict error, got %v", err)
+	}
+}
+
+func TestService_AdvanceSyncCursorRequiresIdentifiersAndCursor(t *testing.T) {
+	store := newMemorySyncCursorStore()
+	svc, err := NewService(Config{}, WithSyncCursorStore(store))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	_, err = svc.AdvanceSyncCursor(context.Background(), AdvanceSyncCursorInput{
+		ConnectionID: "conn_1",
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_1",
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "cursor is required") {
+		t.Fatalf("expected cursor validation error, got %v", err)
 	}
 }

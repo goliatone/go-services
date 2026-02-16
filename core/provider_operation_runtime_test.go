@@ -139,6 +139,40 @@ func TestService_ExecuteProviderOperation_RetryMiddlewarePreservesIdempotency(t 
 	}
 }
 
+func TestGenerateIdempotencyKey_CanonicalizesAndIncludesQueryParameters(t *testing.T) {
+	providerID := "github"
+	connectionID := "conn_1"
+	operation := "issues.list"
+
+	fromQueryMap := generateIdempotencyKey(providerID, connectionID, operation, TransportRequest{
+		Method: "GET",
+		URL:    "https://api.example.test/issues",
+		Query: map[string]string{
+			"q":    "search",
+			"page": "1",
+		},
+	})
+	fromRawURL := generateIdempotencyKey(providerID, connectionID, operation, TransportRequest{
+		Method: "GET",
+		URL:    "https://api.example.test/issues?page=1&q=search",
+	})
+	if fromQueryMap != fromRawURL {
+		t.Fatalf("expected canonical URL+query to produce identical idempotency keys")
+	}
+
+	differentQuery := generateIdempotencyKey(providerID, connectionID, operation, TransportRequest{
+		Method: "GET",
+		URL:    "https://api.example.test/issues",
+		Query: map[string]string{
+			"q":    "different",
+			"page": "1",
+		},
+	})
+	if fromQueryMap == differentQuery {
+		t.Fatalf("expected query value changes to change idempotency key")
+	}
+}
+
 func TestService_ExecuteProviderOperation_ReturnsTypedFailureAfterRetries(t *testing.T) {
 	registry := NewProviderRegistry()
 	if err := registry.Register(testProvider{id: "github"}); err != nil {

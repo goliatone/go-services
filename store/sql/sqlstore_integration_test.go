@@ -1040,6 +1040,37 @@ func TestSyncCursorStore_AdvanceAtomicCompareAndSwap(t *testing.T) {
 	}
 }
 
+func TestSyncCursorStore_ValidatesRequiredInputs(t *testing.T) {
+	ctx := context.Background()
+	client, cleanup := newSQLiteClient(t)
+	defer cleanup()
+
+	cursorStore, err := sqlstore.NewSyncCursorStore(client.DB())
+	if err != nil {
+		t.Fatalf("new sync cursor store: %v", err)
+	}
+
+	_, err = cursorStore.Upsert(ctx, core.UpsertSyncCursorInput{
+		ConnectionID: "conn_1",
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_1",
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "cursor is required") {
+		t.Fatalf("expected upsert cursor validation error, got %v", err)
+	}
+
+	_, err = cursorStore.Advance(ctx, core.AdvanceSyncCursorInput{
+		ProviderID:   "github",
+		ResourceType: "drive.file",
+		ResourceID:   "file_1",
+		Cursor:       "cursor_1",
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "connection id and provider id are required") {
+		t.Fatalf("expected advance identifier validation error, got %v", err)
+	}
+}
+
 func TestSyncOrchestrator_PersistsCheckpointAndResume(t *testing.T) {
 	ctx := context.Background()
 	client, cleanup := newSQLiteClient(t)
