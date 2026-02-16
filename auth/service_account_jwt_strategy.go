@@ -94,8 +94,16 @@ func (s *ServiceAccountJWTStrategy) Complete(_ context.Context, req core.AuthCom
 		s.config.SigningAlgorithm,
 		jwtAlgRS256,
 	)
+	signingKeyFromMetadata := readString(
+		metadata,
+		"signing_key",
+		"jwt_signing_key",
+		"private_key",
+		"jwt_private_key",
+		"jwt_secret",
+	)
 	signingKey := firstNonEmpty(
-		readString(metadata, "signing_key", "jwt_signing_key", "private_key", "jwt_private_key", "jwt_secret"),
+		signingKeyFromMetadata,
 		s.config.SigningKey,
 		s.config.PrivateKey,
 	)
@@ -147,6 +155,9 @@ func (s *ServiceAccountJWTStrategy) Complete(_ context.Context, req core.AuthCom
 		"audience":          audience,
 		"signing_algorithm": strings.ToUpper(strings.TrimSpace(signingAlgorithm)),
 	}
+	if signingKeyFromMetadata != "" {
+		credentialMetadata["signing_key"] = signingKeyFromMetadata
+	}
 	if keyID != "" {
 		credentialMetadata["key_id"] = keyID
 	}
@@ -176,7 +187,11 @@ func (s *ServiceAccountJWTStrategy) Refresh(_ context.Context, cred core.ActiveC
 	audience := firstNonEmpty(readString(metadata, "audience"), s.config.Audience)
 	subject := firstNonEmpty(readString(metadata, "subject"), s.config.Subject)
 	signingAlgorithm := firstNonEmpty(readString(metadata, "signing_algorithm"), s.config.SigningAlgorithm, jwtAlgRS256)
-	signingKey := firstNonEmpty(s.config.SigningKey, s.config.PrivateKey)
+	signingKey := firstNonEmpty(
+		readString(metadata, "signing_key", "jwt_signing_key", "private_key", "jwt_private_key", "jwt_secret"),
+		s.config.SigningKey,
+		s.config.PrivateKey,
+	)
 	keyID := firstNonEmpty(readString(metadata, "key_id"), s.config.KeyID)
 
 	if issuer == "" || audience == "" || subject == "" || signingKey == "" {
