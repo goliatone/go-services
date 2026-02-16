@@ -1332,7 +1332,7 @@ func TestRateLimitStateStore_UpsertUsesResolverLookupPath(t *testing.T) {
 		t.Fatalf("expected rate-limit state store from repository factory")
 	}
 
-	existingID := "rls-existing"
+	existingID := "11111111-1111-1111-1111-111111111111"
 	if _, err := client.DB().NewRaw(
 		`INSERT INTO service_rate_limit_state
 			(id, provider_id, scope_type, scope_id, bucket_key, "limit", remaining, metadata, created_at, updated_at)
