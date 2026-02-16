@@ -609,22 +609,31 @@ func (s *Service) consumeOAuthCallbackState(ctx context.Context, req CompleteAut
 	if err != nil {
 		return OAuthStateRecord{}, err
 	}
+	restoreOnValidationFailure := func(validationErr error) (OAuthStateRecord, error) {
+		if saveErr := s.oauthStateStore.Save(ctx, cloneOAuthStateRecord(record)); saveErr != nil {
+			return OAuthStateRecord{}, errors.Join(
+				validationErr,
+				fmt.Errorf("core: restore oauth callback state: %w", saveErr),
+			)
+		}
+		return OAuthStateRecord{}, validationErr
+	}
 	if !strings.EqualFold(strings.TrimSpace(record.ProviderID), strings.TrimSpace(req.ProviderID)) {
-		return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state provider mismatch")
+		return restoreOnValidationFailure(fmt.Errorf("core: oauth callback state provider mismatch"))
 	}
 	if !strings.EqualFold(strings.TrimSpace(record.Scope.Type), strings.TrimSpace(req.Scope.Type)) ||
 		strings.TrimSpace(record.Scope.ID) != strings.TrimSpace(req.Scope.ID) {
-		return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state scope mismatch")
+		return restoreOnValidationFailure(fmt.Errorf("core: oauth callback state scope mismatch"))
 	}
 
 	savedRedirect := strings.TrimSpace(record.RedirectURI)
 	requestRedirect := strings.TrimSpace(req.RedirectURI)
 	if savedRedirect != "" {
 		if requestRedirect != "" && savedRedirect != requestRedirect {
-			return OAuthStateRecord{}, fmt.Errorf("core: oauth callback state redirect mismatch")
+			return restoreOnValidationFailure(fmt.Errorf("core: oauth callback state redirect mismatch"))
 		}
 		if requestRedirect == "" && s.requireCallbackRedirect(req.Metadata) {
-			return OAuthStateRecord{}, fmt.Errorf("core: oauth callback redirect uri is required")
+			return restoreOnValidationFailure(fmt.Errorf("core: oauth callback redirect uri is required"))
 		}
 	}
 	return cloneOAuthStateRecord(record), nil
