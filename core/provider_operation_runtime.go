@@ -739,6 +739,7 @@ func generateIdempotencyKey(
 	operation string,
 	request TransportRequest,
 ) string {
+	canonicalURL := canonicalTransportRequestURL(request.URL, request.Query)
 	builder := strings.Builder{}
 	builder.WriteString(strings.TrimSpace(strings.ToLower(providerID)))
 	builder.WriteString("|")
@@ -748,11 +749,30 @@ func generateIdempotencyKey(
 	builder.WriteString("|")
 	builder.WriteString(strings.TrimSpace(strings.ToUpper(request.Method)))
 	builder.WriteString("|")
-	builder.WriteString(strings.TrimSpace(request.URL))
+	builder.WriteString(canonicalURL)
 	builder.WriteString("|")
 	builder.Write(request.Body)
 	sum := sha256.Sum256([]byte(builder.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+func canonicalTransportRequestURL(rawURL string, query map[string]string) string {
+	trimmedURL := strings.TrimSpace(rawURL)
+	parsedURL, err := url.Parse(trimmedURL)
+	if err != nil || parsedURL == nil {
+		return trimmedURL
+	}
+
+	values := parsedURL.Query()
+	for key, value := range query {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		values.Set(trimmedKey, strings.TrimSpace(value))
+	}
+	parsedURL.RawQuery = values.Encode()
+	return parsedURL.String()
 }
 
 func isContextCancellation(err error) bool {
