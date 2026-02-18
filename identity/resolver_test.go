@@ -103,6 +103,44 @@ func TestResolver_Resolve_ReturnsNotFoundWhenUnavailable(t *testing.T) {
 	}
 }
 
+func TestResolver_Resolve_UsesConfiguredIDTokenVerifier(t *testing.T) {
+	called := false
+	resolver := NewResolver(Config{
+		IDTokenVerifier: func(
+			_ context.Context,
+			_ string,
+			_ string,
+			_ map[string]any,
+		) (map[string]any, error) {
+			called = true
+			return map[string]any{
+				"iss": "https://accounts.google.com",
+				"sub": "verified_sub_1",
+			}, nil
+		},
+	})
+	profile, err := resolver.Resolve(
+		context.Background(),
+		"google_docs",
+		core.ActiveCredential{
+			AccessToken: "access_1",
+			Metadata: map[string]any{
+				"id_token": "ignored.by.verifier",
+			},
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("resolve profile with id token verifier: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected configured id token verifier to be called")
+	}
+	if profile.Subject != "verified_sub_1" {
+		t.Fatalf("expected verifier-provided subject, got %q", profile.Subject)
+	}
+}
+
 func mustJWTToken(claims map[string]any) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload, err := json.Marshal(claims)

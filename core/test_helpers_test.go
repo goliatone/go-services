@@ -90,15 +90,38 @@ func newMemoryConnectionStore() *memoryConnectionStore {
 func (s *memoryConnectionStore) Create(_ context.Context, in CreateConnectionInput) (Connection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := in.Scope.Validate(); err != nil {
+		return Connection{}, err
+	}
+	in.ProviderID = strings.TrimSpace(in.ProviderID)
+	if in.ProviderID == "" {
+		return Connection{}, fmt.Errorf("provider id is required")
+	}
+	in.ExternalAccountID = strings.TrimSpace(in.ExternalAccountID)
+	if in.ExternalAccountID == "" {
+		return Connection{}, fmt.Errorf("external account id is required")
+	}
+	for _, existing := range s.byID {
+		if existing.ProviderID == in.ProviderID &&
+			existing.ScopeType == in.Scope.Type &&
+			existing.ScopeID == in.Scope.ID &&
+			existing.ExternalAccountID == in.ExternalAccountID {
+			return Connection{}, fmt.Errorf("duplicate connection")
+		}
+	}
 	s.next++
 	id := fmt.Sprintf("conn_%d", s.next)
+	status := in.Status
+	if strings.TrimSpace(string(status)) == "" {
+		status = ConnectionStatusActive
+	}
 	connection := Connection{
 		ID:                id,
 		ProviderID:        in.ProviderID,
 		ScopeType:         in.Scope.Type,
 		ScopeID:           in.Scope.ID,
 		ExternalAccountID: in.ExternalAccountID,
-		Status:            in.Status,
+		Status:            status,
 	}
 	s.byID[id] = connection
 	key := scopeKey(in.ProviderID, in.Scope)
@@ -125,6 +148,32 @@ func (s *memoryConnectionStore) FindByScope(_ context.Context, providerID string
 		out = append(out, s.byID[id])
 	}
 	return out, nil
+}
+
+func (s *memoryConnectionStore) FindByScopeAndExternalAccount(
+	_ context.Context,
+	providerID string,
+	scope ScopeRef,
+	externalAccountID string,
+) (Connection, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	providerID = strings.TrimSpace(providerID)
+	externalAccountID = strings.TrimSpace(externalAccountID)
+	if providerID == "" || externalAccountID == "" {
+		return Connection{}, false, fmt.Errorf("provider id and external account id are required")
+	}
+	ids := s.byScope[scopeKey(providerID, scope)]
+	for _, id := range ids {
+		candidate, ok := s.byID[id]
+		if !ok {
+			continue
+		}
+		if candidate.ExternalAccountID == externalAccountID {
+			return candidate, true, nil
+		}
+	}
+	return Connection{}, false, nil
 }
 
 func (s *memoryConnectionStore) UpdateStatus(_ context.Context, id string, status string, reason string) error {

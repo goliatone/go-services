@@ -2117,6 +2117,14 @@ func (stubConnectionStore) Get(context.Context, string) (core.Connection, error)
 func (stubConnectionStore) FindByScope(context.Context, string, core.ScopeRef) ([]core.Connection, error) {
 	return nil, nil
 }
+func (stubConnectionStore) FindByScopeAndExternalAccount(
+	context.Context,
+	string,
+	core.ScopeRef,
+	string,
+) (core.Connection, bool, error) {
+	return core.Connection{}, false, nil
+}
 func (stubConnectionStore) UpdateStatus(context.Context, string, string, string) error {
 	return nil
 }

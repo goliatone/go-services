@@ -68,6 +68,9 @@ func TestNewService_WithXOverrides(t *testing.T) {
 	configProvider := &fixedConfigProvider{cfg: Config{ServiceName: "from-provider"}}
 	optionsResolver := &fixedOptionsResolver{cfg: Config{ServiceName: "resolved"}}
 	secretProvider := testSecretProvider{}
+	callbackResolver := CallbackURLResolverFunc(func(context.Context, CallbackURLResolveRequest) (string, error) {
+		return "https://app.example/services/callback", nil
+	})
 
 	svc, err := NewService(Config{ServiceName: "runtime"},
 		WithLogger(customLogger),
@@ -79,6 +82,7 @@ func TestNewService_WithXOverrides(t *testing.T) {
 		WithRepositoryFactory(repositoryFactory),
 		WithConfigProvider(configProvider),
 		WithOptionsResolver(optionsResolver),
+		WithCallbackURLResolver(callbackResolver),
 	)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -108,6 +112,9 @@ func TestNewService_WithXOverrides(t *testing.T) {
 	}
 	if deps.SecretProvider != secretProvider {
 		t.Fatalf("expected custom secret provider override")
+	}
+	if deps.CallbackURLResolver == nil {
+		t.Fatalf("expected callback url resolver override")
 	}
 	if got := svc.Config().ServiceName; got != "resolved" {
 		t.Fatalf("expected options resolver output config, got %q", got)

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goliatone/go-services/core"
+	"github.com/goliatone/go-services/identity"
 )
 
 func TestOAuth2Provider_BeginCompleteRefresh(t *testing.T) {
@@ -93,15 +95,19 @@ func TestOAuth2Provider_BeginCompleteRefresh(t *testing.T) {
 	}
 
 	complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
-		Scope: core.ScopeRef{Type: "user", ID: "usr_1"},
-		Code:  "code_123",
-		State: begin.State,
+		Scope:    core.ScopeRef{Type: "user", ID: "usr_1"},
+		Code:     "code_123",
+		State:    begin.State,
+		Metadata: map[string]any{"external_account_id": "acct_usr_1"},
 	})
 	if err != nil {
 		t.Fatalf("complete auth: %v", err)
 	}
 	if complete.ExternalAccountID == "" {
 		t.Fatalf("expected external account id")
+	}
+	if complete.ExternalAccountID != "acct_usr_1" {
+		t.Fatalf("expected metadata external account id, got %q", complete.ExternalAccountID)
 	}
 	if complete.Credential.TokenType != "bearer" {
 		t.Fatalf("expected bearer token type")
@@ -188,4 +194,122 @@ func TestOAuth2Provider_BeginAuth_GeneratesRandomStateWhenMissing(t *testing.T) 
 	if strings.HasPrefix(first.State, "state_github_") || strings.HasPrefix(second.State, "state_github_") {
 		t.Fatalf("expected cryptographically generated state, not deterministic fallback format")
 	}
+}
+
+func TestOAuth2Provider_CompleteAuth_ResolvesExternalAccountIDWithProfileResolver(t *testing.T) {
+	userInfoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.Header.Get("Authorization")) != "Bearer access_123" {
+			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sub":   "google-sub-1",
+			"email": "user@example.com",
+		})
+	}))
+	defer userInfoServer.Close()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access_123",
+			"token_type":   "Bearer",
+			"expires_in":   1800,
+		})
+	}))
+	defer tokenServer.Close()
+
+	provider, err := NewOAuth2Provider(OAuth2Config{
+		ID:           "google_docs",
+		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:     tokenServer.URL,
+		ClientID:     "client-123",
+		ClientSecret: "secret-456",
+		ProfileResolver: identity.NewResolver(identity.Config{
+			ProviderUserInfo: map[string]identity.ProviderUserInfoConfig{
+				"google_docs": {
+					URL:    userInfoServer.URL,
+					Issuer: "https://accounts.google.com",
+				},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
+		Scope: core.ScopeRef{Type: "user", ID: "usr_1"},
+		Code:  "code_123",
+	})
+	if err != nil {
+		t.Fatalf("complete auth: %v", err)
+	}
+	if complete.ExternalAccountID != "https://accounts.google.com|google-sub-1" {
+		t.Fatalf("expected resolved external account id, got %q", complete.ExternalAccountID)
+	}
+}
+
+func TestOAuth2Provider_CompleteAuth_PersistsIDTokenInMetadata(t *testing.T) {
+	idToken := mustJWTToken(map[string]any{
+		"iss": "https://accounts.google.com",
+		"sub": "sub_1",
+	})
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access_123",
+			"id_token":     idToken,
+			"token_type":   "Bearer",
+			"expires_in":   1800,
+		})
+	}))
+	defer tokenServer.Close()
+
+	provider, err := NewOAuth2Provider(OAuth2Config{
+		ID:           "google_docs",
+		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:     tokenServer.URL,
+		ClientID:     "client-123",
+		ClientSecret: "secret-456",
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
+		Scope:    core.ScopeRef{Type: "user", ID: "usr_1"},
+		Code:     "code_123",
+		Metadata: map[string]any{"external_account_id": "acct_1"},
+	})
+	if err != nil {
+		t.Fatalf("complete auth: %v", err)
+	}
+	credentialIDToken, _ := complete.Credential.Metadata["id_token"].(string)
+	if credentialIDToken != idToken {
+		t.Fatalf("expected id_token in credential metadata")
+	}
+	responseIDToken, _ := complete.Metadata["id_token"].(string)
+	if responseIDToken != idToken {
+		t.Fatalf("expected id_token in response metadata")
+	}
+}
+
+func mustJWTToken(claims map[string]any) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		panic(err)
+	}
+	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
+	return header + "." + encodedPayload + ".signature"
 }

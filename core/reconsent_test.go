@@ -75,7 +75,7 @@ func TestCompleteReconsent_RecoversExistingConnectionState(t *testing.T) {
 	connection, err := connectionStore.Create(ctx, CreateConnectionInput{
 		ProviderID:        "github",
 		Scope:             ScopeRef{Type: "user", ID: "u2"},
-		ExternalAccountID: "acct_2",
+		ExternalAccountID: "acct_1",
 		Status:            ConnectionStatusActive,
 	})
 	if err != nil {

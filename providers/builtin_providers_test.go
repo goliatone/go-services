@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/goliatone/go-services/core"
@@ -123,9 +125,10 @@ func TestBuiltInProviders_ExposeOAuth2AndBaselineCapabilities(t *testing.T) {
 			}
 
 			complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
-				Scope: core.ScopeRef{Type: "user", ID: "usr_1"},
-				Code:  "code_1",
-				State: begin.State,
+				Scope:    core.ScopeRef{Type: "user", ID: "usr_1"},
+				Code:     "code_1",
+				State:    begin.State,
+				Metadata: map[string]any{"external_account_id": "acct_usr_1"},
 			})
 			if err != nil {
 				t.Fatalf("complete auth: %v", err)
@@ -135,4 +138,134 @@ func TestBuiltInProviders_ExposeOAuth2AndBaselineCapabilities(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGoogleBuiltInProviders_IdentityScopesDefaultAndOptOut(t *testing.T) {
+	type buildResult struct {
+		provider core.Provider
+		err      error
+	}
+	factories := []struct {
+		name          string
+		buildDefault  func() buildResult
+		buildOptOut   func() buildResult
+		expectedScope string
+	}{
+		{
+			name: "google_docs",
+			buildDefault: func() buildResult {
+				provider, err := docs.New(docs.Config{ClientID: "client", ClientSecret: "secret"})
+				return buildResult{provider: provider, err: err}
+			},
+			buildOptOut: func() buildResult {
+				provider, err := docs.New(docs.Config{
+					ClientID:              "client",
+					ClientSecret:          "secret",
+					DisableIdentityScopes: true,
+				})
+				return buildResult{provider: provider, err: err}
+			},
+			expectedScope: "https://www.googleapis.com/auth/documents.readonly",
+		},
+		{
+			name: "google_drive",
+			buildDefault: func() buildResult {
+				provider, err := drive.New(drive.Config{ClientID: "client", ClientSecret: "secret"})
+				return buildResult{provider: provider, err: err}
+			},
+			buildOptOut: func() buildResult {
+				provider, err := drive.New(drive.Config{
+					ClientID:              "client",
+					ClientSecret:          "secret",
+					DisableIdentityScopes: true,
+				})
+				return buildResult{provider: provider, err: err}
+			},
+			expectedScope: "https://www.googleapis.com/auth/drive.readonly",
+		},
+		{
+			name: "google_gmail",
+			buildDefault: func() buildResult {
+				provider, err := gmail.New(gmail.Config{ClientID: "client", ClientSecret: "secret"})
+				return buildResult{provider: provider, err: err}
+			},
+			buildOptOut: func() buildResult {
+				provider, err := gmail.New(gmail.Config{
+					ClientID:              "client",
+					ClientSecret:          "secret",
+					DisableIdentityScopes: true,
+				})
+				return buildResult{provider: provider, err: err}
+			},
+			expectedScope: "https://www.googleapis.com/auth/gmail.readonly",
+		},
+		{
+			name: "google_calendar",
+			buildDefault: func() buildResult {
+				provider, err := calendar.New(calendar.Config{ClientID: "client", ClientSecret: "secret"})
+				return buildResult{provider: provider, err: err}
+			},
+			buildOptOut: func() buildResult {
+				provider, err := calendar.New(calendar.Config{
+					ClientID:              "client",
+					ClientSecret:          "secret",
+					DisableIdentityScopes: true,
+				})
+				return buildResult{provider: provider, err: err}
+			},
+			expectedScope: "https://www.googleapis.com/auth/calendar.readonly",
+		},
+	}
+
+	for _, item := range factories {
+		t.Run(item.name, func(t *testing.T) {
+			defaultBuild := item.buildDefault()
+			if defaultBuild.err != nil {
+				t.Fatalf("new provider (default): %v", defaultBuild.err)
+			}
+			defaultScopeSet := beginScopeSet(t, defaultBuild.provider)
+			for _, identityScope := range []string{"openid", "profile", "email"} {
+				if !defaultScopeSet[identityScope] {
+					t.Fatalf("expected identity scope %q in default begin auth scope set", identityScope)
+				}
+			}
+			if !defaultScopeSet[item.expectedScope] {
+				t.Fatalf("expected baseline scope %q in default begin auth scope set", item.expectedScope)
+			}
+
+			optOutBuild := item.buildOptOut()
+			if optOutBuild.err != nil {
+				t.Fatalf("new provider (opt-out): %v", optOutBuild.err)
+			}
+			optOutScopeSet := beginScopeSet(t, optOutBuild.provider)
+			for _, identityScope := range []string{"openid", "profile", "email"} {
+				if optOutScopeSet[identityScope] {
+					t.Fatalf("expected identity scope %q to be absent when opt-out is enabled", identityScope)
+				}
+			}
+			if !optOutScopeSet[item.expectedScope] {
+				t.Fatalf("expected baseline scope %q in opt-out begin auth scope set", item.expectedScope)
+			}
+		})
+	}
+}
+
+func beginScopeSet(t *testing.T, provider core.Provider) map[string]bool {
+	t.Helper()
+	begin, err := provider.BeginAuth(context.Background(), core.BeginAuthRequest{
+		Scope: core.ScopeRef{Type: "user", ID: "usr_1"},
+		State: "state_1",
+	})
+	if err != nil {
+		t.Fatalf("begin auth: %v", err)
+	}
+	parsed, err := url.Parse(begin.URL)
+	if err != nil {
+		t.Fatalf("parse begin auth url: %v", err)
+	}
+	scopeSet := map[string]bool{}
+	for _, scope := range strings.Fields(parsed.Query().Get("scope")) {
+		scopeSet[strings.TrimSpace(scope)] = true
+	}
+	return scopeSet
 }
