@@ -12,8 +12,10 @@ import (
 	"github.com/goliatone/go-services/providers/meta/facebook"
 	"github.com/goliatone/go-services/providers/meta/instagram"
 	"github.com/goliatone/go-services/providers/pinterest"
+	"github.com/goliatone/go-services/providers/salesforce"
 	"github.com/goliatone/go-services/providers/shopify"
 	"github.com/goliatone/go-services/providers/tiktok"
+	"github.com/goliatone/go-services/providers/workday"
 )
 
 func GitHubProvider(cfg github.Config) (core.Provider, error) {
@@ -62,4 +64,12 @@ func GoogleShoppingProvider(cfg shopping.Config) (core.Provider, error) {
 
 func AmazonProvider(cfg amazon.Config) (core.Provider, error) {
 	return amazon.New(cfg)
+}
+
+func SalesforceProvider(cfg salesforce.Config) (core.Provider, error) {
+	return salesforce.New(cfg)
+}
+
+func WorkdayProvider(cfg workday.Config) (core.Provider, error) {
+	return workday.New(cfg)
 }
