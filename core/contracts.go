@@ -293,6 +293,12 @@ type ProviderOperationResult struct {
 	Metadata      map[string]any
 }
 
+type CapabilityOperationResult struct {
+	Capability CapabilityResult
+	Executed   bool
+	Operation  ProviderOperationResult
+}
+
 type ProviderOperationError struct {
 	ProviderID    string
 	Operation     string
@@ -483,12 +489,40 @@ type InvokeCapabilityRequest struct {
 	ConnectionID string
 }
 
+type InvokeCapabilityOperationRequest struct {
+	ProviderID      string
+	Scope           ScopeRef
+	Capability      string
+	Payload         map[string]any
+	ConnectionID    string
+	Operation       string
+	BucketKey       string
+	TransportKind   string
+	TransportConfig map[string]any
+	Retry           ProviderOperationRetryPolicy
+	Metadata        map[string]any
+}
+
 type CapabilityResult struct {
 	Allowed    bool
 	Mode       CapabilityDeniedBehavior
 	Reason     string
 	Connection Connection
 	Metadata   map[string]any
+}
+
+type CapabilityOperationResolveRequest struct {
+	ProviderID      string
+	Scope           ScopeRef
+	Capability      string
+	Payload         map[string]any
+	Connection      Connection
+	Decision        CapabilityResult
+	Operation       string
+	BucketKey       string
+	TransportKind   string
+	TransportConfig map[string]any
+	Metadata        map[string]any
 }
 
 type Provider interface {
@@ -500,6 +534,13 @@ type Provider interface {
 	BeginAuth(ctx context.Context, req BeginAuthRequest) (BeginAuthResponse, error)
 	CompleteAuth(ctx context.Context, req CompleteAuthRequest) (CompleteAuthResponse, error)
 	Refresh(ctx context.Context, cred ActiveCredential) (RefreshResult, error)
+}
+
+type CapabilityOperationResolver interface {
+	ResolveCapabilityOperation(
+		ctx context.Context,
+		req CapabilityOperationResolveRequest,
+	) (ProviderOperationRequest, error)
 }
 
 const (
@@ -839,6 +880,7 @@ type IntegrationService interface {
 	Refresh(ctx context.Context, req RefreshRequest) (RefreshResult, error)
 	Revoke(ctx context.Context, connectionID string, reason string) error
 	InvokeCapability(ctx context.Context, req InvokeCapabilityRequest) (CapabilityResult, error)
+	InvokeCapabilityOperation(ctx context.Context, req InvokeCapabilityOperationRequest) (CapabilityOperationResult, error)
 	SignRequest(ctx context.Context, providerID string, connectionID string, req *http.Request, cred *ActiveCredential) error
 	Subscribe(ctx context.Context, req SubscribeRequest) (Subscription, error)
 	RenewSubscription(ctx context.Context, req RenewSubscriptionRequest) (Subscription, error)
