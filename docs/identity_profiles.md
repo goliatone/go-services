@@ -58,3 +58,5 @@ The `DisableIdentityScopes` option is available in:
 - `providers/google/drive.Config`
 - `providers/google/gmail.Config`
 - `providers/google/calendar.Config`
+
+When identity scopes are disabled, automatic profile resolution may not be possible; provide `external_account_id` explicitly during callback completion if your consent grants do not include identity claims/endpoints.
