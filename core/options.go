@@ -55,6 +55,7 @@ type serviceBuilder struct {
 	grantStore          GrantStore
 	permissionEvaluator PermissionEvaluator
 	credentialCodec     CredentialCodec
+	callbackURLResolver CallbackURLResolver
 }
 
 type Option func(*serviceBuilder)
@@ -212,6 +213,12 @@ func WithPermissionEvaluator(evaluator PermissionEvaluator) Option {
 func WithCredentialCodec(codec CredentialCodec) Option {
 	return func(b *serviceBuilder) {
 		b.credentialCodec = codec
+	}
+}
+
+func WithCallbackURLResolver(resolver CallbackURLResolver) Option {
+	return func(b *serviceBuilder) {
+		b.callbackURLResolver = resolver
 	}
 }
 
