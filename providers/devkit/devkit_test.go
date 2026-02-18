@@ -88,3 +88,36 @@ func TestValidateTransportAdapterConformance(t *testing.T) {
 		t.Fatalf("validate transport adapter conformance: %v", err)
 	}
 }
+
+func TestValidateSigV4SigningAndReplayConformance(t *testing.T) {
+	ctx := context.Background()
+	fixedNow := time.Date(2026, 2, 18, 12, 0, 0, 0, time.UTC)
+	signer := core.AWSSigV4Signer{
+		Now: func() time.Time { return fixedNow },
+	}
+
+	headerFixture := NewSigV4HeaderFixture()
+	if err := ValidateSigV4SigningConformance(ctx, signer, headerFixture); err != nil {
+		t.Fatalf("validate sigv4 header conformance: %v", err)
+	}
+	if err := ValidateSigV4ReplayWindow(ctx, headerFixture.Request, 5*time.Minute, fixedNow.Add(2*time.Minute)); err != nil {
+		t.Fatalf("validate sigv4 header replay window: %v", err)
+	}
+
+	queryFixture := NewSigV4QueryFixture()
+	if err := ValidateSigV4SigningConformance(ctx, signer, queryFixture); err != nil {
+		t.Fatalf("validate sigv4 query conformance: %v", err)
+	}
+	if err := ValidateSigV4ReplayWindow(ctx, queryFixture.Request, 5*time.Minute, fixedNow.Add(7*time.Minute)); err == nil {
+		t.Fatalf("expected replay window validation to fail for stale query signature")
+	}
+}
+
+func TestValidateWebhookTemplateConformance(t *testing.T) {
+	ctx := context.Background()
+	for _, fixture := range NewWebhookTemplateFixtures() {
+		if err := ValidateWebhookTemplateConformance(ctx, fixture); err != nil {
+			t.Fatalf("validate webhook template %s: %v", fixture.Name, err)
+		}
+	}
+}

@@ -10,11 +10,18 @@ import (
 	"testing"
 
 	"github.com/goliatone/go-services/core"
+	"github.com/goliatone/go-services/providers/amazon"
 	"github.com/goliatone/go-services/providers/github"
 	"github.com/goliatone/go-services/providers/google/calendar"
 	"github.com/goliatone/go-services/providers/google/docs"
 	"github.com/goliatone/go-services/providers/google/drive"
 	"github.com/goliatone/go-services/providers/google/gmail"
+	"github.com/goliatone/go-services/providers/google/shopping"
+	"github.com/goliatone/go-services/providers/meta/facebook"
+	"github.com/goliatone/go-services/providers/meta/instagram"
+	"github.com/goliatone/go-services/providers/pinterest"
+	"github.com/goliatone/go-services/providers/shopify"
+	"github.com/goliatone/go-services/providers/tiktok"
 )
 
 type providerFactory struct {
@@ -91,6 +98,84 @@ func TestBuiltInProviders_ExposeOAuth2AndBaselineCapabilities(t *testing.T) {
 					ClientID:     "client",
 					ClientSecret: "secret",
 					TokenURL:     tokenServer.URL,
+				})
+			},
+		},
+		{
+			name: "shopify",
+			factory: func() (core.Provider, error) {
+				return shopify.New(shopify.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					AuthURL:      "https://merchant.myshopify.com/admin/oauth/authorize",
+					TokenURL:     tokenServer.URL,
+				})
+			},
+		},
+		{
+			name: "meta_instagram",
+			factory: func() (core.Provider, error) {
+				return instagram.New(instagram.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
+			},
+		},
+		{
+			name: "meta_facebook",
+			factory: func() (core.Provider, error) {
+				return facebook.New(facebook.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
+			},
+		},
+		{
+			name: "tiktok",
+			factory: func() (core.Provider, error) {
+				return tiktok.New(tiktok.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
+			},
+		},
+		{
+			name: "pinterest",
+			factory: func() (core.Provider, error) {
+				return pinterest.New(pinterest.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+				})
+			},
+		},
+		{
+			name: "google_shopping",
+			factory: func() (core.Provider, error) {
+				return shopping.New(shopping.Config{
+					ClientID:              "client",
+					ClientSecret:          "secret",
+					TokenURL:              tokenServer.URL,
+					DisableIdentityScopes: true,
+				})
+			},
+		},
+		{
+			name: "amazon",
+			factory: func() (core.Provider, error) {
+				return amazon.New(amazon.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     tokenServer.URL,
+					SigV4: amazon.SigV4Config{
+						AccessKeyID:     "AKIA_TEST",
+						SecretAccessKey: "secret_key",
+						Region:          "us-east-1",
+						Service:         "execute-api",
+					},
 				})
 			},
 		},

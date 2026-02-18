@@ -1,0 +1,229 @@
+package shopping
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/goliatone/go-services/core"
+)
+
+func TestNew_UsesOAuthDefaultsAndServiceAccountProfile(t *testing.T) {
+	provider, err := New(Config{
+		ClientID:     "client",
+		ClientSecret: "secret",
+		ServiceAccount: ServiceAccountConfig{
+			Issuer:            "merchant@example.iam.gserviceaccount.com",
+			Subject:           "merchant-account-1",
+			SigningKey:        "-----BEGIN PRIVATE KEY-----fixture-----END PRIVATE KEY-----",
+			SigningAlgorithm:  "rs256",
+			ExternalAccountID: "merchant-account-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if provider.ID() != ProviderID {
+		t.Fatalf("expected provider id %q, got %q", ProviderID, provider.ID())
+	}
+	if provider.AuthKind() != core.AuthKindOAuth2AuthCode {
+		t.Fatalf("expected auth kind %q, got %q", core.AuthKindOAuth2AuthCode, provider.AuthKind())
+	}
+
+	begin, err := provider.BeginAuth(context.Background(), core.BeginAuthRequest{
+		Scope: core.ScopeRef{Type: "org", ID: "org_1"},
+		State: "state_1",
+	})
+	if err != nil {
+		t.Fatalf("begin auth: %v", err)
+	}
+	parsed, err := url.Parse(begin.URL)
+	if err != nil {
+		t.Fatalf("parse begin auth url: %v", err)
+	}
+	if parsed.Scheme+"://"+parsed.Host+parsed.Path != AuthURL {
+		t.Fatalf("expected begin auth endpoint %q, got %q", AuthURL, parsed.Scheme+"://"+parsed.Host+parsed.Path)
+	}
+	if !parseScopeSet(parsed.Query().Get("scope"))[ScopeContent] {
+		t.Fatalf("expected scope %q in begin auth query", ScopeContent)
+	}
+
+	shoppingProvider, ok := provider.(*Provider)
+	if !ok {
+		t.Fatalf("expected concrete shopping provider")
+	}
+	profile := shoppingProvider.ServiceAccountProfile()
+	if !profile.Enabled {
+		t.Fatalf("expected service-account profile to be enabled")
+	}
+	if got := profile.Metadata["auth_kind"]; got != "service_account_jwt" {
+		t.Fatalf("expected auth kind service_account_jwt, got %#v", got)
+	}
+	if got := profile.Metadata["audience"]; got != TokenURL {
+		t.Fatalf("expected default audience %q, got %#v", TokenURL, got)
+	}
+	if got := profile.Metadata["signing_algorithm"]; got != "RS256" {
+		t.Fatalf("expected signing algorithm RS256, got %#v", got)
+	}
+	requested, ok := profile.Metadata["requested_grants"].([]string)
+	if !ok || len(requested) != 1 || requested[0] != ScopeContent {
+		t.Fatalf("expected requested_grants [%q], got %#v", ScopeContent, profile.Metadata["requested_grants"])
+	}
+}
+
+func TestProvider_BaselineCapabilitiesUseCanonicalRequiredGrants(t *testing.T) {
+	provider, err := New(Config{ClientID: "client", ClientSecret: "secret"})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	descriptors := provider.Capabilities()
+	expected := map[string]string{
+		"catalog.read":   GrantContent,
+		"inventory.read": GrantContent,
+		"orders.read":    GrantContent,
+	}
+	if len(descriptors) != len(expected) {
+		t.Fatalf("expected %d capabilities, got %d", len(expected), len(descriptors))
+	}
+	for _, descriptor := range descriptors {
+		requiredGrant, ok := expected[descriptor.Name]
+		if !ok {
+			t.Fatalf("unexpected capability descriptor %q", descriptor.Name)
+		}
+		if len(descriptor.RequiredGrants) != 1 || descriptor.RequiredGrants[0] != requiredGrant {
+			t.Fatalf(
+				"expected capability %q to require grant %q, got %v",
+				descriptor.Name,
+				requiredGrant,
+				descriptor.RequiredGrants,
+			)
+		}
+	}
+}
+
+func TestProvider_CompleteAuthAndRefresh(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if got := strings.TrimSpace(r.Form.Get("client_id")); got != "client" {
+			http.Error(w, "missing client_id in form body", http.StatusBadRequest)
+			return
+		}
+		if !hasBasicAuth(r.Header.Get("Authorization"), "client", "secret") {
+			http.Error(w, "authorization header must contain client credentials", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("grant_type") {
+		case "authorization_code":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "access_token_1",
+				"refresh_token": "refresh_token_1",
+				"token_type":    "bearer",
+				"expires_in":    3600,
+				"scope":         ScopeContent,
+			})
+		case "refresh_token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "access_token_2",
+				"refresh_token": "refresh_token_2",
+				"token_type":    "bearer",
+				"expires_in":    3600,
+				"scope":         ScopeContent,
+			})
+		default:
+			http.Error(w, "unsupported grant type", http.StatusBadRequest)
+		}
+	}))
+	defer tokenServer.Close()
+
+	provider, err := New(Config{
+		ClientID:     "client",
+		ClientSecret: "secret",
+		AuthURL:      AuthURL,
+		TokenURL:     tokenServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
+		Scope:    core.ScopeRef{Type: "org", ID: "org_1"},
+		Code:     "code_1",
+		State:    "state_1",
+		Metadata: map[string]any{"external_account_id": "merchant_account_1"},
+	})
+	if err != nil {
+		t.Fatalf("complete auth: %v", err)
+	}
+	if complete.ExternalAccountID != "merchant_account_1" {
+		t.Fatalf("expected external account id merchant_account_1, got %q", complete.ExternalAccountID)
+	}
+	if complete.Credential.AccessToken != "access_token_1" {
+		t.Fatalf("expected access token from callback")
+	}
+
+	refresh, err := provider.Refresh(context.Background(), complete.Credential)
+	if err != nil {
+		t.Fatalf("refresh token: %v", err)
+	}
+	if refresh.Credential.AccessToken != "access_token_2" {
+		t.Fatalf("expected refreshed access token, got %q", refresh.Credential.AccessToken)
+	}
+	if refresh.Credential.RefreshToken != "refresh_token_2" {
+		t.Fatalf("expected refresh token rotation")
+	}
+}
+
+func TestProvider_NormalizeGrantedPermissions(t *testing.T) {
+	provider, err := New(Config{ClientID: "client", ClientSecret: "secret"})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	aware, ok := provider.(core.GrantAwareProvider)
+	if !ok {
+		t.Fatalf("expected provider to implement GrantAwareProvider")
+	}
+	grants, err := aware.NormalizeGrantedPermissions(context.Background(), []string{
+		"content",
+		"google_shopping:https://www.googleapis.com/auth/content",
+		" https://www.googleapis.com/auth/content ",
+		"unsupported",
+	})
+	if err != nil {
+		t.Fatalf("normalize granted permissions: %v", err)
+	}
+	if len(grants) != 1 || grants[0] != GrantContent {
+		t.Fatalf("expected normalized grants [%q], got %v", GrantContent, grants)
+	}
+}
+
+func parseScopeSet(raw string) map[string]bool {
+	set := map[string]bool{}
+	for _, scope := range strings.Fields(raw) {
+		set[strings.TrimSpace(scope)] = true
+	}
+	return set
+}
+
+func hasBasicAuth(header string, expectedUser string, expectedPass string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(header), "Basic ") {
+		return false
+	}
+	encoded := strings.TrimSpace(strings.TrimPrefix(header, "Basic "))
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false
+	}
+	return string(decoded) == expectedUser+":"+expectedPass
+}
