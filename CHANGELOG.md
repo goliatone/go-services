@@ -1,5 +1,50 @@
 # Changelog
 
+## [Unreleased]
+
+### API Notes
+
+- Planning update: enabled `go-services (commerce/social provider expansion)` backend workstream (Phase 25 through Phase 29) as an active execution target in `SERVICES_TSK.md`.
+- Planning update: added Phase `25.0` pre-task for planned breaking-API alignment before provider-specific implementations.
+- Design update: documented explicit Phase 25 through Phase 29 breaking window in `SERVICES_TDD.md` for high-level execution contracts:
+  - canonical provider operation request/response envelope alignment
+  - standardized capability invocation and error mapping surfaces
+  - unified extension registration surfaces for provider packs and command/query bundles
+  - freeze checkpoint after Phase 26; later phases should be additive by default
+- Added AWS SigV4 signing support in core:
+  - New `core.AuthKindAWSSigV4` auth kind constant.
+  - New `core.AWSSigV4Signer` with header/query signing modes, canonical request/signature generation, session token support, and optional unsigned payload mode.
+  - `Service.SignRequest` and provider-operation signing now resolve auth-kind-aware signers (`api_key`, `pat`, `hmac`, `basic`, `mtls`, `aws_sigv4`) when default bearer signer is active.
+- Added OAuth2+SigV4 strategy wiring:
+  - New `auth.OAuth2SigV4Strategy` that composes OAuth2 client-credentials token issuance with SigV4 signing profile metadata for runtime request mutation.
+- Added provider operation signing diagnostics metadata normalization:
+  - Runtime metadata now captures SigV4 signing diagnostics (`signing_profile`, `signing_mode`, `signed_host`, `signed_service`, `signed_region`, `signed_headers`) plus `clock_skew_hint_seconds` when detectable from response `Date` headers.
+- Added shared webhook verification/extraction templates:
+  - New reusable template constructors for Shopify, Meta, TikTok, Pinterest, Google, and Amazon webhook/notification surfaces.
+- Added `providers/devkit` conformance fixtures for:
+  - SigV4 signing behavior and replay-window validation.
+  - Multi-provider webhook template verification and delivery-id extraction patterns.
+- Added callback URL resolver hook in core:
+  - New types: `core.CallbackURLResolver`, `core.CallbackURLResolverFunc`, `core.CallbackURLResolveRequest`, `core.CallbackURLResolveFlow`.
+  - New option: `core.WithCallbackURLResolver(...)` (also re-exported from `services.WithCallbackURLResolver(...)`).
+- `core.ServiceDependencies` (and alias `services.ServiceDependencies`) now includes `CallbackURLResolver`.
+- `Service.Connect` and `Service.StartReconsent` now resolve callback URL via the configured resolver when `RedirectURI` is empty.
+- Breaking: `core.ConnectionStore` now requires `FindByScopeAndExternalAccount(...)`.
+- Breaking: `Service.CompleteCallback` now requires `CompleteAuthResponse.ExternalAccountID` to be non-empty.
+- Breaking: `providers.OAuth2Provider.CompleteAuth` no longer synthesizes fallback account ids; it now requires `req.Metadata["external_account_id"]`.
+- Behavior change: strict scope-based connection resolution is now fail-closed when multiple active connections exist for the same provider+scope (`ConnectionResolutionAmbiguous`).
+- Behavior change: `InvokeCapability` now honors explicit `InvokeCapabilityRequest.ConnectionID` and validates provider/scope consistency.
+
+### Migration / Fix
+
+- If you construct `ServiceDependencies` using unkeyed composite literals, this can now fail to compile due to the new field.
+  - Fix: switch to keyed literals (recommended) or add the new `CallbackURLResolver` positional field.
+- If your connect/re-consent calls rely on empty `RedirectURI`, configure `WithCallbackURLResolver(...)` or continue passing explicit `RedirectURI` per request.
+- If you implement `core.ConnectionStore`, add `FindByScopeAndExternalAccount(ctx, providerID, scope, externalAccountID) (Connection, bool, error)`.
+- Ensure every auth strategy/provider sets a stable non-empty `ExternalAccountID` on `CompleteAuthResponse`.
+- For OAuth2 providers using the shared `providers.OAuth2Provider`, set `external_account_id` in callback metadata before `CompleteAuth` is called.
+- If you invoke capabilities by provider+scope only and a user can have multiple linked accounts, pass `InvokeCapabilityRequest.ConnectionID` to disambiguate account selection.
+
 # [0.1.0](https://github.com/goliatone/go-services/tree/v0.1.0) - (2026-02-18)
 
 ## <!-- 1 -->🐛 Bug Fixes
@@ -95,5 +140,3 @@
 - Update docs ([4a6a3b2](https://github.com/goliatone/go-services/commit/4a6a3b258a73d56b14344d2208c8fcfaccd5bdc5))  - (goliatone)
 - Update tasks ([f392e29](https://github.com/goliatone/go-services/commit/f392e29375aff5028b765ee2e14edf40ce20d34a))  - (goliatone)
 - Initial commit ([654b36d](https://github.com/goliatone/go-services/commit/654b36d1f22be1ea4b973f9e2f55b0b63e77faa9))  - (goliatone)
-
-
