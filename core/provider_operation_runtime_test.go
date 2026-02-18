@@ -270,6 +270,78 @@ func TestService_ExecuteProviderOperation_MapsRateLimitDeterministically(t *test
 	}
 }
 
+func TestService_ExecuteProviderOperation_NormalizesSigV4SigningMetadata(t *testing.T) {
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "amazon"}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	adapter := &recordingTransportAdapter{
+		kind: "rest",
+		responses: []TransportResponse{
+			{
+				StatusCode: 200,
+				Headers: map[string]string{
+					"Date": "Wed, 18 Feb 2026 12:05:00 GMT",
+				},
+			},
+		},
+	}
+	resolver := &staticTransportResolver{adapter: adapter}
+	signer := AWSSigV4Signer{
+		Now: func() time.Time {
+			return time.Date(2026, 2, 18, 12, 0, 0, 0, time.UTC)
+		},
+	}
+
+	svc, err := NewService(
+		Config{},
+		WithRegistry(registry),
+		WithTransportResolver(resolver),
+		WithSigner(signer),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	result, err := svc.ExecuteProviderOperation(context.Background(), ProviderOperationRequest{
+		ProviderID:    "amazon",
+		Scope:         ScopeRef{Type: "org", ID: "org_1"},
+		TransportKind: "rest",
+		TransportRequest: TransportRequest{
+			Method: "GET",
+			URL:    "https://sellingpartnerapi-na.amazon.com/orders/v0/orders",
+		},
+		Credential: &ActiveCredential{
+			AccessToken: "lwa_token",
+			Metadata: map[string]any{
+				"auth_kind":               AuthKindAWSSigV4,
+				"aws_access_key_id":       "AKIAEXAMPLE",
+				"aws_secret_access_key":   "secret_value",
+				"aws_region":              "us-east-1",
+				"aws_service":             "execute-api",
+				"aws_signing_mode":        "header",
+				"aws_access_token_header": "x-amz-access-token",
+			},
+		},
+		Retry: ProviderOperationRetryPolicy{MaxAttempts: 1},
+	})
+	if err != nil {
+		t.Fatalf("execute provider operation: %v", err)
+	}
+	if got := fmt.Sprint(result.Meta.Metadata["signing_profile"]); got != AuthKindAWSSigV4 {
+		t.Fatalf("expected signing_profile %q, got %q", AuthKindAWSSigV4, got)
+	}
+	if got := fmt.Sprint(result.Meta.Metadata["signed_region"]); got != "us-east-1" {
+		t.Fatalf("expected signed_region metadata, got %q", got)
+	}
+	if got := fmt.Sprint(result.Meta.Metadata["signing_mode"]); got != "header" {
+		t.Fatalf("expected signing_mode metadata, got %q", got)
+	}
+	if _, ok := result.Meta.Metadata["clock_skew_hint_seconds"]; !ok {
+		t.Fatalf("expected clock skew hint metadata")
+	}
+}
+
 type staticTransportResolver struct {
 	adapter TransportAdapter
 }
