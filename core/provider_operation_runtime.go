@@ -108,8 +108,9 @@ func (s *Service) ExecuteProviderOperation(
 			}
 		}
 
+		var signingMetadata map[string]any
 		if resolved.signer != nil && resolved.credential != nil {
-			signed, signErr := signProviderTransportRequest(
+			signed, metadata, signErr := signProviderTransportRequest(
 				ctx,
 				resolved.signer,
 				transportRequest,
@@ -126,6 +127,7 @@ func (s *Service) ExecuteProviderOperation(
 				)
 			}
 			transportRequest = signed
+			signingMetadata = metadata
 		}
 
 		response, callErr := resolved.adapter.Do(ctx, transportRequest)
@@ -166,6 +168,10 @@ func (s *Service) ExecuteProviderOperation(
 				normalizeErr,
 				false,
 			)
+		}
+		meta.Metadata = mergeProviderOperationMetadata(meta.Metadata, signingMetadata)
+		if skewHint, ok := computeSigningClockSkewHint(signingMetadata, response.Headers); ok {
+			meta.Metadata["clock_skew_hint_seconds"] = skewHint
 		}
 
 		result.Response = response
@@ -331,7 +337,7 @@ func (s *Service) resolveProviderOperationRequest(
 	if err != nil {
 		return resolvedProviderOperationRequest{}, s.mapError(err)
 	}
-	signer := s.resolveSignerForProvider(provider)
+	signer := s.resolveSignerForCredential(provider, credential)
 
 	operation := strings.TrimSpace(req.Operation)
 	if operation == "" {
@@ -632,15 +638,155 @@ func signProviderTransportRequest(
 	signer Signer,
 	request TransportRequest,
 	credential ActiveCredential,
-) (TransportRequest, error) {
+) (TransportRequest, map[string]any, error) {
 	httpRequest, err := transportToHTTPRequest(ctx, request)
 	if err != nil {
-		return TransportRequest{}, err
+		return TransportRequest{}, nil, err
 	}
 	if err := signer.Sign(ctx, httpRequest, credential); err != nil {
-		return TransportRequest{}, err
+		return TransportRequest{}, nil, err
 	}
-	return httpToTransportRequest(httpRequest, request)
+	signed, err := httpToTransportRequest(httpRequest, request)
+	if err != nil {
+		return TransportRequest{}, nil, err
+	}
+	return signed, collectSigningMetadata(httpRequest, credential), nil
+}
+
+func collectSigningMetadata(req *http.Request, credential ActiveCredential) map[string]any {
+	if req == nil {
+		return nil
+	}
+	authKind := strings.TrimSpace(strings.ToLower(resolveCredentialAuthKind(credential)))
+	if authKind != AuthKindAWSSigV4 {
+		return nil
+	}
+
+	signedRegion := metadataString(credential.Metadata, "aws_region", "region")
+	signedService := metadataString(credential.Metadata, "aws_service", "service")
+	metadata := map[string]any{
+		"signing_profile": AuthKindAWSSigV4,
+		"signed_host":     req.URL.Host,
+	}
+
+	if authHeader := strings.TrimSpace(req.Header.Get("Authorization")); strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256") {
+		metadata["signing_mode"] = "header"
+		if signedHeaders := parseAuthDirective(authHeader, "SignedHeaders"); signedHeaders != "" {
+			metadata["signed_headers"] = signedHeaders
+		}
+		if region, service, ok := parseSigV4CredentialScope(parseAuthDirective(authHeader, "Credential")); ok {
+			signedRegion = region
+			signedService = service
+		}
+	} else if signedHeaders := strings.TrimSpace(req.URL.Query().Get("X-Amz-SignedHeaders")); signedHeaders != "" {
+		metadata["signing_mode"] = "query"
+		metadata["signed_headers"] = signedHeaders
+		if region, service, ok := parseSigV4CredentialScope(req.URL.Query().Get("X-Amz-Credential")); ok {
+			signedRegion = region
+			signedService = service
+		}
+	}
+	if signedRegion != "" {
+		metadata["signed_region"] = signedRegion
+	}
+	if signedService != "" {
+		metadata["signed_service"] = signedService
+	}
+	if signedAt := firstNonEmpty(
+		strings.TrimSpace(req.Header.Get("X-Amz-Date")),
+		strings.TrimSpace(req.URL.Query().Get("X-Amz-Date")),
+	); signedAt != "" {
+		metadata["signed_at"] = signedAt
+	}
+	if expires := strings.TrimSpace(req.URL.Query().Get("X-Amz-Expires")); expires != "" {
+		metadata["signing_expires_seconds"] = expires
+	}
+	return metadata
+}
+
+func parseAuthDirective(header string, key string) string {
+	parts := strings.Split(header, ",")
+	target := strings.ToLower(strings.TrimSpace(key))
+	for _, part := range parts {
+		section := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(section) != 2 {
+			continue
+		}
+		k := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section[0], "AWS4-HMAC-SHA256 ")))
+		if k != target {
+			continue
+		}
+		return strings.TrimSpace(section[1])
+	}
+	return ""
+}
+
+func parseSigV4CredentialScope(value string) (region string, service string, ok bool) {
+	parts := strings.Split(strings.TrimSpace(value), "/")
+	if len(parts) < 5 {
+		return "", "", false
+	}
+	region = strings.TrimSpace(parts[2])
+	service = strings.TrimSpace(parts[3])
+	if region == "" || service == "" {
+		return "", "", false
+	}
+	return region, service, true
+}
+
+func mergeProviderOperationMetadata(base map[string]any, extras map[string]any) map[string]any {
+	if len(base) == 0 && len(extras) == 0 {
+		return map[string]any{}
+	}
+	merged := copyAnyMap(base)
+	for key, value := range extras {
+		merged[key] = value
+	}
+	return merged
+}
+
+func computeSigningClockSkewHint(signing map[string]any, headers map[string]string) (int64, bool) {
+	if len(signing) == 0 {
+		return 0, false
+	}
+	rawSignedAt, ok := signing["signed_at"]
+	if !ok {
+		return 0, false
+	}
+	signedAtValue := strings.TrimSpace(fmt.Sprint(rawSignedAt))
+	if signedAtValue == "" {
+		return 0, false
+	}
+	signedAt, err := time.Parse("20060102T150405Z", signedAtValue)
+	if err != nil {
+		return 0, false
+	}
+	rawResponseDate := ""
+	for key, value := range headers {
+		if strings.EqualFold(strings.TrimSpace(key), "date") {
+			rawResponseDate = strings.TrimSpace(value)
+			break
+		}
+	}
+	if rawResponseDate == "" {
+		return 0, false
+	}
+	responseDate, err := time.Parse(time.RFC1123, rawResponseDate)
+	if err != nil {
+		responseDate, err = time.Parse(time.RFC1123Z, rawResponseDate)
+		if err != nil {
+			return 0, false
+		}
+	}
+	diff := responseDate.Sub(signedAt).Seconds()
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff < 30 {
+		return 0, false
+	}
+	// Return signed difference to indicate direction (positive means response clock is ahead).
+	return int64(responseDate.Sub(signedAt).Seconds()), true
 }
 
 func transportToHTTPRequest(ctx context.Context, request TransportRequest) (*http.Request, error) {
