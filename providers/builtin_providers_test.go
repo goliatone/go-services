@@ -20,8 +20,10 @@ import (
 	"github.com/goliatone/go-services/providers/meta/facebook"
 	"github.com/goliatone/go-services/providers/meta/instagram"
 	"github.com/goliatone/go-services/providers/pinterest"
+	"github.com/goliatone/go-services/providers/salesforce"
 	"github.com/goliatone/go-services/providers/shopify"
 	"github.com/goliatone/go-services/providers/tiktok"
+	"github.com/goliatone/go-services/providers/workday"
 )
 
 type providerFactory struct {
@@ -333,6 +335,78 @@ func TestGoogleBuiltInProviders_IdentityScopesDefaultAndOptOut(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuiltInProviders_ExposeNonOAuthAdvancedAuthModes(t *testing.T) {
+	t.Run("salesforce_client_credentials", func(t *testing.T) {
+		tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if r.Form.Get("grant_type") != "client_credentials" {
+				http.Error(w, "unsupported grant type", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token_1",
+				"token_type":   "bearer",
+				"expires_in":   3600,
+				"scope":        "api bulk_api",
+			})
+		}))
+		defer tokenServer.Close()
+
+		providerRaw, err := salesforce.New(salesforce.Config{
+			ClientID:     "client",
+			ClientSecret: "secret",
+			TokenURL:     tokenServer.URL,
+		})
+		if err != nil {
+			t.Fatalf("new provider: %v", err)
+		}
+		provider := providerRaw
+		if provider.AuthKind() != core.AuthKindOAuth2ClientCredential {
+			t.Fatalf("expected auth kind %q, got %q", core.AuthKindOAuth2ClientCredential, provider.AuthKind())
+		}
+		complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
+			Scope: core.ScopeRef{Type: "org", ID: "org_1"},
+		})
+		if err != nil {
+			t.Fatalf("complete auth: %v", err)
+		}
+		if complete.Credential.AccessToken == "" {
+			t.Fatalf("expected access token")
+		}
+	})
+
+	t.Run("workday_service_account_jwt", func(t *testing.T) {
+		providerRaw, err := workday.New(workday.Config{
+			Issuer:     "svc-account@example.iam.gserviceaccount.com",
+			Audience:   "https://api.workday.test/token",
+			SigningKey: "secret-signing-key",
+		})
+		if err != nil {
+			t.Fatalf("new provider: %v", err)
+		}
+		provider := providerRaw
+		if provider.AuthKind() != core.AuthKindServiceAccountJWT {
+			t.Fatalf("expected auth kind %q, got %q", core.AuthKindServiceAccountJWT, provider.AuthKind())
+		}
+		complete, err := provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
+			Scope: core.ScopeRef{Type: "org", ID: "org_1"},
+			Metadata: map[string]any{
+				"subject": "tenant-admin@example.com",
+			},
+		})
+		if err != nil {
+			t.Fatalf("complete auth: %v", err)
+		}
+		if strings.Count(complete.Credential.AccessToken, ".") != 2 {
+			t.Fatalf("expected jwt-like access token")
+		}
+	})
 }
 
 func beginScopeSet(t *testing.T, provider core.Provider) map[string]bool {
