@@ -80,6 +80,7 @@ type ConnectionResolutionKind string
 const (
 	ConnectionResolutionDirect    ConnectionResolutionKind = "direct"
 	ConnectionResolutionInherited ConnectionResolutionKind = "inherited"
+	ConnectionResolutionAmbiguous ConnectionResolutionKind = "ambiguous"
 	ConnectionResolutionNotFound  ConnectionResolutionKind = "not_found"
 )
 
@@ -526,6 +527,12 @@ type ConnectionStore interface {
 	Create(ctx context.Context, in CreateConnectionInput) (Connection, error)
 	Get(ctx context.Context, id string) (Connection, error)
 	FindByScope(ctx context.Context, providerID string, scope ScopeRef) ([]Connection, error)
+	FindByScopeAndExternalAccount(
+		ctx context.Context,
+		providerID string,
+		scope ScopeRef,
+		externalAccountID string,
+	) (Connection, bool, error)
 	UpdateStatus(ctx context.Context, id string, status string, reason string) error
 }
 
