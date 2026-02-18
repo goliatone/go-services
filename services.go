@@ -29,6 +29,10 @@ type SyncCursorStore = core.SyncCursorStore
 type InstallationStore = core.InstallationStore
 type CredentialCodec = core.CredentialCodec
 type IdempotencyClaimStore = core.IdempotencyClaimStore
+type CallbackURLResolver = core.CallbackURLResolver
+type CallbackURLResolverFunc = core.CallbackURLResolverFunc
+type CallbackURLResolveRequest = core.CallbackURLResolveRequest
+type CallbackURLResolveFlow = core.CallbackURLResolveFlow
 
 type ConnectRequest = core.ConnectRequest
 type ReconsentRequest = core.ReconsentRequest
@@ -38,6 +42,11 @@ type CompleteAuthRequest = core.CompleteAuthRequest
 type RefreshRequest = core.RefreshRequest
 
 type InvokeCapabilityRequest = core.InvokeCapabilityRequest
+
+const (
+	CallbackURLResolveFlowConnect   = core.CallbackURLResolveFlowConnect
+	CallbackURLResolveFlowReconsent = core.CallbackURLResolveFlowReconsent
+)
 
 var (
 	WithLogger                  = core.WithLogger
@@ -66,6 +75,7 @@ var (
 	WithPermissionEvaluator     = core.WithPermissionEvaluator
 	WithSigner                  = core.WithSigner
 	WithCredentialCodec         = core.WithCredentialCodec
+	WithCallbackURLResolver     = core.WithCallbackURLResolver
 )
 
 func DefaultConfig() Config {
