@@ -20,10 +20,20 @@ func (p *StrictIsolationPolicy) ResolveConnection(ctx context.Context, providerI
 	if err != nil {
 		return ConnectionResolution{}, err
 	}
+	active := make([]Connection, 0, len(connections))
 	for _, conn := range connections {
 		if conn.Status == ConnectionStatusActive {
-			return ConnectionResolution{Outcome: ConnectionResolutionDirect, Connection: conn}, nil
+			active = append(active, conn)
 		}
+	}
+	if len(active) == 1 {
+		return ConnectionResolution{Outcome: ConnectionResolutionDirect, Connection: active[0]}, nil
+	}
+	if len(active) > 1 {
+		return ConnectionResolution{
+			Outcome: ConnectionResolutionAmbiguous,
+			Reason:  "multiple active direct connections found; connection_id is required",
+		}, nil
 	}
 	return ConnectionResolution{Outcome: ConnectionResolutionNotFound, Reason: "no active direct connection"}, nil
 }
