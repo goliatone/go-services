@@ -6,4 +6,6 @@
 // credential payloads can roundtrip safely across schema/runtime upgrades.
 // Grant persistence separates snapshot state from immutable grant events, and
 // supports transactional snapshot+event writes for strict reconciliation paths.
+// Callback URL resolution is pluggable via CallbackURLResolver so consumers can
+// enforce app-specific callback URL schemas without provider-level branching.
 package core
