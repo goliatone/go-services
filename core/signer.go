@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -154,6 +155,30 @@ func (s *Service) resolveSignerForProvider(provider Provider) Signer {
 	return s.signer
 }
 
+func (s *Service) resolveSignerForCredential(provider Provider, cred *ActiveCredential) Signer {
+	if signer := s.resolveSignerForProvider(provider); signer != nil {
+		if provider != nil {
+			if _, ok := provider.(ProviderSigner); ok {
+				return signer
+			}
+		}
+	}
+	if cred != nil {
+		if s == nil || s.signer == nil {
+			if authSigner := resolveAuthKindSigner(*cred); authSigner != nil {
+				return authSigner
+			}
+		} else {
+			if _, isDefaultBearer := s.signer.(BearerTokenSigner); isDefaultBearer {
+				if authSigner := resolveAuthKindSigner(*cred); authSigner != nil {
+					return authSigner
+				}
+			}
+		}
+	}
+	return s.resolveSignerForProvider(provider)
+}
+
 func (s *Service) SignRequest(
 	ctx context.Context,
 	providerID string,
@@ -200,11 +225,6 @@ func (s *Service) SignRequest(
 	if err != nil {
 		return err
 	}
-	signer := s.resolveSignerForProvider(provider)
-	if signer == nil {
-		return s.mapError(fmt.Errorf("core: signer is not configured"))
-	}
-
 	active := ActiveCredential{}
 	if cred != nil {
 		active = *cred
@@ -225,10 +245,59 @@ func (s *Service) SignRequest(
 		return s.mapError(fmt.Errorf("core: credential is required for signing"))
 	}
 
+	signer := s.resolveSignerForCredential(provider, &active)
+	if signer == nil {
+		return s.mapError(fmt.Errorf("core: signer is not configured"))
+	}
+
 	if signErr := signer.Sign(ctx, req, active); signErr != nil {
 		return s.mapError(signErr)
 	}
 	return nil
+}
+
+func resolveAuthKindSigner(cred ActiveCredential) Signer {
+	authKind := strings.TrimSpace(strings.ToLower(resolveCredentialAuthKind(cred)))
+	switch authKind {
+	case AuthKindAPIKey:
+		return APIKeySigner{
+			Header:     firstNonEmpty(metadataString(cred.Metadata, "api_key_header"), "X-API-Key"),
+			Prefix:     metadataString(cred.Metadata, "api_key_prefix"),
+			QueryParam: metadataString(cred.Metadata, "api_key_query_param"),
+		}
+	case AuthKindPAT:
+		return PATSigner{}
+	case AuthKindHMAC:
+		signer := HMACSigner{
+			SignatureHeader: firstNonEmpty(metadataString(cred.Metadata, "signature_header"), "X-Signature"),
+			TimestampHeader: firstNonEmpty(metadataString(cred.Metadata, "timestamp_header"), "X-Timestamp"),
+		}
+		if raw := metadataString(cred.Metadata, "hmac_timestamp_unix"); raw != "" {
+			if unix, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64); err == nil && unix > 0 {
+				t := time.Unix(unix, 0).UTC()
+				signer.Now = func() time.Time { return t }
+			}
+		}
+		return signer
+	case AuthKindBasic:
+		return BasicAuthSigner{}
+	case AuthKindMTLS:
+		return MTLSSigner{}
+	case AuthKindAWSSigV4:
+		return AWSSigV4Signer{}
+	default:
+		return nil
+	}
+}
+
+func resolveCredentialAuthKind(cred ActiveCredential) string {
+	if raw := metadataString(cred.Metadata, "auth_kind"); raw != "" {
+		return raw
+	}
+	if strings.TrimSpace(cred.TokenType) != "" {
+		return strings.TrimSpace(strings.ToLower(cred.TokenType))
+	}
+	return ""
 }
 
 func readRequestBodyHash(req *http.Request) (string, error) {

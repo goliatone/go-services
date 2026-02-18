@@ -208,6 +208,114 @@ func TestMTLSSigner_NoOp(t *testing.T) {
 	}
 }
 
+func TestAWSSigV4Signer_HeaderMode(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://sellingpartnerapi-na.amazon.com/orders/v0/orders?MarketplaceIds=ATVPDKIKX0DER", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	signer := AWSSigV4Signer{
+		Now: func() time.Time {
+			return time.Date(2026, 2, 18, 15, 30, 0, 0, time.UTC)
+		},
+	}
+	cred := ActiveCredential{
+		AccessToken: "lwa-token",
+		Metadata: map[string]any{
+			"auth_kind":               AuthKindAWSSigV4,
+			"aws_access_key_id":       "AKIAEXAMPLE",
+			"aws_secret_access_key":   "secret_value",
+			"aws_session_token":       "session_token",
+			"aws_region":              "us-east-1",
+			"aws_service":             "execute-api",
+			"aws_signing_mode":        "header",
+			"aws_access_token_header": "x-amz-access-token",
+		},
+	}
+
+	if err := signer.Sign(context.Background(), req, cred); err != nil {
+		t.Fatalf("sigv4 sign: %v", err)
+	}
+	authHeader := req.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+		t.Fatalf("expected sigv4 authorization header, got %q", authHeader)
+	}
+	if got := req.Header.Get("X-Amz-Date"); got == "" {
+		t.Fatalf("expected x-amz-date header")
+	}
+	if got := req.Header.Get("X-Amz-Content-Sha256"); got == "" {
+		t.Fatalf("expected x-amz-content-sha256 header")
+	}
+	if got := req.Header.Get("X-Amz-Access-Token"); got != "lwa-token" {
+		t.Fatalf("expected LWA access token header, got %q", got)
+	}
+}
+
+func TestAWSSigV4Signer_QueryMode(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://sellingpartnerapi-na.amazon.com/orders/v0/orders", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	signer := AWSSigV4Signer{
+		Now: func() time.Time {
+			return time.Date(2026, 2, 18, 15, 45, 0, 0, time.UTC)
+		},
+	}
+	cred := ActiveCredential{
+		Metadata: map[string]any{
+			"auth_kind":             AuthKindAWSSigV4,
+			"aws_access_key_id":     "AKIAEXAMPLE",
+			"aws_secret_access_key": "secret_value",
+			"aws_region":            "us-west-2",
+			"aws_service":           "execute-api",
+			"aws_signing_mode":      "query",
+			"aws_signing_expires":   "120",
+		},
+	}
+	if err := signer.Sign(context.Background(), req, cred); err != nil {
+		t.Fatalf("sigv4 query sign: %v", err)
+	}
+	query := req.URL.Query()
+	if query.Get("X-Amz-Signature") == "" {
+		t.Fatalf("expected query signature")
+	}
+	if query.Get("X-Amz-Credential") == "" {
+		t.Fatalf("expected query credential")
+	}
+}
+
+func TestSignRequest_ResolvesAuthKindSpecificSigner(t *testing.T) {
+	ctx := context.Background()
+	registry := NewProviderRegistry()
+	if err := registry.Register(testProvider{id: "amazon"}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	svc, err := NewService(Config{}, WithRegistry(registry))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://sellingpartnerapi-na.amazon.com/orders/v0/orders", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	cred := &ActiveCredential{
+		Metadata: map[string]any{
+			"auth_kind":             AuthKindAWSSigV4,
+			"aws_access_key_id":     "AKIAEXAMPLE",
+			"aws_secret_access_key": "secret_value",
+			"aws_region":            "us-east-1",
+			"aws_service":           "execute-api",
+			"aws_signing_mode":      "header",
+		},
+	}
+	if err := svc.SignRequest(ctx, "amazon", "", req, cred); err != nil {
+		t.Fatalf("sign request: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); !strings.HasPrefix(got, "AWS4-HMAC-SHA256 ") {
+		t.Fatalf("expected auth-kind signer selection, got %q", got)
+	}
+}
+
 type providerWithSigner struct {
 	testProvider
 	signer Signer
