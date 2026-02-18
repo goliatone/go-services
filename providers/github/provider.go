@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/goliatone/go-services/core"
+	"github.com/goliatone/go-services/identity"
 	"github.com/goliatone/go-services/providers"
 )
 
@@ -49,6 +50,7 @@ func New(cfg Config) (core.Provider, error) {
 		ClientID:            cfg.ClientID,
 		ClientSecret:        cfg.ClientSecret,
 		DefaultScopes:       cfg.DefaultScopes,
+		ProfileResolver:     identity.DefaultResolver(),
 		SupportedScopeTypes: cfg.SupportedScopeTypes,
 		TokenTTL:            cfg.TokenTTL,
 		Capabilities: []core.CapabilityDescriptor{
