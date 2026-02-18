@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/goliatone/go-services/core"
+	"github.com/goliatone/go-services/identity"
 )
 
 const (
@@ -39,6 +40,7 @@ type OAuth2Config struct {
 	Capabilities        []core.CapabilityDescriptor
 	TokenTTL            time.Duration
 	TokenRequestTimeout time.Duration
+	ProfileResolver     identity.ProfileResolver
 	Now                 func() time.Time
 	HTTPClient          HTTPDoer
 }
@@ -52,6 +54,7 @@ type tokenEndpointPayload struct {
 	AccessToken      string
 	TokenType        string
 	RefreshToken     string
+	IDToken          string
 	Scope            string
 	ExpiresIn        int64
 	ErrorCode        string
@@ -216,15 +219,17 @@ func (p *OAuth2Provider) CompleteAuth(ctx context.Context, req core.CompleteAuth
 		granted = append([]string(nil), requested...)
 	}
 
-	externalAccountID := strings.TrimSpace(readString(req.Metadata, "external_account_id"))
-	if externalAccountID == "" {
-		externalAccountID = fmt.Sprintf("%s:%s:%s", p.cfg.ID, req.Scope.Type, req.Scope.ID)
-	}
-
 	now := p.cfg.Now().UTC()
 	expiresAt := p.resolveExpiresAt(now, token.ExpiresIn)
 	refreshToken := strings.TrimSpace(token.RefreshToken)
 	tokenType := normalizeTokenType(token.TokenType)
+	credentialMetadata := map[string]any{
+		"provider_id": p.cfg.ID,
+		"token_url":   p.cfg.TokenURL,
+	}
+	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+		credentialMetadata["id_token"] = idToken
+	}
 	credential := core.ActiveCredential{
 		TokenType:       tokenType,
 		AccessToken:     strings.TrimSpace(token.AccessToken),
@@ -233,10 +238,42 @@ func (p *OAuth2Provider) CompleteAuth(ctx context.Context, req core.CompleteAuth
 		GrantedScopes:   append([]string(nil), granted...),
 		ExpiresAt:       expiresAt,
 		Refreshable:     refreshToken != "",
-		Metadata: map[string]any{
-			"provider_id": p.cfg.ID,
-			"token_url":   p.cfg.TokenURL,
-		},
+		Metadata:        credentialMetadata,
+	}
+	externalAccountID := strings.TrimSpace(readString(req.Metadata, "external_account_id"))
+	profileMetadata := map[string]any{}
+	if externalAccountID == "" && p.cfg.ProfileResolver != nil {
+		resolverMetadata := cloneMetadata(req.Metadata)
+		if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+			resolverMetadata["id_token"] = idToken
+		}
+		profile, resolveErr := p.cfg.ProfileResolver.Resolve(ctx, p.cfg.ID, credential, resolverMetadata)
+		if resolveErr == nil {
+			externalAccountID = strings.TrimSpace(profile.ExternalAccountID())
+			if externalAccountID == "" {
+				externalAccountID = strings.TrimSpace(profile.Subject)
+			}
+			profileMetadata = profile.Map()
+			if len(profileMetadata) > 0 {
+				credential.Metadata["identity_profile"] = cloneMetadata(profileMetadata)
+			}
+		}
+	}
+	if externalAccountID == "" {
+		return core.CompleteAuthResponse{}, fmt.Errorf(
+			"providers: external account id is required in metadata for provider %q",
+			p.cfg.ID,
+		)
+	}
+	responseMetadata := map[string]any{
+		"provider_id": p.cfg.ID,
+		"token_url":   p.cfg.TokenURL,
+	}
+	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+		responseMetadata["id_token"] = idToken
+	}
+	if len(profileMetadata) > 0 {
+		responseMetadata["identity_profile"] = cloneMetadata(profileMetadata)
 	}
 
 	return core.CompleteAuthResponse{
@@ -244,10 +281,7 @@ func (p *OAuth2Provider) CompleteAuth(ctx context.Context, req core.CompleteAuth
 		Credential:        credential,
 		RequestedGrants:   append([]string(nil), requested...),
 		GrantedGrants:     append([]string(nil), granted...),
-		Metadata: map[string]any{
-			"provider_id": p.cfg.ID,
-			"token_url":   p.cfg.TokenURL,
-		},
+		Metadata:          responseMetadata,
 	}, nil
 }
 
@@ -300,14 +334,21 @@ func (p *OAuth2Provider) Refresh(ctx context.Context, cred core.ActiveCredential
 	refreshed.Metadata = cloneMetadata(refreshed.Metadata)
 	refreshed.Metadata["provider_id"] = p.cfg.ID
 	refreshed.Metadata["token_url"] = p.cfg.TokenURL
+	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+		refreshed.Metadata["id_token"] = idToken
+	}
+	resultMetadata := map[string]any{
+		"provider_id": p.cfg.ID,
+		"token_url":   p.cfg.TokenURL,
+	}
+	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+		resultMetadata["id_token"] = idToken
+	}
 
 	return core.RefreshResult{
 		Credential:    refreshed,
 		GrantedGrants: append([]string(nil), granted...),
-		Metadata: map[string]any{
-			"provider_id": p.cfg.ID,
-			"token_url":   p.cfg.TokenURL,
-		},
+		Metadata:      resultMetadata,
 	}, nil
 }
 
@@ -439,6 +480,7 @@ func parseTokenPayloadJSON(body []byte) (tokenEndpointPayload, error) {
 		AccessToken:      readAnyString(decoded["access_token"]),
 		TokenType:        readAnyString(decoded["token_type"]),
 		RefreshToken:     readAnyString(decoded["refresh_token"]),
+		IDToken:          readAnyString(decoded["id_token"]),
 		Scope:            readAnyString(decoded["scope"]),
 		ExpiresIn:        readAnyInt64(decoded["expires_in"]),
 		ErrorCode:        readAnyString(decoded["error"]),
@@ -459,6 +501,7 @@ func parseTokenPayloadForm(body []byte) (tokenEndpointPayload, error) {
 		AccessToken:      strings.TrimSpace(values.Get("access_token")),
 		TokenType:        strings.TrimSpace(values.Get("token_type")),
 		RefreshToken:     strings.TrimSpace(values.Get("refresh_token")),
+		IDToken:          strings.TrimSpace(values.Get("id_token")),
 		Scope:            strings.TrimSpace(values.Get("scope")),
 		ExpiresIn:        expiresIn,
 		ErrorCode:        strings.TrimSpace(values.Get("error")),

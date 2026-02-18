@@ -4,7 +4,9 @@ import (
 	"time"
 
 	"github.com/goliatone/go-services/core"
+	"github.com/goliatone/go-services/identity"
 	"github.com/goliatone/go-services/providers"
+	"github.com/goliatone/go-services/providers/google/common"
 )
 
 const (
@@ -14,13 +16,14 @@ const (
 )
 
 type Config struct {
-	ClientID            string
-	ClientSecret        string
-	AuthURL             string
-	TokenURL            string
-	DefaultScopes       []string
-	SupportedScopeTypes []string
-	TokenTTL            time.Duration
+	ClientID              string
+	ClientSecret          string
+	AuthURL               string
+	TokenURL              string
+	DefaultScopes         []string
+	DisableIdentityScopes bool
+	SupportedScopeTypes   []string
+	TokenTTL              time.Duration
 }
 
 func DefaultConfig() Config {
@@ -45,6 +48,7 @@ func New(cfg Config) (core.Provider, error) {
 	if len(cfg.DefaultScopes) == 0 {
 		cfg.DefaultScopes = defaults.DefaultScopes
 	}
+	cfg.DefaultScopes = common.WithIdentityScopes(cfg.DefaultScopes, !cfg.DisableIdentityScopes)
 	return providers.NewOAuth2Provider(providers.OAuth2Config{
 		ID:                  ProviderID,
 		AuthURL:             cfg.AuthURL,
@@ -52,6 +56,7 @@ func New(cfg Config) (core.Provider, error) {
 		ClientID:            cfg.ClientID,
 		ClientSecret:        cfg.ClientSecret,
 		DefaultScopes:       cfg.DefaultScopes,
+		ProfileResolver:     identity.DefaultResolver(),
 		SupportedScopeTypes: cfg.SupportedScopeTypes,
 		TokenTTL:            cfg.TokenTTL,
 		Capabilities: []core.CapabilityDescriptor{
