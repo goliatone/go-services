@@ -82,6 +82,13 @@ type ProfileResolver interface {
 
 type ProfileNormalizer func(providerID string, issuer string, payload map[string]any) UserProfile
 
+type IDTokenVerifier func(
+	ctx context.Context,
+	providerID string,
+	idToken string,
+	metadata map[string]any,
+) (map[string]any, error)
+
 type ProviderUserInfoConfig struct {
 	URL        string
 	Issuer     string
@@ -91,12 +98,14 @@ type ProviderUserInfoConfig struct {
 type Config struct {
 	HTTPClient       HTTPDoer
 	RequestTimeout   time.Duration
+	IDTokenVerifier  IDTokenVerifier
 	ProviderUserInfo map[string]ProviderUserInfoConfig
 }
 
 type Resolver struct {
 	httpClient       HTTPDoer
 	requestTimeout   time.Duration
+	idTokenVerifier  IDTokenVerifier
 	providerUserInfo map[string]ProviderUserInfoConfig
 }
 
@@ -126,6 +135,7 @@ func NewResolver(cfg Config) *Resolver {
 	return &Resolver{
 		httpClient:       httpClient,
 		requestTimeout:   requestTimeout,
+		idTokenVerifier:  cfg.IDTokenVerifier,
 		providerUserInfo: providerUserInfo,
 	}
 }
@@ -145,7 +155,7 @@ func (r *Resolver) Resolve(ctx context.Context, providerID string, cred core.Act
 	normalizedProviderID := normalizeProviderID(providerID)
 	mergedMetadata := mergeMetadata(cred.Metadata, metadata)
 
-	profile, tokenErr := profileFromIDToken(normalizedProviderID, mergedMetadata)
+	profile, tokenErr := r.profileFromIDToken(ctx, normalizedProviderID, mergedMetadata)
 	if tokenErr == nil && strings.TrimSpace(profile.Subject) != "" {
 		return profile, nil
 	}
@@ -251,12 +261,12 @@ func (r *Resolver) fetchUserInfo(ctx context.Context, endpoint string, accessTok
 	return payload, nil
 }
 
-func profileFromIDToken(providerID string, metadata map[string]any) (UserProfile, error) {
+func (r *Resolver) profileFromIDToken(ctx context.Context, providerID string, metadata map[string]any) (UserProfile, error) {
 	idToken := strings.TrimSpace(readString(metadata["id_token"]))
 	if idToken == "" {
 		return UserProfile{}, fmt.Errorf("identity: id_token is required")
 	}
-	payload, err := decodeJWTPayload(idToken)
+	payload, err := r.decodeVerifiedOrRawIDToken(ctx, providerID, idToken, metadata)
 	if err != nil {
 		return UserProfile{}, err
 	}
@@ -269,6 +279,22 @@ func profileFromIDToken(providerID string, metadata map[string]any) (UserProfile
 		return UserProfile{}, fmt.Errorf("identity: id_token is missing subject")
 	}
 	return profile, nil
+}
+
+func (r *Resolver) decodeVerifiedOrRawIDToken(
+	ctx context.Context,
+	providerID string,
+	idToken string,
+	metadata map[string]any,
+) (map[string]any, error) {
+	if r != nil && r.idTokenVerifier != nil {
+		claims, err := r.idTokenVerifier(ctx, providerID, idToken, copyMap(metadata))
+		if err != nil {
+			return nil, fmt.Errorf("identity: verify id_token: %w", err)
+		}
+		return copyMap(claims), nil
+	}
+	return decodeJWTPayload(idToken)
 }
 
 func decodeJWTPayload(token string) (map[string]any, error) {
