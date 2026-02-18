@@ -91,6 +91,30 @@ func TestStrategyConformanceByMode(t *testing.T) {
 			},
 		},
 		{
+			name:         "oauth2_sigv4",
+			expectedType: core.AuthKindAWSSigV4,
+			strategy: NewOAuth2SigV4Strategy(OAuth2SigV4StrategyConfig{
+				OAuth2: OAuth2ClientCredentialsStrategyConfig{
+					ClientID:     "client_sigv4",
+					ClientSecret: "secret_sigv4",
+					TokenURL:     tokenServer.URL,
+					Now: func() time.Time {
+						return now
+					},
+				},
+				Profile: AWSSigV4SigningProfile{
+					AccessKeyID:       "AKIA_TEST",
+					SecretAccessKey:   "secret_key",
+					Region:            "us-east-1",
+					Service:           "execute-api",
+					AccessTokenHeader: "x-amz-access-token",
+				},
+			}),
+			completeReq: core.AuthCompleteRequest{
+				Scope: core.ScopeRef{Type: "org", ID: "o5"},
+			},
+		},
+		{
 			name:         "basic",
 			expectedType: core.AuthKindBasic,
 			strategy: NewBasicStrategy(BasicStrategyConfig{
