@@ -511,6 +511,7 @@ const (
 	AuthKindHMAC                   = "hmac"
 	AuthKindMTLS                   = "mtls"
 	AuthKindBasic                  = "basic"
+	AuthKindAWSSigV4               = "aws_sigv4"
 )
 
 type AuthStrategyProvider interface {
