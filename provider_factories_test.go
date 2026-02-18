@@ -13,8 +13,10 @@ import (
 	"github.com/goliatone/go-services/providers/meta/facebook"
 	"github.com/goliatone/go-services/providers/meta/instagram"
 	"github.com/goliatone/go-services/providers/pinterest"
+	"github.com/goliatone/go-services/providers/salesforce"
 	"github.com/goliatone/go-services/providers/shopify"
 	"github.com/goliatone/go-services/providers/tiktok"
+	"github.com/goliatone/go-services/providers/workday"
 )
 
 func TestBuiltInProviderFactories(t *testing.T) {
@@ -161,6 +163,36 @@ func TestBuiltInProviderFactories(t *testing.T) {
 						Region:          "us-east-1",
 						Service:         "execute-api",
 					},
+				})
+				if err != nil {
+					return "", err
+				}
+				return provider.ID(), nil
+			},
+		},
+		{
+			name: "salesforce",
+			id:   salesforce.ProviderID,
+			fn: func() (string, error) {
+				provider, err := SalesforceProvider(salesforce.Config{
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TokenURL:     "https://auth.example/token",
+				})
+				if err != nil {
+					return "", err
+				}
+				return provider.ID(), nil
+			},
+		},
+		{
+			name: "workday",
+			id:   workday.ProviderID,
+			fn: func() (string, error) {
+				provider, err := WorkdayProvider(workday.Config{
+					Issuer:     "svc-account@example.iam.gserviceaccount.com",
+					Audience:   "https://api.workday.test/token",
+					SigningKey: "secret-signing-key",
 				})
 				if err != nil {
 					return "", err

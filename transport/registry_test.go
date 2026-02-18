@@ -71,19 +71,62 @@ func TestRegistry_RegisterFactoryBuildsCustomAdapter(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistry_BuildsNoopExtendedKinds(t *testing.T) {
+func TestDefaultRegistry_BuildsExtendedProtocolAdapters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Method", r.Method)
+		w.Header().Set("X-Content-Type", r.Header.Get("Content-Type"))
+		w.Header().Set("X-Accept", r.Header.Get("Accept"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
 	registry := NewDefaultRegistry()
-	for _, kind := range []string{KindSOAP, KindBulk, KindStream, KindFile} {
-		adapter, err := registry.Build(kind, map[string]any{"reason": "hook not configured"})
-		if err != nil {
-			t.Fatalf("build %s adapter: %v", kind, err)
-		}
-		if adapter.Kind() != kind {
-			t.Fatalf("expected adapter kind %q, got %q", kind, adapter.Kind())
-		}
-		if _, err := adapter.Do(context.Background(), core.TransportRequest{}); err == nil {
-			t.Fatalf("expected noop adapter error for kind %s", kind)
-		}
+	cases := []struct {
+		kind           string
+		expectedMethod string
+		expectedHeader string
+	}{
+		{kind: KindSOAP, expectedMethod: http.MethodPost, expectedHeader: "text/xml"},
+		{kind: KindBulk, expectedMethod: http.MethodPost, expectedHeader: "application/json"},
+		{kind: KindStream, expectedMethod: http.MethodGet, expectedHeader: "text/event-stream"},
+		{kind: KindFile, expectedMethod: http.MethodPost, expectedHeader: "application/octet-stream"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			adapter, err := registry.Build(tc.kind, nil)
+			if err != nil {
+				t.Fatalf("build %s adapter: %v", tc.kind, err)
+			}
+			if adapter.Kind() != tc.kind {
+				t.Fatalf("expected adapter kind %q, got %q", tc.kind, adapter.Kind())
+			}
+			response, err := adapter.Do(context.Background(), core.TransportRequest{URL: server.URL})
+			if err != nil {
+				t.Fatalf("perform %s request: %v", tc.kind, err)
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", response.StatusCode)
+			}
+			if got := fmt.Sprint(response.Metadata["kind"]); got != tc.kind {
+				t.Fatalf("expected response metadata kind %q, got %q", tc.kind, got)
+			}
+			if !strings.Contains(strings.ToLower(response.Headers["X-Method"]), strings.ToLower(tc.expectedMethod)) {
+				t.Fatalf("expected method %q, got %q", tc.expectedMethod, response.Headers["X-Method"])
+			}
+			if tc.expectedHeader != "" {
+				contentType := strings.ToLower(response.Headers["X-Content-Type"])
+				accept := strings.ToLower(response.Headers["X-Accept"])
+				if !strings.Contains(contentType, tc.expectedHeader) && !strings.Contains(accept, tc.expectedHeader) {
+					t.Fatalf(
+						"expected request headers to include %q, got content-type=%q accept=%q",
+						tc.expectedHeader,
+						response.Headers["X-Content-Type"],
+						response.Headers["X-Accept"],
+					)
+				}
+			}
+		})
 	}
 }
 
