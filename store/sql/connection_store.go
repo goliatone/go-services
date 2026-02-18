@@ -87,6 +87,47 @@ func (s *ConnectionStore) FindByScope(ctx context.Context, providerID string, sc
 	return out, nil
 }
 
+func (s *ConnectionStore) FindByScopeAndExternalAccount(
+	ctx context.Context,
+	providerID string,
+	scope core.ScopeRef,
+	externalAccountID string,
+) (core.Connection, bool, error) {
+	if s == nil || s.repo == nil {
+		return core.Connection{}, false, fmt.Errorf("sqlstore: connection store is not configured")
+	}
+	if err := scope.Validate(); err != nil {
+		return core.Connection{}, false, err
+	}
+	trimmedProviderID := strings.TrimSpace(providerID)
+	if trimmedProviderID == "" {
+		return core.Connection{}, false, fmt.Errorf("sqlstore: provider id is required")
+	}
+	trimmedExternalAccountID := strings.TrimSpace(externalAccountID)
+	if trimmedExternalAccountID == "" {
+		return core.Connection{}, false, fmt.Errorf("sqlstore: external account id is required")
+	}
+
+	records, _, err := s.repo.List(ctx,
+		repository.SelectBy("provider_id", "=", trimmedProviderID),
+		repository.SelectBy("scope_type", "=", strings.TrimSpace(scope.Type)),
+		repository.SelectBy("scope_id", "=", strings.TrimSpace(scope.ID)),
+		repository.SelectBy("external_account_id", "=", trimmedExternalAccountID),
+		repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Where("?TableAlias.deleted_at IS NULL")
+		}),
+		repository.OrderBy("created_at ASC"),
+		repository.OrderBy("id ASC"),
+	)
+	if err != nil {
+		return core.Connection{}, false, err
+	}
+	if len(records) == 0 {
+		return core.Connection{}, false, nil
+	}
+	return records[0].toDomain(), true, nil
+}
+
 func (s *ConnectionStore) UpdateStatus(ctx context.Context, id string, status string, reason string) error {
 	if s == nil || s.repo == nil {
 		return fmt.Errorf("sqlstore: connection store is not configured")
