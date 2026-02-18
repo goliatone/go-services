@@ -45,6 +45,7 @@ type Service struct {
 	grantStore              GrantStore
 	permissionEvaluator     PermissionEvaluator
 	credentialCodec         CredentialCodec
+	callbackURLResolver     CallbackURLResolver
 	strictPolicy            InheritancePolicy
 	inheritancePolicy       InheritancePolicy
 }
@@ -75,6 +76,7 @@ type ServiceDependencies struct {
 	GrantStore          GrantStore
 	PermissionEvaluator PermissionEvaluator
 	CredentialCodec     CredentialCodec
+	CallbackURLResolver CallbackURLResolver
 	InheritancePolicy   InheritancePolicy
 }
 
@@ -226,6 +228,7 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		grantStore:              builder.grantStore,
 		permissionEvaluator:     builder.permissionEvaluator,
 		credentialCodec:         builder.credentialCodec,
+		callbackURLResolver:     builder.callbackURLResolver,
 		strictPolicy:            strict,
 		inheritancePolicy:       inheritancePolicy,
 	}, nil
@@ -286,8 +289,20 @@ func (s *Service) Dependencies() ServiceDependencies {
 		GrantStore:          s.grantStore,
 		PermissionEvaluator: s.permissionEvaluator,
 		CredentialCodec:     s.credentialCodec,
+		CallbackURLResolver: s.callbackURLResolver,
 		InheritancePolicy:   s.inheritancePolicy,
 	}
+}
+
+func (s *Service) resolveCallbackURL(ctx context.Context, req CallbackURLResolveRequest) (string, error) {
+	if s == nil || s.callbackURLResolver == nil {
+		return "", nil
+	}
+	resolved, err := s.callbackURLResolver.ResolveCallbackURL(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resolved), nil
 }
 
 func (s *Service) Connect(ctx context.Context, req ConnectRequest) (response BeginAuthResponse, err error) {
@@ -304,6 +319,21 @@ func (s *Service) Connect(ctx context.Context, req ConnectRequest) (response Beg
 	if err = req.Scope.Validate(); err != nil {
 		err = s.mapError(err)
 		return BeginAuthResponse{}, err
+	}
+	req.RedirectURI = strings.TrimSpace(req.RedirectURI)
+	if req.RedirectURI == "" {
+		resolved, resolveErr := s.resolveCallbackURL(ctx, CallbackURLResolveRequest{
+			ProviderID:      req.ProviderID,
+			Scope:           req.Scope,
+			Flow:            CallbackURLResolveFlowConnect,
+			RequestedGrants: append([]string(nil), req.RequestedGrants...),
+			Metadata:        copyAnyMap(req.Metadata),
+		})
+		if resolveErr != nil {
+			err = s.mapError(resolveErr)
+			return BeginAuthResponse{}, err
+		}
+		req.RedirectURI = resolved
 	}
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
@@ -408,14 +438,32 @@ func (s *Service) StartReconsent(ctx context.Context, req ReconsentRequest) (Beg
 			Metadata:     copyAnyMap(req.Metadata),
 		})
 	}
+	metadata := copyAnyMap(req.Metadata)
+	metadata["connection_id"] = connectionID
+
+	redirectURI := strings.TrimSpace(req.RedirectURI)
+	if redirectURI == "" {
+		resolved, resolveErr := s.resolveCallbackURL(ctx, CallbackURLResolveRequest{
+			ProviderID:      connection.ProviderID,
+			Scope:           ScopeRef{Type: connection.ScopeType, ID: connection.ScopeID},
+			ConnectionID:    connectionID,
+			Flow:            CallbackURLResolveFlowReconsent,
+			RequestedGrants: append([]string(nil), requested...),
+			Metadata:        copyAnyMap(metadata),
+		})
+		if resolveErr != nil {
+			return BeginAuthResponse{}, s.mapError(resolveErr)
+		}
+		redirectURI = resolved
+	}
 
 	return s.Connect(ctx, ConnectRequest{
 		ProviderID:      connection.ProviderID,
 		Scope:           ScopeRef{Type: connection.ScopeType, ID: connection.ScopeID},
-		RedirectURI:     req.RedirectURI,
+		RedirectURI:     redirectURI,
 		State:           req.State,
 		RequestedGrants: requested,
-		Metadata:        copyAnyMap(req.Metadata),
+		Metadata:        metadata,
 	})
 }
 
@@ -470,18 +518,34 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		err = s.mapError(err)
 		return CallbackCompletion{}, err
 	}
-	externalAccountID := resolveExternalAccountID(req.ProviderID, req.Scope, result.ExternalAccountID)
+	providerID := strings.TrimSpace(provider.ID())
+	scope := ScopeRef{
+		Type: strings.TrimSpace(strings.ToLower(req.Scope.Type)),
+		ID:   strings.TrimSpace(req.Scope.ID),
+	}
+	externalAccountID := strings.TrimSpace(result.ExternalAccountID)
+	if externalAccountID == "" {
+		err = s.mapError(fmt.Errorf("core: external account id is required"))
+		return CallbackCompletion{}, err
+	}
 
 	connection := Connection{
-		ProviderID:        req.ProviderID,
-		ScopeType:         req.Scope.Type,
-		ScopeID:           req.Scope.ID,
+		ProviderID:        providerID,
+		ScopeType:         scope.Type,
+		ScopeID:           scope.ID,
 		ExternalAccountID: externalAccountID,
 		Status:            ConnectionStatusActive,
 	}
 	wasNeedsReconsent := false
 	if s.connectionStore != nil {
-		existing, found, findErr := s.findScopedConnection(ctx, req.ProviderID, req.Scope)
+		targetConnectionID := readStringMetadata(req.Metadata, "connection_id")
+		existing, found, findErr := s.findCallbackConnection(
+			ctx,
+			providerID,
+			scope,
+			externalAccountID,
+			targetConnectionID,
+		)
 		if findErr != nil {
 			err = s.mapError(findErr)
 			return CallbackCompletion{}, err
@@ -502,8 +566,8 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 			connection.LastError = ""
 		} else {
 			connection, err = s.connectionStore.Create(ctx, CreateConnectionInput{
-				ProviderID:        req.ProviderID,
-				Scope:             req.Scope,
+				ProviderID:        providerID,
+				Scope:             scope,
 				ExternalAccountID: externalAccountID,
 				Status:            ConnectionStatusActive,
 			})
@@ -910,12 +974,48 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 		return CapabilityResult{}, err
 	}
 
-	resolution, err := s.resolveConnection(ctx, req.ProviderID, req.Scope)
-	if err != nil {
-		err = s.mapError(err)
-		return CapabilityResult{}, err
+	resolution := ConnectionResolution{}
+	requestedConnectionID := strings.TrimSpace(req.ConnectionID)
+	if requestedConnectionID != "" {
+		if s.connectionStore == nil {
+			err = s.mapError(fmt.Errorf("core: connection store unavailable"))
+			return CapabilityResult{}, err
+		}
+		connection, loadErr := s.connectionStore.Get(ctx, requestedConnectionID)
+		if loadErr != nil {
+			err = s.mapError(loadErr)
+			return CapabilityResult{}, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(connection.ProviderID), strings.TrimSpace(req.ProviderID)) {
+			err = s.mapError(fmt.Errorf("core: provider mismatch for connection %q", requestedConnectionID))
+			return CapabilityResult{}, err
+		}
+		if strings.TrimSpace(req.Scope.Type) != "" || strings.TrimSpace(req.Scope.ID) != "" {
+			if !strings.EqualFold(strings.TrimSpace(connection.ScopeType), strings.TrimSpace(req.Scope.Type)) ||
+				strings.TrimSpace(connection.ScopeID) != strings.TrimSpace(req.Scope.ID) {
+				err = s.mapError(fmt.Errorf("core: scope mismatch for connection %q", requestedConnectionID))
+				return CapabilityResult{}, err
+			}
+		}
+		if connection.Status != ConnectionStatusActive {
+			resolution = ConnectionResolution{
+				Outcome: ConnectionResolutionNotFound,
+				Reason:  "connection is not active",
+			}
+		} else {
+			resolution = ConnectionResolution{
+				Outcome:    ConnectionResolutionDirect,
+				Connection: connection,
+			}
+		}
+	} else {
+		resolution, err = s.resolveConnection(ctx, req.ProviderID, req.Scope)
+		if err != nil {
+			err = s.mapError(err)
+			return CapabilityResult{}, err
+		}
 	}
-	if resolution.Outcome == ConnectionResolutionNotFound {
+	if resolution.Outcome == ConnectionResolutionNotFound || resolution.Outcome == ConnectionResolutionAmbiguous {
 		result = CapabilityResult{
 			Allowed: false,
 			Mode:    CapabilityDeniedBehaviorBlock,
@@ -967,29 +1067,33 @@ func (s *Service) resolveConnection(ctx context.Context, providerID string, requ
 	return s.inheritancePolicy.ResolveConnection(ctx, providerID, requested)
 }
 
-func (s *Service) findScopedConnection(ctx context.Context, providerID string, scope ScopeRef) (Connection, bool, error) {
+func (s *Service) findCallbackConnection(
+	ctx context.Context,
+	providerID string,
+	scope ScopeRef,
+	externalAccountID string,
+	targetConnectionID string,
+) (Connection, bool, error) {
 	if s == nil || s.connectionStore == nil {
 		return Connection{}, false, nil
 	}
-	connections, err := s.connectionStore.FindByScope(ctx, providerID, scope)
-	if err != nil {
-		return Connection{}, false, err
-	}
-	if len(connections) == 0 {
-		return Connection{}, false, nil
-	}
-
-	for _, connection := range connections {
-		if connection.Status == ConnectionStatusNeedsReconsent {
-			return connection, true, nil
+	targetConnectionID = strings.TrimSpace(targetConnectionID)
+	if targetConnectionID != "" {
+		target, err := s.connectionStore.Get(ctx, targetConnectionID)
+		if err != nil {
+			return Connection{}, false, err
 		}
-	}
-	for _, connection := range connections {
-		if connection.Status == ConnectionStatusActive {
-			return connection, true, nil
+		if !strings.EqualFold(strings.TrimSpace(target.ProviderID), strings.TrimSpace(providerID)) ||
+			!strings.EqualFold(strings.TrimSpace(target.ScopeType), strings.TrimSpace(scope.Type)) ||
+			strings.TrimSpace(target.ScopeID) != strings.TrimSpace(scope.ID) {
+			return Connection{}, false, fmt.Errorf("core: callback target connection does not match provider/scope")
 		}
+		if strings.TrimSpace(target.ExternalAccountID) != strings.TrimSpace(externalAccountID) {
+			return Connection{}, false, fmt.Errorf("core: callback external account id does not match target connection")
+		}
+		return target, true, nil
 	}
-	return connections[0], true, nil
+	return s.connectionStore.FindByScopeAndExternalAccount(ctx, providerID, scope, externalAccountID)
 }
 
 func (s *Service) resolveProvider(providerID string) (Provider, error) {
@@ -1031,17 +1135,21 @@ func findCapabilityDescriptor(capabilities []CapabilityDescriptor, capability st
 	return CapabilityDescriptor{}, false
 }
 
-func resolveExternalAccountID(providerID string, scope ScopeRef, externalAccountID string) string {
-	resolved := strings.TrimSpace(externalAccountID)
-	if resolved != "" {
-		return resolved
+func readStringMetadata(metadata map[string]any, keys ...string) string {
+	if len(metadata) == 0 {
+		return ""
 	}
-	return fmt.Sprintf(
-		"%s:%s:%s",
-		strings.TrimSpace(providerID),
-		strings.TrimSpace(scope.Type),
-		strings.TrimSpace(scope.ID),
-	)
+	for _, key := range keys {
+		value, ok := metadata[key]
+		if !ok || value == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(fmt.Sprint(value))
+		if trimmed != "" && trimmed != "<nil>" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (s *Service) credentialToActive(ctx context.Context, credential Credential) (ActiveCredential, error) {
