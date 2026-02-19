@@ -157,6 +157,13 @@ func (f *RepositoryFactory) SyncJobStore() *SyncJobStore {
 	return f.syncJobStore
 }
 
+func (f *RepositoryFactory) SyncJobStoreCore() core.SyncJobStore {
+	if f == nil {
+		return nil
+	}
+	return f.syncJobStore
+}
+
 func (f *RepositoryFactory) OutboxStore() *OutboxStore {
 	if f == nil {
 		return nil

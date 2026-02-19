@@ -217,6 +217,22 @@ type syncJobRecord struct {
 	UpdatedAt     time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
 }
 
+type syncJobIdempotencyRecord struct {
+	bun.BaseModel `bun:"table:service_sync_job_idempotency,alias:ssji"`
+
+	ID             string    `bun:"id,pk"`
+	ScopeType      string    `bun:"scope_type,notnull"`
+	ScopeID        string    `bun:"scope_id,notnull"`
+	ProviderID     string    `bun:"provider_id,notnull"`
+	ConnectionID   string    `bun:"connection_id,notnull"`
+	Mode           string    `bun:"mode,notnull"`
+	IdempotencyKey string    `bun:"idempotency_key,notnull"`
+	SyncJobID      string    `bun:"sync_job_id,notnull"`
+	RequestedBy    string    `bun:"requested_by,notnull"`
+	CreatedAt      time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt      time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
 type lifecycleOutboxRecord struct {
 	bun.BaseModel `bun:"table:service_lifecycle_outbox,alias:slo"`
 
