@@ -1,76 +1,73 @@
 # Changelog
 
-## [Unreleased]
+# [0.2.0](https://github.com/goliatone/go-services/compare/v0.1.0...v0.2.0) - (2026-02-19)
 
-### API Notes
+## <!-- 1 -->🐛 Bug Fixes
 
-- Planning update: enabled `go-services (commerce/social provider expansion)` backend workstream (Phase 25 through Phase 29) as an active execution target in `SERVICES_TSK.md`.
-- Planning update: added Phase `25.0` pre-task for planned breaking-API alignment before provider-specific implementations.
-- Design update: documented explicit Phase 25 through Phase 29 breaking window in `SERVICES_TDD.md` for high-level execution contracts:
-  - canonical provider operation request/response envelope alignment
-  - standardized capability invocation and error mapping surfaces
-  - unified extension registration surfaces for provider packs and command/query bundles
-  - breaking changes remain allowed pre-`v1.0.0` when they improve API/DX
-- Policy update: clarified project-wide pre-`v1.0.0` DX-first API evolution rule in `SERVICES_TDD.md` and `SERVICES_TSK.md`:
-  - intentional breaking changes are allowed when they improve API clarity/correctness/DX
-  - no bridge code, legacy shims, compatibility flags, or dual-surface support
-  - every API break must be captured in `CHANGELOG.md` API notes and corresponding task completion notes with cutover actions
-- Added AWS SigV4 signing support in core:
-  - New `core.AuthKindAWSSigV4` auth kind constant.
-  - New `core.AWSSigV4Signer` with header/query signing modes, canonical request/signature generation, session token support, and optional unsigned payload mode.
-  - `Service.SignRequest` and provider-operation signing now resolve auth-kind-aware signers (`api_key`, `pat`, `hmac`, `basic`, `mtls`, `aws_sigv4`) when default bearer signer is active.
-- Added OAuth2+SigV4 strategy wiring:
-  - New `auth.OAuth2SigV4Strategy` that composes OAuth2 client-credentials token issuance with SigV4 signing profile metadata for runtime request mutation.
-- Added provider operation signing diagnostics metadata normalization:
-  - Runtime metadata now captures SigV4 signing diagnostics (`signing_profile`, `signing_mode`, `signed_host`, `signed_service`, `signed_region`, `signed_headers`) plus `clock_skew_hint_seconds` when detectable from response `Date` headers.
-- Added shared webhook verification/extraction templates:
-  - New reusable template constructors for Shopify, Meta, TikTok, Pinterest, Google, and Amazon webhook/notification surfaces.
-- Added `providers/devkit` conformance fixtures for:
-  - SigV4 signing behavior and replay-window validation.
-  - Multi-provider webhook template verification and delivery-id extraction patterns.
-- Added callback URL resolver hook in core:
-  - New types: `core.CallbackURLResolver`, `core.CallbackURLResolverFunc`, `core.CallbackURLResolveRequest`, `core.CallbackURLResolveFlow`.
-  - New option: `core.WithCallbackURLResolver(...)` (also re-exported from `services.WithCallbackURLResolver(...)`).
-- `core.ServiceDependencies` (and alias `services.ServiceDependencies`) now includes `CallbackURLResolver`.
-- `Service.Connect` and `Service.StartReconsent` now resolve callback URL via the configured resolver when `RedirectURI` is empty.
-- Breaking: `core.ConnectionStore` now requires `FindByScopeAndExternalAccount(...)`.
-- Breaking: `Service.CompleteCallback` now requires `CompleteAuthResponse.ExternalAccountID` to be non-empty.
-- Breaking: `providers.OAuth2Provider.CompleteAuth` no longer synthesizes fallback account ids; it now requires `req.Metadata["external_account_id"]`.
-- Behavior change: strict scope-based connection resolution is now fail-closed when multiple active connections exist for the same provider+scope (`ConnectionResolutionAmbiguous`).
-- Behavior change: `InvokeCapability` now honors explicit `InvokeCapabilityRequest.ConnectionID` and validates provider/scope consistency.
-- Breaking: facade activity query wiring no longer uses reflection fallback (`resolveActivityReader` / `safeReflectCall` were removed).
-  - `services.NewFacade(...)` now fails fast when `WithActivityReader(...)` is not provided.
-- Breaking: auth and lifecycle update contracts now use typed string aliases:
-  - `core.AuthKind` is now the canonical type for `Provider.AuthKind()`, `AuthStrategy.Type()`, and `ProviderOperationResult.AuthStrategy`.
-  - lifecycle update methods now require typed statuses (`ConnectionStatus`, `SubscriptionStatus`, `InstallationStatus`) instead of raw `string` parameters.
-- Breaking: external form-data scope enforcement contracts now require explicit provider/scope context for fail-closed access:
-  - `core.MappingSpecStore` scoped lookups/state transitions (`GetVersion`, `GetLatest`, `SetStatus`, `PublishVersion`) now require `providerID + scope`.
-  - `core.MappingSpecLifecycleService` read/state-transition methods (`MarkValidated`, `Publish`, `GetVersion`, `GetLatest`) now require `providerID + scope`.
-  - `core.SyncCheckpointStore` lookup methods (`GetByID`, `GetLatest`) now require `providerID + scope`.
-  - `core.SyncConflictStore` scoped methods (`Get`, `ListByBinding`, `Resolve`) now require `providerID + scope`.
-  - `core.ResolveSyncConflictRequest` now requires `ProviderID` and `Scope`.
+- Remove reflection ([865de34](https://github.com/goliatone/go-services/commit/865de3413b4dd280f86d337c373dfdf65cd682fc))  - (goliatone)
+- Trim space and trim status ([4dcf6a3](https://github.com/goliatone/go-services/commit/4dcf6a3affad57543c28861a644784963813bad6))  - (goliatone)
 
-### Migration / Fix
+## <!-- 13 -->📦 Bumps
 
-- If you construct `ServiceDependencies` using unkeyed composite literals, this can now fail to compile due to the new field.
-  - Fix: switch to keyed literals (recommended) or add the new `CallbackURLResolver` positional field.
-- If your connect/re-consent calls rely on empty `RedirectURI`, configure `WithCallbackURLResolver(...)` or continue passing explicit `RedirectURI` per request.
-- If you implement `core.ConnectionStore`, add `FindByScopeAndExternalAccount(ctx, providerID, scope, externalAccountID) (Connection, bool, error)`.
-- Ensure every auth strategy/provider sets a stable non-empty `ExternalAccountID` on `CompleteAuthResponse`.
-- For OAuth2 providers using the shared `providers.OAuth2Provider`, set `external_account_id` in callback metadata before `CompleteAuth` is called.
-- If you invoke capabilities by provider+scope only and a user can have multiple linked accounts, pass `InvokeCapabilityRequest.ConnectionID` to disambiguate account selection.
-- If you construct facades, always pass an explicit activity reader:
-  - `services.NewFacade(service, services.WithActivityReader(activityReader))`.
-- If you implement `core.Provider` or `core.AuthStrategy`, update signatures:
-  - `AuthKind() core.AuthKind` and `Type() core.AuthKind`.
-- If you implement status-update store/service interfaces, update method signatures to typed statuses:
-  - `ConnectionStore.UpdateStatus(..., core.ConnectionStatus, ...)`
-  - `SubscriptionStore.UpdateState(..., core.SubscriptionStatus, ...)`
-  - `InstallationStore.UpdateStatus(..., core.InstallationStatus, ...)`
-- If you implement external form-data stores/services, update signatures and callsites for scoped access:
-  - implement the new `providerID + scope` parameters on `MappingSpecStore`, `SyncCheckpointStore`, and `SyncConflictStore`.
-  - pass `providerID + scope` when calling mapping lifecycle methods (`MarkValidated`, `Publish`, `GetVersion`, `GetLatest`).
-  - populate `ResolveSyncConflictRequest.ProviderID` and `ResolveSyncConflictRequest.Scope`.
+- Bump version: v0.2.0 ([5ac0887](https://github.com/goliatone/go-services/commit/5ac088799215bb83160a7b932cf6b3a5534ec774))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Sync job query ([1af9bf7](https://github.com/goliatone/go-services/commit/1af9bf794dae5c30ad0730ef886f73fa70a8a47c))  - (goliatone)
+- Expose sync job in facade ([eef4b93](https://github.com/goliatone/go-services/commit/eef4b93ca70858d7fd8322c6299dd925307f0760))  - (goliatone)
+- Sync job store ([79a7b1c](https://github.com/goliatone/go-services/commit/79a7b1cfa86abb48bec7052405795bf132e7cae6))  - (goliatone)
+- Sync job errors ([982c7b0](https://github.com/goliatone/go-services/commit/982c7b03a0748238a9a01e727b8e3d0f7a1a3727))  - (goliatone)
+- Command create sync job ([339d30b](https://github.com/goliatone/go-services/commit/339d30b34bbcebb70e6974152021ab984619b8fa))  - (goliatone)
+- Service sync jobs ([f1e052a](https://github.com/goliatone/go-services/commit/f1e052ab212b52e2207ce23801a1ebf0049496a1))  - (goliatone)
+- Service sync job ([a40e5b9](https://github.com/goliatone/go-services/commit/a40e5b95c6b857880f3b93b577cca532d1d50cbf))  - (goliatone)
+- Udpate provider handlers ([ca6adf4](https://github.com/goliatone/go-services/commit/ca6adf4f29fbfadb602b8a5e2077b15089253c1c))  - (goliatone)
+- Use type instead of string for status ([541ba01](https://github.com/goliatone/go-services/commit/541ba01087d8255eec575b143d37915e6992eaaa))  - (goliatone)
+- Normalized auth strategy ([23443b8](https://github.com/goliatone/go-services/commit/23443b85b74e79f6f17ae2dc737ab5c618a78210))  - (goliatone)
+- New auth interface ([35d2dc2](https://github.com/goliatone/go-services/commit/35d2dc2b9d16856b94e401215e73a67fc9a79f04))  - (goliatone)
+- Identify binding reconciler ([410d9da](https://github.com/goliatone/go-services/commit/410d9dacede7ce4f276868904278495bbf112926))  - (goliatone)
+- Redaction handler ([e7dc9d3](https://github.com/goliatone/go-services/commit/e7dc9d358fbc0c2b2899da66a2803ef9ab2f7a90))  - (goliatone)
+- Sync data structure ([7a8af7a](https://github.com/goliatone/go-services/commit/7a8af7a4d6b0140ea3540070fba9f02b3b39c8c2))  - (goliatone)
+- Formdata integration ([1f6517b](https://github.com/goliatone/go-services/commit/1f6517b84f6b09d1ad9310c974d92377cfcebd03))  - (goliatone)
+- Mapping compiler and transforms ([faad65f](https://github.com/goliatone/go-services/commit/faad65f495f46020a30b171241d11aefb91b3463))  - (goliatone)
+- Store SQL management ([895fbd4](https://github.com/goliatone/go-services/commit/895fbd4c6dba4d26874b3ed0cb64b33f3ba4ab0f))  - (goliatone)
+- Migrations for form data foundation ([c72cda9](https://github.com/goliatone/go-services/commit/c72cda9bdd8631be2416c3c54b5d804d1b94a92e))  - (goliatone)
+- Capability operation runtime ([8a55702](https://github.com/goliatone/go-services/commit/8a557027437191de0f5374ac6766eeb3ceed93d4))  - (goliatone)
+- Integrations with saleforce and workday ([6a84b71](https://github.com/goliatone/go-services/commit/6a84b71c2a5a208d271392b53136ac268e342405))  - (goliatone)
+- Transport protocol adapters ([154e0e5](https://github.com/goliatone/go-services/commit/154e0e5d26c87eb103e3346c4260b60600046f60))  - (goliatone)
+- Protocol support in registry adapter ([afc73c3](https://github.com/goliatone/go-services/commit/afc73c3d24771b3cc3f75f11a3ae00cabf3fc6f1))  - (goliatone)
+- Support capabilities ([fe53ec3](https://github.com/goliatone/go-services/commit/fe53ec3992c16076b42a8c875f5c4a95c7f7229c))  - (goliatone)
+- Kms and secret vaults ([f398963](https://github.com/goliatone/go-services/commit/f398963282dc5eb866c1d60eedb27bccc121d1ec))  - (goliatone)
+- Provider factories ([023e4b3](https://github.com/goliatone/go-services/commit/023e4b3641db0923b70bbc79ab6ad575d1b74a3c))  - (goliatone)
+- Security envelope and rotation ([3849872](https://github.com/goliatone/go-services/commit/3849872368f2d51f750c2c6e87179c556fb95014))  - (goliatone)
+- Aws sigv4 ([5060cfa](https://github.com/goliatone/go-services/commit/5060cfa6fd09f54ffa4d5027f340e8aa1a8abcd6))  - (goliatone)
+- Webhooks support ([04b8977](https://github.com/goliatone/go-services/commit/04b897734114d654b4de306921992ba7f44a0178))  - (goliatone)
+- Sigv4 ([6189256](https://github.com/goliatone/go-services/commit/61892565c1f598e53647e035b6dbee08e7189377))  - (goliatone)
+- Provider google ([2915ffc](https://github.com/goliatone/go-services/commit/2915ffc7d7d3a42453a025ef44641c08e37862a0))  - (goliatone)
+- Pinterest provider ([99126a4](https://github.com/goliatone/go-services/commit/99126a4e040f67c5a1d9e9378b0c1d6ce2cd1fd3))  - (goliatone)
+- Shopify provider ([25b0c31](https://github.com/goliatone/go-services/commit/25b0c31afd53b7828665c4fffc4e2c0755c1e0a8))  - (goliatone)
+- Meta provider ([49645ac](https://github.com/goliatone/go-services/commit/49645acd6f94d6cd5d61c445fab580fa12e0559b))  - (goliatone)
+- Amazon provider ([fa7b53d](https://github.com/goliatone/go-services/commit/fa7b53df0ecb119165b7600bbe53c0cd52e287aa))  - (goliatone)
+- Find by scope and external account ([2f3a96c](https://github.com/goliatone/go-services/commit/2f3a96c2a8590047225bf7d0b0b246561b018e3c))  - (goliatone)
+- Callback URL resolver ([94ae728](https://github.com/goliatone/go-services/commit/94ae7284661f723f437d994bfb0a83ca44bef9bf))  - (goliatone)
+- Support multiple accounts per user ([60ed441](https://github.com/goliatone/go-services/commit/60ed441c48a1e48ae67e6d1b184154fc05ea36fa))  - (goliatone)
+- Profile resolver ([25aea65](https://github.com/goliatone/go-services/commit/25aea657adbd22517c225c51ea7f8dd1e56ecfac))  - (goliatone)
+- Resolve id from token ([58f83c4](https://github.com/goliatone/go-services/commit/58f83c4f6ea0811a239998f879bb39e3eac41eb8))  - (goliatone)
+- Common google provider utils ([d921c77](https://github.com/goliatone/go-services/commit/d921c77a5351bdd299e56e4944089f76853c43a0))  - (goliatone)
+- Identity helper ([ad9dac1](https://github.com/goliatone/go-services/commit/ad9dac11fe5ce8aa084753b8039387efe5b2fe0c))  - (goliatone)
+
+## <!-- 2 -->🚜 Refactor
+
+- Handler mutation service definition ([22add5c](https://github.com/goliatone/go-services/commit/22add5cd0c7461406c81c5ebffd5803414f5a04f))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.1.0 ([6e9bf84](https://github.com/goliatone/go-services/commit/6e9bf84f057eead56ccfe3c4efd474822050cfc8))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update test ([ede1704](https://github.com/goliatone/go-services/commit/ede1704a6283c62cde004d7cd2888b97e3c992c9))  - (goliatone)
+- Update docs ([2b806f0](https://github.com/goliatone/go-services/commit/2b806f0b10b38a35522374f227fa992b971f88fe))  - (goliatone)
+- Update changelog ([058f10f](https://github.com/goliatone/go-services/commit/058f10f7f20d1b1e2b0b191ed27b36428e37efdf))  - (goliatone)
 
 # [0.1.0](https://github.com/goliatone/go-services/tree/v0.1.0) - (2026-02-18)
 
@@ -167,3 +164,5 @@
 - Update docs ([4a6a3b2](https://github.com/goliatone/go-services/commit/4a6a3b258a73d56b14344d2208c8fcfaccd5bdc5))  - (goliatone)
 - Update tasks ([f392e29](https://github.com/goliatone/go-services/commit/f392e29375aff5028b765ee2e14edf40ce20d34a))  - (goliatone)
 - Initial commit ([654b36d](https://github.com/goliatone/go-services/commit/654b36d1f22be1ea4b973f9e2f55b0b63e77faa9))  - (goliatone)
+
+
