@@ -415,7 +415,7 @@ func (s *Service) StartReconsent(ctx context.Context, req ReconsentRequest) (Beg
 	if updateErr := s.connectionStore.UpdateStatus(
 		ctx,
 		connectionID,
-		string(ConnectionStatusNeedsReconsent),
+		ConnectionStatusNeedsReconsent,
 		"re-consent requested",
 	); updateErr != nil {
 		return BeginAuthResponse{}, s.mapError(updateErr)
@@ -556,7 +556,7 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 			if updateErr := s.connectionStore.UpdateStatus(
 				ctx,
 				connection.ID,
-				string(ConnectionStatusActive),
+				ConnectionStatusActive,
 				"",
 			); updateErr != nil {
 				err = s.mapError(updateErr)
@@ -880,7 +880,7 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 	}
 
 	if s.connectionStore != nil {
-		if updateErr := s.connectionStore.UpdateStatus(ctx, req.ConnectionID, string(ConnectionStatusActive), ""); updateErr != nil {
+		if updateErr := s.connectionStore.UpdateStatus(ctx, req.ConnectionID, ConnectionStatusActive, ""); updateErr != nil {
 			err = s.mapError(updateErr)
 			return RefreshResult{}, err
 		}
@@ -932,7 +932,7 @@ func (s *Service) Revoke(ctx context.Context, connectionID string, reason string
 		}
 	}
 	if s.connectionStore != nil {
-		if err = s.connectionStore.UpdateStatus(ctx, connectionID, string(ConnectionStatusDisconnected), reason); err != nil {
+		if err = s.connectionStore.UpdateStatus(ctx, connectionID, ConnectionStatusDisconnected, reason); err != nil {
 			err = s.mapError(err)
 			return err
 		}
