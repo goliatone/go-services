@@ -52,6 +52,7 @@ type serviceBuilder struct {
 	subscriptionStore   SubscriptionStore
 	syncCursorStore     SyncCursorStore
 	installationStore   InstallationStore
+	syncJobStore        SyncJobStore
 	grantStore          GrantStore
 	permissionEvaluator PermissionEvaluator
 	credentialCodec     CredentialCodec
@@ -195,6 +196,12 @@ func WithSyncCursorStore(store SyncCursorStore) Option {
 func WithInstallationStore(store InstallationStore) Option {
 	return func(b *serviceBuilder) {
 		b.installationStore = store
+	}
+}
+
+func WithSyncJobStore(store SyncJobStore) Option {
+	return func(b *serviceBuilder) {
+		b.syncJobStore = store
 	}
 }
 
