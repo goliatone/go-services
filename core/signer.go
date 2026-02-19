@@ -257,7 +257,7 @@ func (s *Service) SignRequest(
 }
 
 func resolveAuthKindSigner(cred ActiveCredential) Signer {
-	authKind := strings.TrimSpace(strings.ToLower(resolveCredentialAuthKind(cred)))
+	authKind := normalizeAuthKind(resolveCredentialAuthKind(cred))
 	switch authKind {
 	case AuthKindAPIKey:
 		return APIKeySigner{
@@ -290,12 +290,12 @@ func resolveAuthKindSigner(cred ActiveCredential) Signer {
 	}
 }
 
-func resolveCredentialAuthKind(cred ActiveCredential) string {
+func resolveCredentialAuthKind(cred ActiveCredential) AuthKind {
 	if raw := metadataString(cred.Metadata, "auth_kind"); raw != "" {
-		return raw
+		return AuthKind(strings.TrimSpace(strings.ToLower(raw)))
 	}
 	if strings.TrimSpace(cred.TokenType) != "" {
-		return strings.TrimSpace(strings.ToLower(cred.TokenType))
+		return AuthKind(strings.TrimSpace(strings.ToLower(cred.TokenType)))
 	}
 	return ""
 }
