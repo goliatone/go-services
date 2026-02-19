@@ -10,7 +10,11 @@
   - canonical provider operation request/response envelope alignment
   - standardized capability invocation and error mapping surfaces
   - unified extension registration surfaces for provider packs and command/query bundles
-  - freeze checkpoint after Phase 26; later phases should be additive by default
+  - breaking changes remain allowed pre-`v1.0.0` when they improve API/DX
+- Policy update: clarified project-wide pre-`v1.0.0` DX-first API evolution rule in `SERVICES_TDD.md` and `SERVICES_TSK.md`:
+  - intentional breaking changes are allowed when they improve API clarity/correctness/DX
+  - no bridge code, legacy shims, compatibility flags, or dual-surface support
+  - every API break must be captured in `CHANGELOG.md` API notes and corresponding task completion notes with cutover actions
 - Added AWS SigV4 signing support in core:
   - New `core.AuthKindAWSSigV4` auth kind constant.
   - New `core.AWSSigV4Signer` with header/query signing modes, canonical request/signature generation, session token support, and optional unsigned payload mode.
@@ -34,6 +38,17 @@
 - Breaking: `providers.OAuth2Provider.CompleteAuth` no longer synthesizes fallback account ids; it now requires `req.Metadata["external_account_id"]`.
 - Behavior change: strict scope-based connection resolution is now fail-closed when multiple active connections exist for the same provider+scope (`ConnectionResolutionAmbiguous`).
 - Behavior change: `InvokeCapability` now honors explicit `InvokeCapabilityRequest.ConnectionID` and validates provider/scope consistency.
+- Breaking: facade activity query wiring no longer uses reflection fallback (`resolveActivityReader` / `safeReflectCall` were removed).
+  - `services.NewFacade(...)` now fails fast when `WithActivityReader(...)` is not provided.
+- Breaking: auth and lifecycle update contracts now use typed string aliases:
+  - `core.AuthKind` is now the canonical type for `Provider.AuthKind()`, `AuthStrategy.Type()`, and `ProviderOperationResult.AuthStrategy`.
+  - lifecycle update methods now require typed statuses (`ConnectionStatus`, `SubscriptionStatus`, `InstallationStatus`) instead of raw `string` parameters.
+- Breaking: external form-data scope enforcement contracts now require explicit provider/scope context for fail-closed access:
+  - `core.MappingSpecStore` scoped lookups/state transitions (`GetVersion`, `GetLatest`, `SetStatus`, `PublishVersion`) now require `providerID + scope`.
+  - `core.MappingSpecLifecycleService` read/state-transition methods (`MarkValidated`, `Publish`, `GetVersion`, `GetLatest`) now require `providerID + scope`.
+  - `core.SyncCheckpointStore` lookup methods (`GetByID`, `GetLatest`) now require `providerID + scope`.
+  - `core.SyncConflictStore` scoped methods (`Get`, `ListByBinding`, `Resolve`) now require `providerID + scope`.
+  - `core.ResolveSyncConflictRequest` now requires `ProviderID` and `Scope`.
 
 ### Migration / Fix
 
@@ -44,6 +59,18 @@
 - Ensure every auth strategy/provider sets a stable non-empty `ExternalAccountID` on `CompleteAuthResponse`.
 - For OAuth2 providers using the shared `providers.OAuth2Provider`, set `external_account_id` in callback metadata before `CompleteAuth` is called.
 - If you invoke capabilities by provider+scope only and a user can have multiple linked accounts, pass `InvokeCapabilityRequest.ConnectionID` to disambiguate account selection.
+- If you construct facades, always pass an explicit activity reader:
+  - `services.NewFacade(service, services.WithActivityReader(activityReader))`.
+- If you implement `core.Provider` or `core.AuthStrategy`, update signatures:
+  - `AuthKind() core.AuthKind` and `Type() core.AuthKind`.
+- If you implement status-update store/service interfaces, update method signatures to typed statuses:
+  - `ConnectionStore.UpdateStatus(..., core.ConnectionStatus, ...)`
+  - `SubscriptionStore.UpdateState(..., core.SubscriptionStatus, ...)`
+  - `InstallationStore.UpdateStatus(..., core.InstallationStatus, ...)`
+- If you implement external form-data stores/services, update signatures and callsites for scoped access:
+  - implement the new `providerID + scope` parameters on `MappingSpecStore`, `SyncCheckpointStore`, and `SyncConflictStore`.
+  - pass `providerID + scope` when calling mapping lifecycle methods (`MarkValidated`, `Publish`, `GetVersion`, `GetLatest`).
+  - populate `ResolveSyncConflictRequest.ProviderID` and `ResolveSyncConflictRequest.Scope`.
 
 # [0.1.0](https://github.com/goliatone/go-services/tree/v0.1.0) - (2026-02-18)
 
