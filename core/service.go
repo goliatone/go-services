@@ -42,6 +42,7 @@ type Service struct {
 	subscriptionStore       SubscriptionStore
 	syncCursorStore         SyncCursorStore
 	installationStore       InstallationStore
+	syncJobStore            SyncJobStore
 	grantStore              GrantStore
 	permissionEvaluator     PermissionEvaluator
 	credentialCodec         CredentialCodec
@@ -73,6 +74,7 @@ type ServiceDependencies struct {
 	SubscriptionStore   SubscriptionStore
 	SyncCursorStore     SyncCursorStore
 	InstallationStore   InstallationStore
+	SyncJobStore        SyncJobStore
 	GrantStore          GrantStore
 	PermissionEvaluator PermissionEvaluator
 	CredentialCodec     CredentialCodec
@@ -182,6 +184,13 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 			builder.installationStore = provider.InstallationStore()
 		}
 	}
+	if builder.syncJobStore == nil && builder.repositoryFactory != nil {
+		if provider, ok := builder.repositoryFactory.(interface{ SyncJobStoreCore() SyncJobStore }); ok {
+			builder.syncJobStore = provider.SyncJobStoreCore()
+		} else if provider, ok := builder.repositoryFactory.(interface{ SyncJobStore() SyncJobStore }); ok {
+			builder.syncJobStore = provider.SyncJobStore()
+		}
+	}
 	if builder.permissionEvaluator == nil {
 		builder.permissionEvaluator = NewGrantPermissionEvaluator(
 			builder.connectionStore,
@@ -225,6 +234,7 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		subscriptionStore:       builder.subscriptionStore,
 		syncCursorStore:         builder.syncCursorStore,
 		installationStore:       builder.installationStore,
+		syncJobStore:            builder.syncJobStore,
 		grantStore:              builder.grantStore,
 		permissionEvaluator:     builder.permissionEvaluator,
 		credentialCodec:         builder.credentialCodec,
@@ -286,6 +296,7 @@ func (s *Service) Dependencies() ServiceDependencies {
 		SubscriptionStore:   s.subscriptionStore,
 		SyncCursorStore:     s.syncCursorStore,
 		InstallationStore:   s.installationStore,
+		SyncJobStore:        s.syncJobStore,
 		GrantStore:          s.grantStore,
 		PermissionEvaluator: s.permissionEvaluator,
 		CredentialCodec:     s.credentialCodec,
