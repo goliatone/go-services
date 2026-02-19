@@ -396,6 +396,10 @@ func metadataString(metadata map[string]any, keys ...string) string {
 			if trimmed := strings.TrimSpace(typed); trimmed != "" {
 				return trimmed
 			}
+		case AuthKind:
+			if trimmed := strings.TrimSpace(string(typed)); trimmed != "" {
+				return trimmed
+			}
 		case []byte:
 			if trimmed := strings.TrimSpace(string(typed)); trimmed != "" {
 				return trimmed
