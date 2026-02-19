@@ -12,6 +12,7 @@ const (
 	TypeListServicesActivity = "services.query.activity.list"
 	TypeGetInstallation      = "services.query.installation.get"
 	TypeListInstallations    = "services.query.installation.list_by_scope"
+	TypeGetSyncJob           = "services.query.sync_job.get"
 )
 
 type LoadSyncCursorMessage struct {
@@ -77,6 +78,29 @@ func (m ListInstallationsMessage) Validate() error {
 	}
 	if err := m.Scope.Validate(); err != nil {
 		return fmt.Errorf("query: %w", err)
+	}
+	return nil
+}
+
+type GetSyncJobMessage struct {
+	Request core.GetSyncJobRequest
+}
+
+func (GetSyncJobMessage) Type() string { return TypeGetSyncJob }
+
+func (m GetSyncJobMessage) Validate() error {
+	if strings.TrimSpace(m.Request.SyncJobID) == "" {
+		return fmt.Errorf("query: sync job id is required")
+	}
+	scopeType := strings.TrimSpace(strings.ToLower(m.Request.ScopeType))
+	scopeID := strings.TrimSpace(m.Request.ScopeID)
+	if (scopeType == "") != (scopeID == "") {
+		return fmt.Errorf("query: scope type and scope id must both be provided")
+	}
+	if scopeType != "" {
+		if err := (core.ScopeRef{Type: scopeType, ID: scopeID}).Validate(); err != nil {
+			return fmt.Errorf("query: %w", err)
+		}
 	}
 	return nil
 }
