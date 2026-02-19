@@ -1209,7 +1209,7 @@ func TestInstallationStore_UpsertListAndStatusTransitions(t *testing.T) {
 		t.Fatalf("expected exactly one installation, got %d", len(listed))
 	}
 
-	if err := installationStore.UpdateStatus(ctx, installation.ID, string(core.InstallationStatusSuspended), "quota exhausted"); err != nil {
+	if err := installationStore.UpdateStatus(ctx, installation.ID, core.InstallationStatusSuspended, "quota exhausted"); err != nil {
 		t.Fatalf("update installation status suspended: %v", err)
 	}
 	suspended, err := installationStore.Get(ctx, installation.ID)
@@ -1240,10 +1240,10 @@ func TestInstallationStore_UpsertListAndStatusTransitions(t *testing.T) {
 		t.Fatalf("expected metadata refresh on upsert")
 	}
 
-	if err := installationStore.UpdateStatus(ctx, installation.ID, string(core.InstallationStatusUninstalled), "removed"); err != nil {
+	if err := installationStore.UpdateStatus(ctx, installation.ID, core.InstallationStatusUninstalled, "removed"); err != nil {
 		t.Fatalf("update installation status uninstalled: %v", err)
 	}
-	if err := installationStore.UpdateStatus(ctx, installation.ID, string(core.InstallationStatusActive), "reactivate"); err == nil {
+	if err := installationStore.UpdateStatus(ctx, installation.ID, core.InstallationStatusActive, "reactivate"); err == nil {
 		t.Fatalf("expected invalid transition from uninstalled to active")
 	} else if !strings.Contains(strings.ToLower(err.Error()), "invalid installation status transition") {
 		t.Fatalf("expected transition validation error, got %v", err)
@@ -1259,7 +1259,7 @@ func TestInstallationStore_UpsertListAndStatusTransitions(t *testing.T) {
 		t.Fatalf("expected create-time status validation for non-active installation")
 	}
 
-	if err := installationStore.UpdateStatus(ctx, installation.ID, "bogus_status", "bad"); err == nil {
+	if err := installationStore.UpdateStatus(ctx, installation.ID, core.InstallationStatus("bogus_status"), "bad"); err == nil {
 		t.Fatalf("expected invalid status validation error")
 	}
 }
@@ -2125,7 +2125,7 @@ func (stubConnectionStore) FindByScopeAndExternalAccount(
 ) (core.Connection, bool, error) {
 	return core.Connection{}, false, nil
 }
-func (stubConnectionStore) UpdateStatus(context.Context, string, string, string) error {
+func (stubConnectionStore) UpdateStatus(context.Context, string, core.ConnectionStatus, string) error {
 	return nil
 }
 
@@ -2155,7 +2155,7 @@ type integrationProvider struct {
 }
 
 func (p *integrationProvider) ID() string                    { return p.id }
-func (p *integrationProvider) AuthKind() string              { return "oauth2" }
+func (p *integrationProvider) AuthKind() core.AuthKind       { return core.AuthKind("oauth2") }
 func (p *integrationProvider) SupportedScopeTypes() []string { return []string{"user", "org"} }
 func (p *integrationProvider) Capabilities() []core.CapabilityDescriptor {
 	return append([]core.CapabilityDescriptor(nil), p.capabilities...)

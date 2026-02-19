@@ -185,9 +185,14 @@ func TestMutationCommands_DelegateToService(t *testing.T) {
 				}
 				return core.Installation{ID: "inst_1", ProviderID: "github"}, nil
 			},
-			updateInstallationStatusFn: func(_ context.Context, id string, status string, reason string) error {
+			updateInstallationStatusFn: func(
+				_ context.Context,
+				id string,
+				status core.InstallationStatus,
+				reason string,
+			) error {
 				calledUpdate = true
-				if id != "inst_1" || status != string(core.InstallationStatusSuspended) || reason != "policy" {
+				if id != "inst_1" || status != core.InstallationStatusSuspended || reason != "policy" {
 					t.Fatalf("unexpected installation status payload: %q %q %q", id, status, reason)
 				}
 				return nil
@@ -215,7 +220,7 @@ func TestMutationCommands_DelegateToService(t *testing.T) {
 
 		if err := NewUpdateInstallationStatusCommand(svc).Execute(context.Background(), UpdateInstallationStatusMessage{
 			InstallationID: "inst_1",
-			Status:         string(core.InstallationStatusSuspended),
+			Status:         core.InstallationStatusSuspended,
 			Reason:         "policy",
 		}); err != nil {
 			t.Fatalf("execute update installation status: %v", err)
@@ -367,7 +372,7 @@ func TestMessageValidation(t *testing.T) {
 		},
 		{
 			name:    "update installation missing id",
-			msg:     UpdateInstallationStatusMessage{Status: string(core.InstallationStatusActive)},
+			msg:     UpdateInstallationStatusMessage{Status: core.InstallationStatusActive},
 			wantErr: true,
 		},
 	}
@@ -395,7 +400,7 @@ type stubMutatingService struct {
 	cancelSubscriptionFn       func(ctx context.Context, req core.CancelSubscriptionRequest) error
 	advanceSyncCursorFn        func(ctx context.Context, in core.AdvanceSyncCursorInput) (core.SyncCursor, error)
 	upsertInstallationFn       func(ctx context.Context, in core.UpsertInstallationInput) (core.Installation, error)
-	updateInstallationStatusFn func(ctx context.Context, id string, status string, reason string) error
+	updateInstallationStatusFn func(ctx context.Context, id string, status core.InstallationStatus, reason string) error
 }
 
 func (s stubMutatingService) Connect(ctx context.Context, req core.ConnectRequest) (core.BeginAuthResponse, error) {
@@ -485,7 +490,7 @@ func (s stubMutatingService) UpsertInstallation(ctx context.Context, in core.Ups
 func (s stubMutatingService) UpdateInstallationStatus(
 	ctx context.Context,
 	id string,
-	status string,
+	status core.InstallationStatus,
 	reason string,
 ) error {
 	if s.updateInstallationStatusFn == nil {

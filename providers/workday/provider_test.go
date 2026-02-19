@@ -10,9 +10,10 @@ import (
 
 func TestNew_UsesServiceAccountJWTAuthAndCapabilities(t *testing.T) {
 	providerRaw, err := New(Config{
-		Issuer:     "svc-account@example.iam.gserviceaccount.com",
-		Audience:   "https://api.workday.test/token",
-		SigningKey: "secret-signing-key",
+		Issuer:           "svc-account@example.iam.gserviceaccount.com",
+		Audience:         "https://api.workday.test/token",
+		SigningKey:       "secret-signing-key",
+		SigningAlgorithm: "HS256",
 	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -34,9 +35,10 @@ func TestNew_UsesServiceAccountJWTAuthAndCapabilities(t *testing.T) {
 
 func TestProvider_CompleteAuthReturnsJWTLikeAccessToken(t *testing.T) {
 	providerRaw, err := New(Config{
-		Issuer:     "svc-account@example.iam.gserviceaccount.com",
-		Audience:   "https://api.workday.test/token",
-		SigningKey: "secret-signing-key",
+		Issuer:           "svc-account@example.iam.gserviceaccount.com",
+		Audience:         "https://api.workday.test/token",
+		SigningKey:       "secret-signing-key",
+		SigningAlgorithm: "HS256",
 	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -60,9 +62,10 @@ func TestProvider_CompleteAuthReturnsJWTLikeAccessToken(t *testing.T) {
 
 func TestProvider_ResolveCapabilityOperation_UsesProtocolKinds(t *testing.T) {
 	providerRaw, err := New(Config{
-		Issuer:     "svc-account@example.iam.gserviceaccount.com",
-		Audience:   "https://api.workday.test/token",
-		SigningKey: "secret-signing-key",
+		Issuer:           "svc-account@example.iam.gserviceaccount.com",
+		Audience:         "https://api.workday.test/token",
+		SigningKey:       "secret-signing-key",
+		SigningAlgorithm: "HS256",
 	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -77,6 +80,9 @@ func TestProvider_ResolveCapabilityOperation_UsesProtocolKinds(t *testing.T) {
 		Decision: core.CapabilityResult{
 			Allowed: true,
 			Mode:    core.CapabilityDeniedBehaviorDegrade,
+			Metadata: map[string]any{
+				"missing_grants": []string{GrantReportExport},
+			},
 		},
 	})
 	if err != nil {
@@ -111,6 +117,9 @@ func TestProvider_ResolveCapabilityOperation_UsesProtocolKinds(t *testing.T) {
 		Decision: core.CapabilityResult{
 			Allowed: true,
 			Mode:    core.CapabilityDeniedBehaviorDegrade,
+			Metadata: map[string]any{
+				"missing_grants": []string{GrantCompRead},
+			},
 		},
 	})
 	if err != nil {

@@ -314,14 +314,14 @@ func (s *providerConnectionStoreStub) FindByScopeAndExternalAccount(
 func (s *providerConnectionStoreStub) UpdateStatus(
 	_ context.Context,
 	id string,
-	status string,
+	status core.ConnectionStatus,
 	reason string,
 ) error {
 	if id != s.connection.ID {
 		return fmt.Errorf("connection %q not found", id)
 	}
 	_ = reason
-	s.connection.Status = core.ConnectionStatus(status)
+	s.connection.Status = status
 	return nil
 }
 

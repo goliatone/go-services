@@ -16,7 +16,7 @@ type testProvider struct {
 
 func (p testProvider) ID() string { return p.id }
 
-func (p testProvider) AuthKind() string { return "oauth2" }
+func (p testProvider) AuthKind() AuthKind { return AuthKind("oauth2") }
 
 func (p testProvider) SupportedScopeTypes() []string { return []string{"user", "org"} }
 
@@ -176,14 +176,19 @@ func (s *memoryConnectionStore) FindByScopeAndExternalAccount(
 	return Connection{}, false, nil
 }
 
-func (s *memoryConnectionStore) UpdateStatus(_ context.Context, id string, status string, reason string) error {
+func (s *memoryConnectionStore) UpdateStatus(
+	_ context.Context,
+	id string,
+	status ConnectionStatus,
+	reason string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conn, ok := s.byID[id]
 	if !ok {
 		return fmt.Errorf("missing connection")
 	}
-	conn.Status = ConnectionStatus(status)
+	conn.Status = status
 	conn.LastError = reason
 	s.byID[id] = conn
 	return nil
@@ -461,14 +466,19 @@ func (s *memorySubscriptionStore) ListExpiring(_ context.Context, before time.Ti
 	return out, nil
 }
 
-func (s *memorySubscriptionStore) UpdateState(_ context.Context, id string, status string, reason string) error {
+func (s *memorySubscriptionStore) UpdateState(
+	_ context.Context,
+	id string,
+	status SubscriptionStatus,
+	reason string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.byID[id]
 	if !ok {
 		return fmt.Errorf("missing subscription")
 	}
-	record.Status = SubscriptionStatus(status)
+	record.Status = status
 	record.Metadata = copyAnyMap(record.Metadata)
 	if strings.TrimSpace(reason) != "" {
 		record.Metadata["status_reason"] = strings.TrimSpace(reason)
@@ -641,14 +651,19 @@ func (s *memoryInstallationStore) ListByScope(
 	return out, nil
 }
 
-func (s *memoryInstallationStore) UpdateStatus(_ context.Context, id string, status string, reason string) error {
+func (s *memoryInstallationStore) UpdateStatus(
+	_ context.Context,
+	id string,
+	status InstallationStatus,
+	reason string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.byID[id]
 	if !ok {
 		return fmt.Errorf("missing installation")
 	}
-	record.Status = InstallationStatus(status)
+	record.Status = status
 	record.Metadata = copyAnyMap(record.Metadata)
 	if strings.TrimSpace(reason) != "" {
 		record.Metadata["status_reason"] = strings.TrimSpace(reason)

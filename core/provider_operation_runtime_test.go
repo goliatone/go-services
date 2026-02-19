@@ -328,7 +328,7 @@ func TestService_ExecuteProviderOperation_NormalizesSigV4SigningMetadata(t *test
 	if err != nil {
 		t.Fatalf("execute provider operation: %v", err)
 	}
-	if got := fmt.Sprint(result.Meta.Metadata["signing_profile"]); got != AuthKindAWSSigV4 {
+	if got := fmt.Sprint(result.Meta.Metadata["signing_profile"]); got != string(AuthKindAWSSigV4) {
 		t.Fatalf("expected signing_profile %q, got %q", AuthKindAWSSigV4, got)
 	}
 	if got := fmt.Sprint(result.Meta.Metadata["signed_region"]); got != "us-east-1" {

@@ -215,7 +215,7 @@ type capabilityResolverProvider struct {
 
 func (p *capabilityResolverProvider) ID() string { return p.id }
 
-func (p *capabilityResolverProvider) AuthKind() string { return AuthKindOAuth2AuthCode }
+func (p *capabilityResolverProvider) AuthKind() AuthKind { return AuthKindOAuth2AuthCode }
 
 func (p *capabilityResolverProvider) SupportedScopeTypes() []string { return []string{"org"} }
 

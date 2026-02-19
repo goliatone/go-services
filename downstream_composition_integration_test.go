@@ -158,7 +158,7 @@ type downstreamProvider struct {
 
 func (p downstreamProvider) ID() string { return p.id }
 
-func (downstreamProvider) AuthKind() string { return core.AuthKindOAuth2AuthCode }
+func (downstreamProvider) AuthKind() core.AuthKind { return core.AuthKindOAuth2AuthCode }
 
 func (downstreamProvider) SupportedScopeTypes() []string { return []string{"user", "org"} }
 

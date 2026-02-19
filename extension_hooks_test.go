@@ -90,7 +90,7 @@ type extensionProvider struct {
 
 func (p extensionProvider) ID() string { return p.id }
 
-func (extensionProvider) AuthKind() string { return core.AuthKindOAuth2AuthCode }
+func (extensionProvider) AuthKind() core.AuthKind { return core.AuthKindOAuth2AuthCode }
 
 func (extensionProvider) SupportedScopeTypes() []string { return []string{"user", "org"} }
 

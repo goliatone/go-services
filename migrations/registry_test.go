@@ -84,6 +84,25 @@ func TestRateLimitStateUniquenessMigrationPair_ExistsForBothDialects(t *testing.
 	}
 }
 
+func TestFormDataFoundationMigrationPair_ExistsForBothDialects(t *testing.T) {
+	root := services.GetCoreMigrationsFS()
+	paths := []string{
+		"data/sql/migrations/00005_services_form_data_foundation.up.sql",
+		"data/sql/migrations/00005_services_form_data_foundation.down.sql",
+		"data/sql/migrations/sqlite/00005_services_form_data_foundation.up.sql",
+		"data/sql/migrations/sqlite/00005_services_form_data_foundation.down.sql",
+	}
+	for _, migrationPath := range paths {
+		content, err := fs.ReadFile(root, migrationPath)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", migrationPath, err)
+		}
+		if strings.TrimSpace(string(content)) == "" {
+			t.Fatalf("expected migration %s to have SQL content", migrationPath)
+		}
+	}
+}
+
 func TestSQLiteRateLimitStateUniquenessMigration_ApplyAndRollback(t *testing.T) {
 	db, err := sql.Open("sqlite3", "file:migrations-rate-limit-uniqueness?mode=memory&cache=shared&_foreign_keys=on")
 	if err != nil {
@@ -228,6 +247,84 @@ func TestSQLiteRateLimitStateUniquenessMigration_ApplyAndRollback(t *testing.T) 
 		"2026-04-01T00:00:00Z",
 	); err != nil {
 		t.Fatalf("expected duplicate insert to succeed after down migration: %v", err)
+	}
+}
+
+func TestSQLiteFormDataFoundationMigration_ApplyAndRollback(t *testing.T) {
+	db, err := sql.Open("sqlite3", "file:migrations-form-data-foundation?mode=memory&cache=shared&_foreign_keys=on")
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	root := services.GetCoreMigrationsFS()
+	sqliteMigrations, err := fs.Sub(root, "data/sql/migrations/sqlite")
+	if err != nil {
+		t.Fatalf("resolve sqlite migrations: %v", err)
+	}
+
+	baseUps := []string{
+		"00001_services_core_schema.up.sql",
+		"00002_services_credential_payload_codec.up.sql",
+		"00003_services_grant_snapshots.up.sql",
+		"00004_services_rate_limit_state_uniqueness.up.sql",
+	}
+	for _, migration := range baseUps {
+		if err := execSQLMigration(context.Background(), db, sqliteMigrations, migration); err != nil {
+			t.Fatalf("apply base migration %s: %v", migration, err)
+		}
+	}
+
+	if err := execSQLMigration(
+		context.Background(),
+		db,
+		sqliteMigrations,
+		"00005_services_form_data_foundation.up.sql",
+	); err != nil {
+		t.Fatalf("apply form data foundation migration up: %v", err)
+	}
+
+	requiredTables := []string{
+		"service_mapping_specs",
+		"service_sync_bindings",
+		"service_identity_bindings",
+		"service_sync_conflicts",
+		"service_sync_checkpoints",
+		"service_sync_change_log",
+	}
+	for _, tableName := range requiredTables {
+		var count int
+		if err := db.QueryRowContext(
+			context.Background(),
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`,
+			tableName,
+		).Scan(&count); err != nil {
+			t.Fatalf("query sqlite_master for %s: %v", tableName, err)
+		}
+		if count != 1 {
+			t.Fatalf("expected table %s to exist after up migration", tableName)
+		}
+	}
+
+	if err := execSQLMigration(
+		context.Background(),
+		db,
+		sqliteMigrations,
+		"00005_services_form_data_foundation.down.sql",
+	); err != nil {
+		t.Fatalf("apply form data foundation migration down: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`,
+		"service_mapping_specs",
+	).Scan(&count); err != nil {
+		t.Fatalf("query sqlite_master after down migration: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected service_mapping_specs to be dropped after down migration")
 	}
 }
 

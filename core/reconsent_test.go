@@ -81,7 +81,7 @@ func TestCompleteReconsent_RecoversExistingConnectionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create connection: %v", err)
 	}
-	if err := connectionStore.UpdateStatus(ctx, connection.ID, string(ConnectionStatusNeedsReconsent), "missing grants"); err != nil {
+	if err := connectionStore.UpdateStatus(ctx, connection.ID, ConnectionStatusNeedsReconsent, "missing grants"); err != nil {
 		t.Fatalf("update connection status: %v", err)
 	}
 

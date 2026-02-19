@@ -47,7 +47,7 @@ func TestService_InstallationLifecycle_APIs(t *testing.T) {
 		t.Fatalf("expected one installation, got %d", len(items))
 	}
 
-	if err := svc.UpdateInstallationStatus(ctx, installation.ID, string(InstallationStatusSuspended), "policy"); err != nil {
+	if err := svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusSuspended, "policy"); err != nil {
 		t.Fatalf("update installation status: %v", err)
 	}
 	updated, err := svc.GetInstallation(ctx, installation.ID)
@@ -80,7 +80,7 @@ func TestService_InstallationLifecycle_ValidatesInput(t *testing.T) {
 	if _, err := svc.ListInstallations(ctx, "", ScopeRef{Type: "org", ID: "org_1"}); err == nil {
 		t.Fatalf("expected missing provider id error")
 	}
-	if err := svc.UpdateInstallationStatus(ctx, "", string(InstallationStatusActive), ""); err == nil {
+	if err := svc.UpdateInstallationStatus(ctx, "", InstallationStatusActive, ""); err == nil {
 		t.Fatalf("expected missing id error")
 	}
 }
@@ -103,10 +103,10 @@ func TestService_InstallationLifecycle_EnforcesStatusTransitions(t *testing.T) {
 		t.Fatalf("upsert installation: %v", err)
 	}
 
-	if err := svc.UpdateInstallationStatus(ctx, installation.ID, string(InstallationStatusUninstalled), "removed"); err != nil {
+	if err := svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusUninstalled, "removed"); err != nil {
 		t.Fatalf("uninstall transition: %v", err)
 	}
-	err = svc.UpdateInstallationStatus(ctx, installation.ID, string(InstallationStatusActive), "reactivate")
+	err = svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusActive, "reactivate")
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid installation status transition") {
 		t.Fatalf("expected invalid transition error, got %v", err)
 	}
@@ -121,7 +121,7 @@ func TestService_InstallationLifecycle_EnforcesStatusTransitions(t *testing.T) {
 		t.Fatalf("expected active-on-create enforcement error, got %v", err)
 	}
 
-	err = svc.UpdateInstallationStatus(ctx, installation.ID, "invalid_status", "bad")
+	err = svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatus("invalid_status"), "bad")
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid installation status") {
 		t.Fatalf("expected invalid status error, got %v", err)
 	}

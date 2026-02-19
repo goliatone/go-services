@@ -103,6 +103,9 @@ func TestProvider_ResolveCapabilityOperation_UsesDegradeForOptionalGrantMiss(t *
 		Decision: core.CapabilityResult{
 			Allowed: true,
 			Mode:    core.CapabilityDeniedBehaviorDegrade,
+			Metadata: map[string]any{
+				"missing_grants": []string{GrantBulkExport},
+			},
 		},
 	})
 	if err != nil {

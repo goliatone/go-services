@@ -27,7 +27,7 @@ func TestStrategyConformanceByMode(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		expectedType string
+		expectedType core.AuthKind
 		strategy     core.AuthStrategy
 		completeReq  core.AuthCompleteRequest
 	}{

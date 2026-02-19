@@ -268,7 +268,12 @@ func (s *compatMutatingService) UpsertInstallation(context.Context, core.UpsertI
 	return core.Installation{}, nil
 }
 
-func (s *compatMutatingService) UpdateInstallationStatus(context.Context, string, string, string) error {
+func (s *compatMutatingService) UpdateInstallationStatus(
+	context.Context,
+	string,
+	core.InstallationStatus,
+	string,
+) error {
 	return nil
 }
 

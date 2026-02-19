@@ -190,7 +190,7 @@ type grantScenarioProvider struct {
 }
 
 func (p *grantScenarioProvider) ID() string                           { return p.id }
-func (p *grantScenarioProvider) AuthKind() string                     { return "oauth2" }
+func (p *grantScenarioProvider) AuthKind() AuthKind                   { return AuthKind("oauth2") }
 func (p *grantScenarioProvider) SupportedScopeTypes() []string        { return []string{"user", "org"} }
 func (p *grantScenarioProvider) Capabilities() []CapabilityDescriptor { return nil }
 

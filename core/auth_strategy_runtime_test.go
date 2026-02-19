@@ -254,7 +254,7 @@ func TestService_CompleteCallback_RequiresExternalAccountID(t *testing.T) {
 
 type strategyProviderStub struct {
 	id       string
-	authKind string
+	authKind AuthKind
 	strategy AuthStrategy
 
 	beginCalls    int
@@ -264,7 +264,7 @@ type strategyProviderStub struct {
 
 func (p *strategyProviderStub) ID() string { return p.id }
 
-func (p *strategyProviderStub) AuthKind() string {
+func (p *strategyProviderStub) AuthKind() AuthKind {
 	if p.authKind == "" {
 		return AuthKindOAuth2AuthCode
 	}
@@ -295,7 +295,7 @@ func (p *strategyProviderStub) Refresh(context.Context, ActiveCredential) (Refre
 func (p *strategyProviderStub) AuthStrategy() AuthStrategy { return p.strategy }
 
 type recordingAuthStrategy struct {
-	kind string
+	kind AuthKind
 
 	beginResponse    AuthBeginResponse
 	completeResponse AuthCompleteResponse
@@ -307,7 +307,7 @@ type recordingAuthStrategy struct {
 	refreshCalls  int
 }
 
-func (s *recordingAuthStrategy) Type() string { return s.kind }
+func (s *recordingAuthStrategy) Type() AuthKind { return s.kind }
 
 func (s *recordingAuthStrategy) Begin(_ context.Context, _ AuthBeginRequest) (AuthBeginResponse, error) {
 	s.beginCalls++

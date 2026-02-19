@@ -71,12 +71,12 @@ func TestFacade_CommandAndQueryDelegation(t *testing.T) {
 
 	if err := facade.Commands().UpdateInstallation.Execute(context.Background(), servicescommand.UpdateInstallationStatusMessage{
 		InstallationID: "inst_1",
-		Status:         string(core.InstallationStatusSuspended),
+		Status:         core.InstallationStatusSuspended,
 		Reason:         "policy",
 	}); err != nil {
 		t.Fatalf("execute update installation command: %v", err)
 	}
-	if svc.lastInstallationID != "inst_1" || svc.lastInstallationStatus != string(core.InstallationStatusSuspended) {
+	if svc.lastInstallationID != "inst_1" || svc.lastInstallationStatus != core.InstallationStatusSuspended {
 		t.Fatalf("unexpected installation status delegation payload")
 	}
 
@@ -101,24 +101,15 @@ func TestNewFacade_RequiresService(t *testing.T) {
 	}
 }
 
-func TestNewFacade_TypedNilRepositoryFactoryDoesNotPanic(t *testing.T) {
-	svc := &stubFacadeServiceWithDeps{
-		deps: core.ServiceDependencies{
-			RepositoryFactory: (*stubActivityFactory)(nil),
-		},
-	}
+func TestNewFacade_RequiresActivityReader(t *testing.T) {
+	svc := &stubFacadeService{}
 
 	facade, err := NewFacade(svc)
-	if err != nil {
-		t.Fatalf("new facade: %v", err)
-	}
-	if facade == nil {
-		t.Fatalf("expected facade")
-	}
-
-	_, queryErr := facade.Queries().ListServicesActivity.Query(context.Background(), servicesquery.ListServicesActivityMessage{})
-	if queryErr == nil {
+	if err == nil {
 		t.Fatalf("expected missing activity reader error")
+	}
+	if facade != nil {
+		t.Fatalf("expected nil facade on error")
 	}
 }
 
@@ -126,7 +117,7 @@ type stubFacadeService struct {
 	lastRevokeConnectionID string
 	lastRevokeReason       string
 	lastInstallationID     string
-	lastInstallationStatus string
+	lastInstallationStatus core.InstallationStatus
 }
 
 func (s *stubFacadeService) Connect(context.Context, core.ConnectRequest) (core.BeginAuthResponse, error) {
@@ -179,7 +170,12 @@ func (s *stubFacadeService) UpsertInstallation(context.Context, core.UpsertInsta
 	return core.Installation{ID: "inst_1", ProviderID: "github"}, nil
 }
 
-func (s *stubFacadeService) UpdateInstallationStatus(_ context.Context, id string, status string, _ string) error {
+func (s *stubFacadeService) UpdateInstallationStatus(
+	_ context.Context,
+	id string,
+	status core.InstallationStatus,
+	_ string,
+) error {
 	s.lastInstallationID = id
 	s.lastInstallationStatus = status
 	return nil
@@ -209,27 +205,6 @@ func (s *stubFacadeActivityReader) List(context.Context, core.ServicesActivityFi
 		Items: []core.ServiceActivityEntry{{ID: "evt_1", Action: "connected", Status: core.ServiceActivityStatusOK}},
 		Total: 1,
 	}, nil
-}
-
-type stubFacadeServiceWithDeps struct {
-	stubFacadeService
-	deps core.ServiceDependencies
-}
-
-func (s *stubFacadeServiceWithDeps) Dependencies() core.ServiceDependencies {
-	if s == nil {
-		return core.ServiceDependencies{}
-	}
-	return s.deps
-}
-
-type stubActivityFactory struct{}
-
-func (f *stubActivityFactory) ActivityStore() *stubFacadeActivityReader {
-	if f == nil {
-		panic("nil activity factory")
-	}
-	return &stubFacadeActivityReader{}
 }
 
 var _ CommandQueryService = (*stubFacadeService)(nil)

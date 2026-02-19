@@ -20,7 +20,7 @@ func TestAPIKeyStrategy_Complete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if result.Credential.TokenType != core.AuthKindAPIKey {
+	if result.Credential.TokenType != string(core.AuthKindAPIKey) {
 		t.Fatalf("expected token type %q, got %q", core.AuthKindAPIKey, result.Credential.TokenType)
 	}
 	if result.Credential.AccessToken != "key_123" {
@@ -68,7 +68,7 @@ func TestHMACStrategy_Complete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if result.Credential.TokenType != core.AuthKindHMAC {
+	if result.Credential.TokenType != string(core.AuthKindHMAC) {
 		t.Fatalf("expected hmac token type")
 	}
 	if result.Credential.AccessToken != "secret_value" {

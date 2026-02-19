@@ -179,8 +179,8 @@ func (p *subscribableTestProvider) ID() string {
 	return p.id
 }
 
-func (p *subscribableTestProvider) AuthKind() string {
-	return "oauth2"
+func (p *subscribableTestProvider) AuthKind() AuthKind {
+	return AuthKind("oauth2")
 }
 
 func (p *subscribableTestProvider) SupportedScopeTypes() []string {

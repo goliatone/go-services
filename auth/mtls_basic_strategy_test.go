@@ -25,7 +25,7 @@ func TestBasicStrategy_Complete(t *testing.T) {
 	if result.Credential.AccessToken != expected {
 		t.Fatalf("unexpected encoded basic token")
 	}
-	if result.Credential.TokenType != core.AuthKindBasic {
+	if result.Credential.TokenType != string(core.AuthKindBasic) {
 		t.Fatalf("expected basic token type")
 	}
 }
@@ -52,7 +52,7 @@ func TestMTLSStrategy_Complete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if result.Credential.TokenType != core.AuthKindMTLS {
+	if result.Credential.TokenType != string(core.AuthKindMTLS) {
 		t.Fatalf("expected mtls token type")
 	}
 	if result.Credential.Metadata["cert_ref"] != "cert://id" {

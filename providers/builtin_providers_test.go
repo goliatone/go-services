@@ -383,9 +383,10 @@ func TestBuiltInProviders_ExposeNonOAuthAdvancedAuthModes(t *testing.T) {
 
 	t.Run("workday_service_account_jwt", func(t *testing.T) {
 		providerRaw, err := workday.New(workday.Config{
-			Issuer:     "svc-account@example.iam.gserviceaccount.com",
-			Audience:   "https://api.workday.test/token",
-			SigningKey: "secret-signing-key",
+			Issuer:           "svc-account@example.iam.gserviceaccount.com",
+			Audience:         "https://api.workday.test/token",
+			SigningKey:       "secret-signing-key",
+			SigningAlgorithm: "HS256",
 		})
 		if err != nil {
 			t.Fatalf("new provider: %v", err)
