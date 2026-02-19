@@ -14,6 +14,9 @@ var (
 	ErrInvalidInstallationStatusTransition = errors.New("core: invalid installation status transition")
 	ErrInvalidSubscriptionStatusTransition = errors.New("core: invalid subscription status transition")
 	ErrInvalidSyncJobStatusTransition      = errors.New("core: invalid sync job status transition")
+	ErrInvalidSyncJobMode                  = errors.New("core: invalid sync job mode")
+	ErrInvalidSyncJobScope                 = errors.New("core: invalid sync job scope")
+	ErrSyncJobNotFound                     = errors.New("core: sync job not found")
 )
 
 type ScopeType string
@@ -324,6 +327,8 @@ const (
 type SyncJobMode string
 
 const (
+	SyncJobModeFull        SyncJobMode = "full"
+	SyncJobModeDelta       SyncJobMode = "delta"
 	SyncJobModeBootstrap   SyncJobMode = "bootstrap"
 	SyncJobModeIncremental SyncJobMode = "incremental"
 	SyncJobModeBackfill    SyncJobMode = "backfill"
