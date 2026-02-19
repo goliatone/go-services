@@ -21,6 +21,7 @@ const (
 	TypeAdvanceSyncCursor  = "services.command.sync_cursor.advance"
 	TypeUpsertInstallation = "services.command.installation.upsert"
 	TypeUpdateInstallation = "services.command.installation.update_status"
+	TypeCreateSyncJob      = "services.command.sync_job.create"
 )
 
 type ConnectMessage struct {
@@ -241,6 +242,30 @@ func (m UpdateInstallationStatusMessage) Validate() error {
 	}
 	if strings.TrimSpace(string(m.Status)) == "" {
 		return fmt.Errorf("command: installation status is required")
+	}
+	return nil
+}
+
+type CreateSyncJobMessage struct {
+	Request core.CreateSyncJobRequest
+}
+
+func (CreateSyncJobMessage) Type() string { return TypeCreateSyncJob }
+
+func (m CreateSyncJobMessage) Validate() error {
+	if strings.TrimSpace(m.Request.ProviderID) == "" {
+		return fmt.Errorf("command: provider id is required")
+	}
+	scope := core.ScopeRef{
+		Type: strings.TrimSpace(strings.ToLower(m.Request.ScopeType)),
+		ID:   strings.TrimSpace(m.Request.ScopeID),
+	}
+	if err := validateScope(scope); err != nil {
+		return err
+	}
+	mode := strings.TrimSpace(strings.ToLower(string(m.Request.Mode)))
+	if mode != string(core.SyncJobModeFull) && mode != string(core.SyncJobModeDelta) {
+		return fmt.Errorf("command: sync job mode must be full or delta")
 	}
 	return nil
 }
