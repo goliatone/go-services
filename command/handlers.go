@@ -21,7 +21,7 @@ type MutatingService interface {
 	CancelSubscription(ctx context.Context, req core.CancelSubscriptionRequest) error
 	AdvanceSyncCursor(ctx context.Context, in core.AdvanceSyncCursorInput) (core.SyncCursor, error)
 	UpsertInstallation(ctx context.Context, in core.UpsertInstallationInput) (core.Installation, error)
-	UpdateInstallationStatus(ctx context.Context, id string, status string, reason string) error
+	UpdateInstallationStatus(ctx context.Context, id string, status core.InstallationStatus, reason string) error
 }
 
 type ConnectCommand struct {
