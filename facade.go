@@ -2,10 +2,8 @@ package services
 
 import (
 	"fmt"
-	"reflect"
 
 	servicescommand "github.com/goliatone/go-services/command"
-	"github.com/goliatone/go-services/core"
 	servicesquery "github.com/goliatone/go-services/query"
 )
 
@@ -70,7 +68,7 @@ func NewFacade(service CommandQueryService, opts ...FacadeOption) (*Facade, erro
 
 	reader := cfg.activityReader
 	if reader == nil {
-		reader = resolveActivityReader(service)
+		return nil, fmt.Errorf("services: activity reader is required; use WithActivityReader(...)")
 	}
 
 	facade := &Facade{service: service}
@@ -118,64 +116,4 @@ func (f *Facade) Service() CommandQueryService {
 		return nil
 	}
 	return f.service
-}
-
-func resolveActivityReader(service CommandQueryService) servicesquery.ServicesActivityReader {
-	if service == nil {
-		return nil
-	}
-	if reader, ok := service.(servicesquery.ServicesActivityReader); ok {
-		return reader
-	}
-	provider, ok := service.(interface {
-		Dependencies() core.ServiceDependencies
-	})
-	if !ok {
-		return nil
-	}
-	deps := provider.Dependencies()
-	if deps.RepositoryFactory == nil {
-		return nil
-	}
-
-	factoryValue := reflect.ValueOf(deps.RepositoryFactory)
-	if !factoryValue.IsValid() {
-		return nil
-	}
-	if factoryValue.Kind() == reflect.Ptr && factoryValue.IsNil() {
-		return nil
-	}
-	method := factoryValue.MethodByName("ActivityStore")
-	if !method.IsValid() || method.Type().NumIn() != 0 || method.Type().NumOut() != 1 {
-		return nil
-	}
-
-	results, ok := safeReflectCall(method)
-	if !ok {
-		return nil
-	}
-	if len(results) != 1 {
-		return nil
-	}
-	candidate := results[0]
-	if !candidate.IsValid() {
-		return nil
-	}
-	if candidate.Kind() == reflect.Ptr && candidate.IsNil() {
-		return nil
-	}
-	reader, ok := candidate.Interface().(servicesquery.ServicesActivityReader)
-	if !ok {
-		return nil
-	}
-	return reader
-}
-
-func safeReflectCall(method reflect.Value) (_ []reflect.Value, ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	return method.Call(nil), true
 }
