@@ -10,4 +10,5 @@ var (
 	_ gocmd.Querier[ListServicesActivityMessage, core.ServicesActivityPage] = (*ListServicesActivityQuery)(nil)
 	_ gocmd.Querier[GetInstallationMessage, core.Installation]              = (*GetInstallationQuery)(nil)
 	_ gocmd.Querier[ListInstallationsMessage, []core.Installation]          = (*ListInstallationsQuery)(nil)
+	_ gocmd.Querier[GetSyncJobMessage, core.SyncJob]                        = (*GetSyncJobQuery)(nil)
 )
