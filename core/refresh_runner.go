@@ -148,7 +148,7 @@ func (s *Service) transitionConnectionToPendingReauth(ctx context.Context, conne
 	if reason == "" {
 		reason = "refresh failed"
 	}
-	return s.connectionStore.UpdateStatus(ctx, connectionID, string(ConnectionStatusPendingReauth), reason)
+	return s.connectionStore.UpdateStatus(ctx, connectionID, ConnectionStatusPendingReauth, reason)
 }
 
 func (s *Service) transitionConnectionToNeedsReconsent(ctx context.Context, connectionID string, reason string) error {
@@ -159,7 +159,7 @@ func (s *Service) transitionConnectionToNeedsReconsent(ctx context.Context, conn
 	if reason == "" {
 		reason = "re-consent required"
 	}
-	if err := s.connectionStore.UpdateStatus(ctx, connectionID, string(ConnectionStatusNeedsReconsent), reason); err != nil {
+	if err := s.connectionStore.UpdateStatus(ctx, connectionID, ConnectionStatusNeedsReconsent, reason); err != nil {
 		return err
 	}
 	if s.grantStore != nil {
