@@ -284,7 +284,7 @@ type ProviderOperationResult struct {
 	ConnectionID  string
 	Operation     string
 	TransportKind string
-	AuthStrategy  string
+	AuthStrategy  AuthKind
 	Idempotency   string
 	Response      TransportResponse
 	Meta          ProviderResponseMeta
@@ -527,7 +527,7 @@ type CapabilityOperationResolveRequest struct {
 
 type Provider interface {
 	ID() string
-	AuthKind() string
+	AuthKind() AuthKind
 	SupportedScopeTypes() []string
 	Capabilities() []CapabilityDescriptor
 
@@ -544,16 +544,18 @@ type CapabilityOperationResolver interface {
 }
 
 const (
-	AuthKindOAuth2AuthCode         = "oauth2_auth_code"
-	AuthKindOAuth2ClientCredential = "oauth2_client_credentials"
-	AuthKindServiceAccountJWT      = "service_account_jwt"
-	AuthKindAPIKey                 = "api_key"
-	AuthKindPAT                    = "pat"
-	AuthKindHMAC                   = "hmac"
-	AuthKindMTLS                   = "mtls"
-	AuthKindBasic                  = "basic"
-	AuthKindAWSSigV4               = "aws_sigv4"
+	AuthKindOAuth2AuthCode         AuthKind = "oauth2_auth_code"
+	AuthKindOAuth2ClientCredential AuthKind = "oauth2_client_credentials"
+	AuthKindServiceAccountJWT      AuthKind = "service_account_jwt"
+	AuthKindAPIKey                 AuthKind = "api_key"
+	AuthKindPAT                    AuthKind = "pat"
+	AuthKindHMAC                   AuthKind = "hmac"
+	AuthKindMTLS                   AuthKind = "mtls"
+	AuthKindBasic                  AuthKind = "basic"
+	AuthKindAWSSigV4               AuthKind = "aws_sigv4"
 )
+
+type AuthKind string
 
 type AuthStrategyProvider interface {
 	AuthStrategy() AuthStrategy
@@ -575,7 +577,7 @@ type ConnectionStore interface {
 		scope ScopeRef,
 		externalAccountID string,
 	) (Connection, bool, error)
-	UpdateStatus(ctx context.Context, id string, status string, reason string) error
+	UpdateStatus(ctx context.Context, id string, status ConnectionStatus, reason string) error
 }
 
 type CredentialStore interface {
@@ -679,7 +681,7 @@ type SubscriptionStore interface {
 	Get(ctx context.Context, id string) (Subscription, error)
 	GetByChannelID(ctx context.Context, providerID, channelID string) (Subscription, error)
 	ListExpiring(ctx context.Context, before time.Time) ([]Subscription, error)
-	UpdateState(ctx context.Context, id string, status string, reason string) error
+	UpdateState(ctx context.Context, id string, status SubscriptionStatus, reason string) error
 }
 
 type SyncCursorStore interface {
@@ -705,7 +707,7 @@ type IncrementalSyncProvider interface {
 }
 
 type AuthStrategy interface {
-	Type() string
+	Type() AuthKind
 	Begin(ctx context.Context, req AuthBeginRequest) (AuthBeginResponse, error)
 	Complete(ctx context.Context, req AuthCompleteRequest) (AuthCompleteResponse, error)
 	Refresh(ctx context.Context, cred ActiveCredential) (RefreshResult, error)
@@ -724,7 +726,7 @@ type InstallationStore interface {
 	Upsert(ctx context.Context, in UpsertInstallationInput) (Installation, error)
 	Get(ctx context.Context, id string) (Installation, error)
 	ListByScope(ctx context.Context, providerID string, scope ScopeRef) ([]Installation, error)
-	UpdateStatus(ctx context.Context, id string, status string, reason string) error
+	UpdateStatus(ctx context.Context, id string, status InstallationStatus, reason string) error
 }
 
 type InboundHandler interface {
@@ -888,6 +890,6 @@ type IntegrationService interface {
 	UpsertInstallation(ctx context.Context, in UpsertInstallationInput) (Installation, error)
 	GetInstallation(ctx context.Context, id string) (Installation, error)
 	ListInstallations(ctx context.Context, providerID string, scope ScopeRef) ([]Installation, error)
-	UpdateInstallationStatus(ctx context.Context, id string, status string, reason string) error
+	UpdateInstallationStatus(ctx context.Context, id string, status InstallationStatus, reason string) error
 	ExecuteProviderOperation(ctx context.Context, req ProviderOperationRequest) (ProviderOperationResult, error)
 }
