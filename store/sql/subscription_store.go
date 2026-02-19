@@ -175,7 +175,12 @@ func (s *SubscriptionStore) ListExpiring(ctx context.Context, before time.Time) 
 	return out, nil
 }
 
-func (s *SubscriptionStore) UpdateState(ctx context.Context, id string, status string, reason string) error {
+func (s *SubscriptionStore) UpdateState(
+	ctx context.Context,
+	id string,
+	status core.SubscriptionStatus,
+	reason string,
+) error {
 	if s == nil || s.repo == nil {
 		return fmt.Errorf("sqlstore: subscription store is not configured")
 	}
@@ -187,7 +192,7 @@ func (s *SubscriptionStore) UpdateState(ctx context.Context, id string, status s
 	if err != nil {
 		return err
 	}
-	record.Status = strings.TrimSpace(status)
+	record.Status = strings.TrimSpace(string(status))
 	record.UpdatedAt = time.Now().UTC()
 	record.Metadata = copyAnyMap(record.Metadata)
 	if strings.TrimSpace(reason) != "" {

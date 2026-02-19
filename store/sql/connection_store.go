@@ -128,7 +128,12 @@ func (s *ConnectionStore) FindByScopeAndExternalAccount(
 	return records[0].toDomain(), true, nil
 }
 
-func (s *ConnectionStore) UpdateStatus(ctx context.Context, id string, status string, reason string) error {
+func (s *ConnectionStore) UpdateStatus(
+	ctx context.Context,
+	id string,
+	status core.ConnectionStatus,
+	reason string,
+) error {
 	if s == nil || s.repo == nil {
 		return fmt.Errorf("sqlstore: connection store is not configured")
 	}
@@ -140,7 +145,7 @@ func (s *ConnectionStore) UpdateStatus(ctx context.Context, id string, status st
 	if err != nil {
 		return err
 	}
-	current.Status = strings.TrimSpace(status)
+	current.Status = strings.TrimSpace(string(status))
 	current.LastError = strings.TrimSpace(reason)
 	current.UpdatedAt = time.Now().UTC()
 

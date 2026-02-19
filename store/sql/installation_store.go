@@ -53,7 +53,7 @@ func (s *InstallationStore) Upsert(ctx context.Context, in core.UpsertInstallati
 	if in.InstallType == "" {
 		return core.Installation{}, fmt.Errorf("sqlstore: install type is required")
 	}
-	status, statusErr := parseInstallationStatusValue(string(in.Status))
+	status, statusErr := parseInstallationStatusValue(in.Status)
 	if statusErr != nil {
 		return core.Installation{}, statusErr
 	}
@@ -160,12 +160,16 @@ func (s *InstallationStore) ListByScope(
 	return out, nil
 }
 
-func (s *InstallationStore) UpdateStatus(ctx context.Context, id string, status string, reason string) error {
+func (s *InstallationStore) UpdateStatus(
+	ctx context.Context,
+	id string,
+	status core.InstallationStatus,
+	reason string,
+) error {
 	if s == nil || s.repo == nil {
 		return fmt.Errorf("sqlstore: installation store is not configured")
 	}
 	id = strings.TrimSpace(id)
-	status = strings.TrimSpace(strings.ToLower(status))
 	if id == "" || status == "" {
 		return fmt.Errorf("sqlstore: installation id and status are required")
 	}
@@ -190,7 +194,7 @@ func (s *InstallationStore) UpdateStatus(ctx context.Context, id string, status 
 		record.Metadata["status_reason"] = strings.TrimSpace(reason)
 		record.Metadata["status_reason_at"] = now.Format(time.RFC3339Nano)
 	}
-	switch core.InstallationStatus(status) {
+	switch targetStatus {
 	case core.InstallationStatusUninstalled:
 		record.RevokedAt = &now
 	}
@@ -225,8 +229,8 @@ func findInstallationTx(
 	return record, nil
 }
 
-func parseInstallationStatusValue(status string) (core.InstallationStatus, error) {
-	normalized := core.InstallationStatus(strings.TrimSpace(strings.ToLower(status)))
+func parseInstallationStatusValue(status core.InstallationStatus) (core.InstallationStatus, error) {
+	normalized := core.InstallationStatus(strings.TrimSpace(strings.ToLower(string(status))))
 	if normalized == "" {
 		return core.InstallationStatusActive, nil
 	}
@@ -237,6 +241,6 @@ func parseInstallationStatusValue(status string) (core.InstallationStatus, error
 		core.InstallationStatusNeedsReconsent:
 		return normalized, nil
 	default:
-		return "", fmt.Errorf("sqlstore: invalid installation status %q", status)
+		return "", fmt.Errorf("sqlstore: invalid installation status %q", string(status))
 	}
 }
