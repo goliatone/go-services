@@ -25,6 +25,10 @@ type InstallationReader interface {
 	ListInstallations(ctx context.Context, providerID string, scope core.ScopeRef) ([]core.Installation, error)
 }
 
+type SyncJobReader interface {
+	GetSyncJob(ctx context.Context, req core.GetSyncJobRequest) (core.SyncJob, error)
+}
+
 type LoadSyncCursorQuery struct {
 	reader SyncCursorReader
 }
@@ -89,4 +93,19 @@ func (q *ListInstallationsQuery) Query(
 		return nil, fmt.Errorf("query: installation reader is required")
 	}
 	return q.reader.ListInstallations(ctx, msg.ProviderID, msg.Scope)
+}
+
+type GetSyncJobQuery struct {
+	reader SyncJobReader
+}
+
+func NewGetSyncJobQuery(reader SyncJobReader) *GetSyncJobQuery {
+	return &GetSyncJobQuery{reader: reader}
+}
+
+func (q *GetSyncJobQuery) Query(ctx context.Context, msg GetSyncJobMessage) (core.SyncJob, error) {
+	if q == nil || q.reader == nil {
+		return core.SyncJob{}, fmt.Errorf("query: sync job reader is required")
+	}
+	return q.reader.GetSyncJob(ctx, msg.Request)
 }
