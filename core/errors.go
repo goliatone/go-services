@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -16,6 +17,7 @@ const (
 	ServiceErrorPermissionDenied        = "SERVICE_PERMISSION_DENIED"
 	ServiceErrorRateLimited             = "SERVICE_RATE_LIMITED"
 	ServiceErrorProviderOperationFailed = "SERVICE_PROVIDER_OPERATION_FAILED"
+	ServiceErrorSyncJobNotFound         = "SERVICE_SYNC_JOB_NOT_FOUND"
 	ServiceErrorInternal                = "SERVICE_INTERNAL_ERROR"
 )
 
@@ -30,6 +32,13 @@ func serviceErrorMapper(err error) *goerrors.Error {
 	}
 
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case errors.Is(err, ErrSyncJobNotFound):
+		return newServiceError(err.Error(), goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound)
+	case errors.Is(err, ErrInvalidSyncJobMode), errors.Is(err, ErrInvalidSyncJobScope):
+		return newServiceError(err.Error(), goerrors.CategoryBadInput, ServiceErrorBadInput)
+	}
+
 	switch {
 	case strings.Contains(msg, "provider") && strings.Contains(msg, "not registered"):
 		return newServiceError(err.Error(), goerrors.CategoryNotFound, ServiceErrorProviderNotFound)
