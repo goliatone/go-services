@@ -43,7 +43,7 @@ func NewOAuth2SigV4Strategy(cfg OAuth2SigV4StrategyConfig) *OAuth2SigV4Strategy 
 	}
 }
 
-func (*OAuth2SigV4Strategy) Type() string { return core.AuthKindAWSSigV4 }
+func (*OAuth2SigV4Strategy) Type() core.AuthKind { return core.AuthKindAWSSigV4 }
 
 func (s *OAuth2SigV4Strategy) Begin(ctx context.Context, req core.AuthBeginRequest) (core.AuthBeginResponse, error) {
 	if s == nil || s.delegate == nil {

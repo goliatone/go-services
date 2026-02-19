@@ -21,7 +21,7 @@ type APIKeyProfile struct {
 }
 
 type APIKeyStrategyConfig struct {
-	Kind              string
+	Kind              core.AuthKind
 	Profile           APIKeyProfile
 	StaticKey         string
 	ExternalAccountID string
@@ -32,7 +32,7 @@ type APIKeyStrategy struct {
 }
 
 func NewAPIKeyStrategy(cfg APIKeyStrategyConfig) *APIKeyStrategy {
-	kind := strings.TrimSpace(strings.ToLower(cfg.Kind))
+	kind := core.AuthKind(strings.TrimSpace(strings.ToLower(string(cfg.Kind))))
 	if kind == "" {
 		kind = core.AuthKindAPIKey
 	}
@@ -63,7 +63,7 @@ func NewPATStrategy(cfg APIKeyStrategyConfig) *APIKeyStrategy {
 	return NewAPIKeyStrategy(cfg)
 }
 
-func (s *APIKeyStrategy) Type() string {
+func (s *APIKeyStrategy) Type() core.AuthKind {
 	if s == nil {
 		return core.AuthKindAPIKey
 	}
@@ -119,7 +119,7 @@ func (s *APIKeyStrategy) Complete(_ context.Context, req core.AuthCompleteReques
 	return core.AuthCompleteResponse{
 		ExternalAccountID: externalAccountID,
 		Credential: core.ActiveCredential{
-			TokenType:       s.Type(),
+			TokenType:       string(s.Type()),
 			AccessToken:     key,
 			RequestedScopes: append([]string(nil), requested...),
 			GrantedScopes:   append([]string(nil), granted...),
@@ -137,7 +137,7 @@ func (s *APIKeyStrategy) Complete(_ context.Context, req core.AuthCompleteReques
 func (s *APIKeyStrategy) Refresh(_ context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
 	refreshed := cred
 	if strings.TrimSpace(refreshed.TokenType) == "" {
-		refreshed.TokenType = s.Type()
+		refreshed.TokenType = string(s.Type())
 	}
 	refreshed.Refreshable = false
 	refreshed.Metadata = cloneMetadata(refreshed.Metadata)
@@ -184,7 +184,7 @@ func NewHMACStrategy(cfg HMACStrategyConfig) *HMACStrategy {
 	}
 }
 
-func (*HMACStrategy) Type() string { return core.AuthKindHMAC }
+func (*HMACStrategy) Type() core.AuthKind { return core.AuthKindHMAC }
 
 func (s *HMACStrategy) Begin(_ context.Context, req core.AuthBeginRequest) (core.AuthBeginResponse, error) {
 	return core.AuthBeginResponse{
@@ -238,7 +238,7 @@ func (s *HMACStrategy) Complete(_ context.Context, req core.AuthCompleteRequest)
 	return core.AuthCompleteResponse{
 		ExternalAccountID: externalAccountID,
 		Credential: core.ActiveCredential{
-			TokenType:       core.AuthKindHMAC,
+			TokenType:       string(core.AuthKindHMAC),
 			AccessToken:     secret,
 			RequestedScopes: append([]string(nil), requested...),
 			GrantedScopes:   append([]string(nil), granted...),
@@ -256,7 +256,7 @@ func (s *HMACStrategy) Complete(_ context.Context, req core.AuthCompleteRequest)
 func (s *HMACStrategy) Refresh(_ context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
 	refreshed := cred
 	if strings.TrimSpace(refreshed.TokenType) == "" {
-		refreshed.TokenType = core.AuthKindHMAC
+		refreshed.TokenType = string(core.AuthKindHMAC)
 	}
 	refreshed.Refreshable = false
 	refreshed.Metadata = cloneMetadata(refreshed.Metadata)

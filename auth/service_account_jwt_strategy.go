@@ -59,7 +59,7 @@ func NewServiceAccountJWTStrategy(cfg ServiceAccountJWTStrategyConfig) *ServiceA
 	}
 }
 
-func (*ServiceAccountJWTStrategy) Type() string {
+func (*ServiceAccountJWTStrategy) Type() core.AuthKind {
 	return core.AuthKindServiceAccountJWT
 }
 

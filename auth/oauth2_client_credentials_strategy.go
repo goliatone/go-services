@@ -100,7 +100,7 @@ func NewOAuth2ClientCredentialsStrategy(cfg OAuth2ClientCredentialsStrategyConfi
 	}
 }
 
-func (*OAuth2ClientCredentialsStrategy) Type() string {
+func (*OAuth2ClientCredentialsStrategy) Type() core.AuthKind {
 	return core.AuthKindOAuth2ClientCredential
 }
 

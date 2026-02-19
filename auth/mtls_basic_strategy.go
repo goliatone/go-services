@@ -29,7 +29,7 @@ func NewBasicStrategy(cfg BasicStrategyConfig) *BasicStrategy {
 	}
 }
 
-func (*BasicStrategy) Type() string { return core.AuthKindBasic }
+func (*BasicStrategy) Type() core.AuthKind { return core.AuthKindBasic }
 
 func (s *BasicStrategy) Begin(_ context.Context, req core.AuthBeginRequest) (core.AuthBeginResponse, error) {
 	return core.AuthBeginResponse{
@@ -64,7 +64,7 @@ func (s *BasicStrategy) Complete(_ context.Context, req core.AuthCompleteRequest
 	return core.AuthCompleteResponse{
 		ExternalAccountID: externalAccountID,
 		Credential: core.ActiveCredential{
-			TokenType:       core.AuthKindBasic,
+			TokenType:       string(core.AuthKindBasic),
 			AccessToken:     encoded,
 			RequestedScopes: append([]string(nil), requested...),
 			GrantedScopes:   append([]string(nil), granted...),
@@ -84,7 +84,7 @@ func (s *BasicStrategy) Complete(_ context.Context, req core.AuthCompleteRequest
 
 func (*BasicStrategy) Refresh(_ context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
 	refreshed := cred
-	refreshed.TokenType = core.AuthKindBasic
+	refreshed.TokenType = string(core.AuthKindBasic)
 	refreshed.Refreshable = false
 	refreshed.Metadata = cloneMetadata(refreshed.Metadata)
 	refreshed.Metadata["auth_kind"] = core.AuthKindBasic
@@ -119,7 +119,7 @@ func NewMTLSStrategy(cfg MTLSStrategyConfig) *MTLSStrategy {
 	}
 }
 
-func (*MTLSStrategy) Type() string { return core.AuthKindMTLS }
+func (*MTLSStrategy) Type() core.AuthKind { return core.AuthKindMTLS }
 
 func (s *MTLSStrategy) Begin(_ context.Context, req core.AuthBeginRequest) (core.AuthBeginResponse, error) {
 	return core.AuthBeginResponse{
@@ -158,7 +158,7 @@ func (s *MTLSStrategy) Complete(_ context.Context, req core.AuthCompleteRequest)
 	return core.AuthCompleteResponse{
 		ExternalAccountID: externalAccountID,
 		Credential: core.ActiveCredential{
-			TokenType:       core.AuthKindMTLS,
+			TokenType:       string(core.AuthKindMTLS),
 			AccessToken:     "mtls:" + identity,
 			RequestedScopes: append([]string(nil), requested...),
 			GrantedScopes:   append([]string(nil), granted...),
@@ -180,7 +180,7 @@ func (s *MTLSStrategy) Complete(_ context.Context, req core.AuthCompleteRequest)
 
 func (*MTLSStrategy) Refresh(_ context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
 	refreshed := cred
-	refreshed.TokenType = core.AuthKindMTLS
+	refreshed.TokenType = string(core.AuthKindMTLS)
 	refreshed.Refreshable = false
 	refreshed.Metadata = cloneMetadata(refreshed.Metadata)
 	refreshed.Metadata["auth_kind"] = core.AuthKindMTLS
