@@ -229,7 +229,7 @@ func (m UpsertInstallationMessage) Validate() error {
 
 type UpdateInstallationStatusMessage struct {
 	InstallationID string
-	Status         string
+	Status         core.InstallationStatus
 	Reason         string
 }
 
@@ -239,7 +239,7 @@ func (m UpdateInstallationStatusMessage) Validate() error {
 	if strings.TrimSpace(m.InstallationID) == "" {
 		return fmt.Errorf("command: installation id is required")
 	}
-	if strings.TrimSpace(m.Status) == "" {
+	if strings.TrimSpace(string(m.Status)) == "" {
 		return fmt.Errorf("command: installation status is required")
 	}
 	return nil
