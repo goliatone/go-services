@@ -120,12 +120,69 @@ func TestInstallationQueries_Delegate(t *testing.T) {
 	}
 }
 
+func TestGetSyncJobQuery_QueryDelegates(t *testing.T) {
+	called := false
+	reader := stubSyncJobReader{
+		getFn: func(_ context.Context, req core.GetSyncJobRequest) (core.SyncJob, error) {
+			called = true
+			if req.SyncJobID != "job_1" || req.ScopeType != "org" || req.ScopeID != "org_1" {
+				t.Fatalf("unexpected get sync job request: %#v", req)
+			}
+			return core.SyncJob{
+				ID:         "job_1",
+				ProviderID: "github",
+				Mode:       core.SyncJobModeDelta,
+				Status:     core.SyncJobStatusQueued,
+			}, nil
+		},
+	}
+
+	result, err := NewGetSyncJobQuery(reader).Query(context.Background(), GetSyncJobMessage{
+		Request: core.GetSyncJobRequest{
+			SyncJobID: "job_1",
+			ScopeType: "org",
+			ScopeID:   "org_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("query get sync job: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected get sync job reader invocation")
+	}
+	if result.ID != "job_1" {
+		t.Fatalf("unexpected get sync job result: %#v", result)
+	}
+}
+
 func TestQueryMessageValidation(t *testing.T) {
 	tests := []struct {
 		name    string
 		msg     interface{ Validate() error }
 		wantErr bool
 	}{
+		{
+			name: "get sync job valid",
+			msg: GetSyncJobMessage{Request: core.GetSyncJobRequest{
+				SyncJobID: "job_1",
+				ScopeType: "org",
+				ScopeID:   "org_1",
+			}},
+			wantErr: false,
+		},
+		{
+			name:    "get sync job missing id",
+			msg:     GetSyncJobMessage{Request: core.GetSyncJobRequest{}},
+			wantErr: true,
+		},
+		{
+			name: "get sync job scope guard incomplete",
+			msg: GetSyncJobMessage{Request: core.GetSyncJobRequest{
+				SyncJobID: "job_1",
+				ScopeType: "org",
+			}},
+			wantErr: true,
+		},
 		{
 			name: "load sync cursor valid",
 			msg: LoadSyncCursorMessage{
@@ -241,8 +298,20 @@ func (s stubInstallationReader) ListInstallations(
 	return s.listFn(ctx, providerID, scope)
 }
 
+type stubSyncJobReader struct {
+	getFn func(ctx context.Context, req core.GetSyncJobRequest) (core.SyncJob, error)
+}
+
+func (s stubSyncJobReader) GetSyncJob(ctx context.Context, req core.GetSyncJobRequest) (core.SyncJob, error) {
+	if s.getFn == nil {
+		return core.SyncJob{}, fmt.Errorf("get sync job not configured")
+	}
+	return s.getFn(ctx, req)
+}
+
 var (
 	_ SyncCursorReader       = stubSyncCursorReader{}
 	_ ServicesActivityReader = stubServicesActivityReader{}
 	_ InstallationReader     = stubInstallationReader{}
+	_ SyncJobReader          = stubSyncJobReader{}
 )

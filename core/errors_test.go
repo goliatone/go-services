@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -24,6 +25,19 @@ func TestServiceErrorMapper_AssignsStableCodes(t *testing.T) {
 	}
 	if mapped.Category != goerrors.CategoryConflict {
 		t.Fatalf("expected conflict category, got %q", mapped.Category)
+	}
+
+	mapped = serviceErrorMapper(fmt.Errorf("%w: id %q", ErrSyncJobNotFound, "job_1"))
+	if mapped.TextCode != ServiceErrorSyncJobNotFound {
+		t.Fatalf("expected sync job not found code, got %q", mapped.TextCode)
+	}
+	if mapped.Category != goerrors.CategoryNotFound {
+		t.Fatalf("expected not found category, got %q", mapped.Category)
+	}
+
+	mapped = serviceErrorMapper(fmt.Errorf("%w: %q", ErrInvalidSyncJobMode, "other"))
+	if mapped.TextCode != ServiceErrorBadInput {
+		t.Fatalf("expected bad input code for invalid sync job mode, got %q", mapped.TextCode)
 	}
 }
 

@@ -230,6 +230,51 @@ func TestMutationCommands_DelegateToService(t *testing.T) {
 		}
 	})
 
+	t.Run("create sync job", func(t *testing.T) {
+		called := false
+		svc := stubMutatingService{
+			createSyncJobFn: func(_ context.Context, req core.CreateSyncJobRequest) (core.CreateSyncJobResult, error) {
+				called = true
+				if req.ProviderID != "github" || req.ScopeType != "org" || req.ScopeID != "org_1" {
+					t.Fatalf("unexpected create sync job request: %#v", req)
+				}
+				return core.CreateSyncJobResult{
+					Job: core.SyncJob{
+						ID:         "job_1",
+						ProviderID: req.ProviderID,
+						Mode:       core.SyncJobModeFull,
+						Status:     core.SyncJobStatusQueued,
+					},
+					Created: true,
+				}, nil
+			},
+		}
+
+		cmd := NewCreateSyncJobCommand(svc)
+		collector := gocmd.NewResult[core.CreateSyncJobResult]()
+		ctx := gocmd.ContextWithResult(context.Background(), collector)
+		if err := cmd.Execute(ctx, CreateSyncJobMessage{
+			Request: core.CreateSyncJobRequest{
+				ProviderID: "github",
+				ScopeType:  "org",
+				ScopeID:    "org_1",
+				Mode:       core.SyncJobModeFull,
+			},
+		}); err != nil {
+			t.Fatalf("execute create sync job: %v", err)
+		}
+		if !called {
+			t.Fatalf("expected create sync job invocation")
+		}
+		stored, ok := collector.Load()
+		if !ok {
+			t.Fatalf("expected create sync job result")
+		}
+		if !stored.Created || stored.Job.ID != "job_1" {
+			t.Fatalf("unexpected create sync job result: %#v", stored)
+		}
+	})
+
 	t.Run("callback and refresh commands", func(t *testing.T) {
 		calledCallback := false
 		calledCompleteReconsent := false
@@ -326,6 +371,26 @@ func TestMessageValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "create sync job valid",
+			msg: CreateSyncJobMessage{Request: core.CreateSyncJobRequest{
+				ProviderID: "github",
+				ScopeType:  "org",
+				ScopeID:    "org_1",
+				Mode:       core.SyncJobModeDelta,
+			}},
+			wantErr: false,
+		},
+		{
+			name: "create sync job invalid mode",
+			msg: CreateSyncJobMessage{Request: core.CreateSyncJobRequest{
+				ProviderID: "github",
+				ScopeType:  "org",
+				ScopeID:    "org_1",
+				Mode:       core.SyncJobModeBootstrap,
+			}},
+			wantErr: true,
+		},
+		{
 			name: "connect valid",
 			msg: ConnectMessage{Request: core.ConnectRequest{
 				ProviderID: "github",
@@ -401,6 +466,7 @@ type stubMutatingService struct {
 	advanceSyncCursorFn        func(ctx context.Context, in core.AdvanceSyncCursorInput) (core.SyncCursor, error)
 	upsertInstallationFn       func(ctx context.Context, in core.UpsertInstallationInput) (core.Installation, error)
 	updateInstallationStatusFn func(ctx context.Context, id string, status core.InstallationStatus, reason string) error
+	createSyncJobFn            func(ctx context.Context, req core.CreateSyncJobRequest) (core.CreateSyncJobResult, error)
 }
 
 func (s stubMutatingService) Connect(ctx context.Context, req core.ConnectRequest) (core.BeginAuthResponse, error) {
@@ -497,6 +563,16 @@ func (s stubMutatingService) UpdateInstallationStatus(
 		return fmt.Errorf("update installation status not configured")
 	}
 	return s.updateInstallationStatusFn(ctx, id, status, reason)
+}
+
+func (s stubMutatingService) CreateSyncJob(
+	ctx context.Context,
+	req core.CreateSyncJobRequest,
+) (core.CreateSyncJobResult, error) {
+	if s.createSyncJobFn == nil {
+		return core.CreateSyncJobResult{}, fmt.Errorf("create sync job not configured")
+	}
+	return s.createSyncJobFn(ctx, req)
 }
 
 var _ MutatingService = stubMutatingService{}

@@ -19,11 +19,11 @@ func TestNewFacade_WiresCommandsAndQueries(t *testing.T) {
 	}
 
 	commands := facade.Commands()
-	if commands.Connect == nil || commands.Refresh == nil || commands.AdvanceSyncCursor == nil || commands.UpsertInstallation == nil || commands.UpdateInstallation == nil {
+	if commands.Connect == nil || commands.Refresh == nil || commands.AdvanceSyncCursor == nil || commands.UpsertInstallation == nil || commands.UpdateInstallation == nil || commands.CreateSyncJob == nil {
 		t.Fatalf("expected command handlers to be wired")
 	}
 	queries := facade.Queries()
-	if queries.LoadSyncCursor == nil || queries.ListServicesActivity == nil || queries.GetInstallation == nil || queries.ListInstallations == nil {
+	if queries.LoadSyncCursor == nil || queries.ListServicesActivity == nil || queries.GetInstallation == nil || queries.ListInstallations == nil || queries.GetSyncJob == nil {
 		t.Fatalf("expected query handlers to be wired")
 	}
 }
@@ -88,6 +88,31 @@ func TestFacade_CommandAndQueryDelegation(t *testing.T) {
 	}
 	if installation.ID != "inst_1" || installation.ProviderID != "github" {
 		t.Fatalf("unexpected installation query result: %#v", installation)
+	}
+
+	if err := facade.Commands().CreateSyncJob.Execute(context.Background(), servicescommand.CreateSyncJobMessage{
+		Request: core.CreateSyncJobRequest{
+			ProviderID: "github",
+			ScopeType:  "org",
+			ScopeID:    "org_1",
+			Mode:       core.SyncJobModeFull,
+		},
+	}); err != nil {
+		t.Fatalf("execute create sync job command: %v", err)
+	}
+
+	job, err := facade.Queries().GetSyncJob.Query(context.Background(), servicesquery.GetSyncJobMessage{
+		Request: core.GetSyncJobRequest{
+			SyncJobID: "job_1",
+			ScopeType: "org",
+			ScopeID:   "org_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("query get sync job: %v", err)
+	}
+	if job.ID != "job_1" || job.Status != core.SyncJobStatusQueued {
+		t.Fatalf("unexpected sync job query result: %#v", job)
 	}
 }
 
@@ -196,6 +221,30 @@ func (s *stubFacadeService) GetInstallation(context.Context, string) (core.Insta
 
 func (s *stubFacadeService) ListInstallations(context.Context, string, core.ScopeRef) ([]core.Installation, error) {
 	return []core.Installation{{ID: "inst_1", ProviderID: "github"}}, nil
+}
+
+func (s *stubFacadeService) CreateSyncJob(
+	context.Context,
+	core.CreateSyncJobRequest,
+) (core.CreateSyncJobResult, error) {
+	return core.CreateSyncJobResult{
+		Job: core.SyncJob{
+			ID:         "job_1",
+			ProviderID: "github",
+			Mode:       core.SyncJobModeFull,
+			Status:     core.SyncJobStatusQueued,
+		},
+		Created: true,
+	}, nil
+}
+
+func (s *stubFacadeService) GetSyncJob(context.Context, core.GetSyncJobRequest) (core.SyncJob, error) {
+	return core.SyncJob{
+		ID:         "job_1",
+		ProviderID: "github",
+		Mode:       core.SyncJobModeFull,
+		Status:     core.SyncJobStatusQueued,
+	}, nil
 }
 
 type stubFacadeActivityReader struct{}
