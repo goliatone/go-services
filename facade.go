@@ -27,6 +27,7 @@ type Commands struct {
 	AdvanceSyncCursor  *servicescommand.AdvanceSyncCursorCommand
 	UpsertInstallation *servicescommand.UpsertInstallationCommand
 	UpdateInstallation *servicescommand.UpdateInstallationStatusCommand
+	CreateSyncJob      *servicescommand.CreateSyncJobCommand
 }
 
 type Queries struct {
@@ -34,6 +35,7 @@ type Queries struct {
 	ListServicesActivity *servicesquery.ListServicesActivityQuery
 	GetInstallation      *servicesquery.GetInstallationQuery
 	ListInstallations    *servicesquery.ListInstallationsQuery
+	GetSyncJob           *servicesquery.GetSyncJobQuery
 }
 
 type Facade struct {
@@ -72,6 +74,14 @@ func NewFacade(service CommandQueryService, opts ...FacadeOption) (*Facade, erro
 	}
 
 	facade := &Facade{service: service}
+	var createSyncJobCommand *servicescommand.CreateSyncJobCommand
+	if syncJobService, ok := service.(servicescommand.SyncJobMutatingService); ok {
+		createSyncJobCommand = servicescommand.NewCreateSyncJobCommand(syncJobService)
+	}
+	var getSyncJobQuery *servicesquery.GetSyncJobQuery
+	if syncJobReader, ok := service.(servicesquery.SyncJobReader); ok {
+		getSyncJobQuery = servicesquery.NewGetSyncJobQuery(syncJobReader)
+	}
 	facade.commands = Commands{
 		Connect:            servicescommand.NewConnectCommand(service),
 		StartReconsent:     servicescommand.NewStartReconsentCommand(service),
@@ -86,12 +96,14 @@ func NewFacade(service CommandQueryService, opts ...FacadeOption) (*Facade, erro
 		AdvanceSyncCursor:  servicescommand.NewAdvanceSyncCursorCommand(service),
 		UpsertInstallation: servicescommand.NewUpsertInstallationCommand(service),
 		UpdateInstallation: servicescommand.NewUpdateInstallationStatusCommand(service),
+		CreateSyncJob:      createSyncJobCommand,
 	}
 	facade.queries = Queries{
 		LoadSyncCursor:       servicesquery.NewLoadSyncCursorQuery(service),
 		ListServicesActivity: servicesquery.NewListServicesActivityQuery(reader),
 		GetInstallation:      servicesquery.NewGetInstallationQuery(service),
 		ListInstallations:    servicesquery.NewListInstallationsQuery(service),
+		GetSyncJob:           getSyncJobQuery,
 	}
 
 	return facade, nil
