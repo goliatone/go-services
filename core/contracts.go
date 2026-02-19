@@ -151,6 +151,40 @@ type AdvanceSyncCursorInput struct {
 	Metadata       map[string]any
 }
 
+type CreateSyncJobRequest struct {
+	ProviderID     string
+	ScopeType      string
+	ScopeID        string
+	ConnectionID   string
+	Mode           SyncJobMode
+	IdempotencyKey string
+	RequestedBy    string
+	Metadata       map[string]any
+}
+
+type CreateSyncJobResult struct {
+	Job     SyncJob
+	Created bool
+}
+
+type GetSyncJobRequest struct {
+	SyncJobID    string
+	ProviderID   string
+	ScopeType    string
+	ScopeID      string
+	ConnectionID string
+}
+
+type CreateSyncJobStoreInput struct {
+	ProviderID     string
+	Scope          ScopeRef
+	ConnectionID   string
+	Mode           SyncJobMode
+	IdempotencyKey string
+	RequestedBy    string
+	Metadata       map[string]any
+}
+
 type SubscribeRequest struct {
 	ConnectionID string
 	ResourceType string
@@ -727,6 +761,11 @@ type InstallationStore interface {
 	Get(ctx context.Context, id string) (Installation, error)
 	ListByScope(ctx context.Context, providerID string, scope ScopeRef) ([]Installation, error)
 	UpdateStatus(ctx context.Context, id string, status InstallationStatus, reason string) error
+}
+
+type SyncJobStore interface {
+	CreateSyncJob(ctx context.Context, in CreateSyncJobStoreInput) (CreateSyncJobResult, error)
+	GetSyncJob(ctx context.Context, id string) (SyncJob, error)
 }
 
 type InboundHandler interface {
