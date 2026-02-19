@@ -103,18 +103,17 @@ func (s *Service) ListInstallations(
 func (s *Service) UpdateInstallationStatus(
 	ctx context.Context,
 	id string,
-	status string,
+	status InstallationStatus,
 	reason string,
 ) error {
 	if s == nil || s.installationStore == nil {
 		return s.mapError(fmt.Errorf("core: installation store is required"))
 	}
 	id = strings.TrimSpace(id)
-	status = strings.TrimSpace(status)
 	if id == "" || status == "" {
 		return s.mapError(fmt.Errorf("core: installation id and status are required"))
 	}
-	targetStatus, parseErr := parseInstallationStatus(InstallationStatus(status))
+	targetStatus, parseErr := parseInstallationStatus(status)
 	if parseErr != nil {
 		return s.mapError(parseErr)
 	}
@@ -126,7 +125,7 @@ func (s *Service) UpdateInstallationStatus(
 	if transitionErr := candidate.TransitionTo(targetStatus, time.Now().UTC()); transitionErr != nil {
 		return s.mapError(transitionErr)
 	}
-	if err := s.installationStore.UpdateStatus(ctx, id, string(targetStatus), strings.TrimSpace(reason)); err != nil {
+	if err := s.installationStore.UpdateStatus(ctx, id, targetStatus, strings.TrimSpace(reason)); err != nil {
 		return s.mapError(err)
 	}
 	return nil
