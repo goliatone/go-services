@@ -16,4 +16,5 @@ var (
 	_ gocmd.Commander[AdvanceSyncCursorMessage]        = (*AdvanceSyncCursorCommand)(nil)
 	_ gocmd.Commander[UpsertInstallationMessage]       = (*UpsertInstallationCommand)(nil)
 	_ gocmd.Commander[UpdateInstallationStatusMessage] = (*UpdateInstallationStatusCommand)(nil)
+	_ gocmd.Commander[CreateSyncJobMessage]            = (*CreateSyncJobCommand)(nil)
 )
