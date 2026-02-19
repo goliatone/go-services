@@ -24,6 +24,10 @@ type MutatingService interface {
 	UpdateInstallationStatus(ctx context.Context, id string, status core.InstallationStatus, reason string) error
 }
 
+type SyncJobMutatingService interface {
+	CreateSyncJob(ctx context.Context, req core.CreateSyncJobRequest) (core.CreateSyncJobResult, error)
+}
+
 type ConnectCommand struct {
 	service MutatingService
 }
@@ -267,6 +271,26 @@ func (c *UpdateInstallationStatusCommand) Execute(ctx context.Context, msg Updat
 		return fmt.Errorf("command: installation service is required")
 	}
 	return c.service.UpdateInstallationStatus(ctx, msg.InstallationID, msg.Status, msg.Reason)
+}
+
+type CreateSyncJobCommand struct {
+	service SyncJobMutatingService
+}
+
+func NewCreateSyncJobCommand(service SyncJobMutatingService) *CreateSyncJobCommand {
+	return &CreateSyncJobCommand{service: service}
+}
+
+func (c *CreateSyncJobCommand) Execute(ctx context.Context, msg CreateSyncJobMessage) error {
+	if c == nil || c.service == nil {
+		return fmt.Errorf("command: sync job service is required")
+	}
+	out, err := c.service.CreateSyncJob(ctx, msg.Request)
+	if err != nil {
+		return err
+	}
+	storeResult(ctx, out)
+	return nil
 }
 
 func storeResult[T any](ctx context.Context, value T) {
