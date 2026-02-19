@@ -91,7 +91,7 @@ func (s *Service) RenewSubscription(ctx context.Context, req RenewSubscriptionRe
 
 	result, err := subscribable.RenewSubscription(ctx, req)
 	if err != nil {
-		_ = s.subscriptionStore.UpdateState(ctx, existing.ID, string(SubscriptionStatusErrored), err.Error())
+		_ = s.subscriptionStore.UpdateState(ctx, existing.ID, SubscriptionStatusErrored, err.Error())
 		return Subscription{}, s.mapError(err)
 	}
 
@@ -161,14 +161,14 @@ func (s *Service) CancelSubscription(ctx context.Context, req CancelSubscription
 		SubscriptionID: subscriptionID,
 		Reason:         reason,
 	}); err != nil {
-		_ = s.subscriptionStore.UpdateState(ctx, existing.ID, string(SubscriptionStatusErrored), err.Error())
+		_ = s.subscriptionStore.UpdateState(ctx, existing.ID, SubscriptionStatusErrored, err.Error())
 		return s.mapError(err)
 	}
 
 	if err := s.subscriptionStore.UpdateState(
 		ctx,
 		existing.ID,
-		string(SubscriptionStatusCancelled),
+		SubscriptionStatusCancelled,
 		reason,
 	); err != nil {
 		return s.mapError(err)
