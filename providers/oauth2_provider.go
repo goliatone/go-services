@@ -116,7 +116,7 @@ func (p *OAuth2Provider) ID() string {
 	return p.cfg.ID
 }
 
-func (*OAuth2Provider) AuthKind() string {
+func (*OAuth2Provider) AuthKind() core.AuthKind {
 	return defaultAuthKind
 }
 

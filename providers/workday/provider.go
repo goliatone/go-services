@@ -113,7 +113,7 @@ func (p *Provider) ID() string {
 	return ProviderID
 }
 
-func (*Provider) AuthKind() string {
+func (*Provider) AuthKind() core.AuthKind {
 	return core.AuthKindServiceAccountJWT
 }
 
@@ -180,7 +180,13 @@ func (p *Provider) CompleteAuth(ctx context.Context, req core.CompleteAuthReques
 	complete.Credential.RequestedScopes = normalizeCanonicalGrants(complete.Credential.RequestedScopes)
 	complete.GrantedGrants = normalizeCanonicalGrants(complete.GrantedGrants)
 	complete.RequestedGrants = normalizeCanonicalGrants(complete.RequestedGrants)
-	return complete, nil
+	return core.CompleteAuthResponse{
+		ExternalAccountID: complete.ExternalAccountID,
+		Credential:        complete.Credential,
+		RequestedGrants:   append([]string(nil), complete.RequestedGrants...),
+		GrantedGrants:     append([]string(nil), complete.GrantedGrants...),
+		Metadata:          cloneMetadata(complete.Metadata),
+	}, nil
 }
 
 func (p *Provider) Refresh(ctx context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
@@ -242,7 +248,7 @@ func (p *Provider) ResolveCapabilityOperation(
 			Normalize: normalizeWorkdayResponse,
 		}, nil
 	case "hr.compensation.read":
-		if req.Decision.Mode == core.CapabilityDeniedBehaviorDegrade {
+		if shouldDegrade(req.Decision) {
 			if operation == "" {
 				operation = "workday.hr.compensation.read.degraded"
 			}
@@ -290,7 +296,7 @@ func (p *Provider) ResolveCapabilityOperation(
 			Normalize: normalizeWorkdayResponse,
 		}, nil
 	case "hr.reports.export":
-		if req.Decision.Mode == core.CapabilityDeniedBehaviorDegrade {
+		if shouldDegrade(req.Decision) {
 			if operation == "" {
 				operation = "workday.hr.reports.export.degraded"
 			}
@@ -493,6 +499,27 @@ func resolveTransportKind(raw string, fallback string) string {
 		return trimmed
 	}
 	return strings.TrimSpace(strings.ToLower(fallback))
+}
+
+func shouldDegrade(decision core.CapabilityResult) bool {
+	if decision.Mode != core.CapabilityDeniedBehaviorDegrade {
+		return false
+	}
+	if len(decision.Metadata) == 0 {
+		return false
+	}
+	raw, ok := decision.Metadata["missing_grants"]
+	if !ok || raw == nil {
+		return false
+	}
+	switch typed := raw.(type) {
+	case []string:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	default:
+		return strings.TrimSpace(fmt.Sprint(raw)) != ""
+	}
 }
 
 func runtimeCredential() *core.ActiveCredential {
