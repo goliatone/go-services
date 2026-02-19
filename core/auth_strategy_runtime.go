@@ -9,11 +9,11 @@ type providerBackedAuthStrategy struct {
 	provider Provider
 }
 
-func (s providerBackedAuthStrategy) Type() string {
+func (s providerBackedAuthStrategy) Type() AuthKind {
 	if s.provider == nil {
 		return ""
 	}
-	return strings.TrimSpace(strings.ToLower(s.provider.AuthKind()))
+	return normalizeAuthKind(s.provider.AuthKind())
 }
 
 func (s providerBackedAuthStrategy) Begin(ctx context.Context, req AuthBeginRequest) (AuthBeginResponse, error) {
@@ -61,9 +61,9 @@ func (s providerBackedAuthStrategy) Refresh(ctx context.Context, cred ActiveCred
 	return s.provider.Refresh(ctx, cred)
 }
 
-func authKindRequiresCallbackState(kind string) bool {
-	normalized := strings.TrimSpace(strings.ToLower(kind))
-	return normalized == AuthKindOAuth2AuthCode || normalized == "oauth2"
+func authKindRequiresCallbackState(kind AuthKind) bool {
+	normalized := normalizeAuthKind(kind)
+	return normalized == AuthKindOAuth2AuthCode || normalized == AuthKind("oauth2")
 }
 
 func strategyRequiresCallbackState(strategy AuthStrategy) bool {
@@ -71,6 +71,10 @@ func strategyRequiresCallbackState(strategy AuthStrategy) bool {
 		return false
 	}
 	return authKindRequiresCallbackState(strategy.Type())
+}
+
+func normalizeAuthKind(kind AuthKind) AuthKind {
+	return AuthKind(strings.TrimSpace(strings.ToLower(string(kind))))
 }
 
 func (s *Service) resolveAuthStrategy(provider Provider) AuthStrategy {
