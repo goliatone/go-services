@@ -264,7 +264,7 @@ type resolvedProviderOperationRequest struct {
 	connectionID     string
 	operation        string
 	transportKind    string
-	authStrategy     string
+	authStrategy     AuthKind
 	transportRequest TransportRequest
 	idempotencyKey   string
 	rateLimitKey     RateLimitKey
@@ -309,9 +309,9 @@ func (s *Service) resolveProviderOperationRequest(
 	}
 
 	strategy := s.resolveAuthStrategy(provider)
-	authStrategy := ""
+	authStrategy := AuthKind("")
 	if strategy != nil {
-		authStrategy = strings.TrimSpace(strings.ToLower(strategy.Type()))
+		authStrategy = normalizeAuthKind(strategy.Type())
 	}
 
 	adapter, transportKind, err := s.resolveProviderOperationAdapter(req)
@@ -657,7 +657,7 @@ func collectSigningMetadata(req *http.Request, credential ActiveCredential) map[
 	if req == nil {
 		return nil
 	}
-	authKind := strings.TrimSpace(strings.ToLower(resolveCredentialAuthKind(credential)))
+	authKind := normalizeAuthKind(resolveCredentialAuthKind(credential))
 	if authKind != AuthKindAWSSigV4 {
 		return nil
 	}
