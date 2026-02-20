@@ -256,6 +256,55 @@ type AuthCompleteResponse struct {
 	Metadata          map[string]any
 }
 
+type EmbeddedRequestedTokenType string
+
+const (
+	EmbeddedRequestedTokenTypeOffline EmbeddedRequestedTokenType = "offline"
+	EmbeddedRequestedTokenTypeOnline  EmbeddedRequestedTokenType = "online"
+)
+
+type EmbeddedAuthRequest struct {
+	ProviderID         string
+	Scope              ScopeRef
+	SessionToken       string
+	ExpectedShopDomain string
+	RequestedTokenType EmbeddedRequestedTokenType
+	ReplayTTL          time.Duration
+	Metadata           map[string]any
+}
+
+type EmbeddedSessionClaims struct {
+	Issuer      string
+	Destination string
+	Audience    string
+	Subject     string
+	JTI         string
+	ShopDomain  string
+	IssuedAt    time.Time
+	NotBefore   time.Time
+	ExpiresAt   time.Time
+	Raw         map[string]any
+}
+
+type EmbeddedAccessToken struct {
+	AccessToken string
+	TokenType   string
+	Scope       []string
+	ExpiresAt   *time.Time
+	Metadata    map[string]any
+}
+
+type EmbeddedAuthResult struct {
+	ProviderID        string
+	Scope             ScopeRef
+	ShopDomain        string
+	ExternalAccountID string
+	Claims            EmbeddedSessionClaims
+	Token             EmbeddedAccessToken
+	Credential        ActiveCredential
+	Metadata          map[string]any
+}
+
 type TransportRequest struct {
 	Method               string
 	URL                  string
@@ -740,6 +789,14 @@ type IncrementalSyncProvider interface {
 	ListChanges(ctx context.Context, req ListChangesRequest) (ListChangesResult, error)
 }
 
+type EmbeddedAuthProvider interface {
+	AuthenticateEmbedded(ctx context.Context, req EmbeddedAuthRequest) (EmbeddedAuthResult, error)
+}
+
+type EmbeddedAuthService interface {
+	AuthenticateEmbedded(ctx context.Context, req EmbeddedAuthRequest) (EmbeddedAuthResult, error)
+}
+
 type AuthStrategy interface {
 	Type() AuthKind
 	Begin(ctx context.Context, req AuthBeginRequest) (AuthBeginResponse, error)
@@ -901,6 +958,10 @@ type IdempotencyClaimStore interface {
 	Fail(ctx context.Context, claimID string, cause error, retryAt time.Time) error
 }
 
+type ReplayLedger interface {
+	Claim(ctx context.Context, key string, ttl time.Duration) (accepted bool, err error)
+}
+
 type PermissionEvaluator interface {
 	EvaluateCapability(
 		ctx context.Context,
@@ -915,6 +976,7 @@ type GrantAwareProvider interface {
 
 type IntegrationService interface {
 	Connect(ctx context.Context, req ConnectRequest) (BeginAuthResponse, error)
+	AuthenticateEmbedded(ctx context.Context, req EmbeddedAuthRequest) (EmbeddedAuthResult, error)
 	StartReconsent(ctx context.Context, req ReconsentRequest) (BeginAuthResponse, error)
 	CompleteReconsent(ctx context.Context, req CompleteAuthRequest) (CallbackCompletion, error)
 	CompleteCallback(ctx context.Context, req CompleteAuthRequest) (CallbackCompletion, error)
