@@ -13,6 +13,8 @@ const (
 	ServiceErrorProviderNotFound        = "SERVICE_PROVIDER_NOT_FOUND"
 	ServiceErrorCapabilityUnsupported   = "SERVICE_CAPABILITY_UNSUPPORTED"
 	ServiceErrorOAuthStateInvalid       = "SERVICE_OAUTH_STATE_INVALID"
+	ServiceErrorEmbeddedAuthUnsupported = "SERVICE_EMBEDDED_AUTH_UNSUPPORTED"
+	ServiceErrorReplayDetected          = "SERVICE_REPLAY_DETECTED"
 	ServiceErrorRefreshLocked           = "SERVICE_REFRESH_LOCKED"
 	ServiceErrorPermissionDenied        = "SERVICE_PERMISSION_DENIED"
 	ServiceErrorRateLimited             = "SERVICE_RATE_LIMITED"
@@ -37,6 +39,8 @@ func serviceErrorMapper(err error) *goerrors.Error {
 		return newServiceError(err.Error(), goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound)
 	case errors.Is(err, ErrInvalidSyncJobMode), errors.Is(err, ErrInvalidSyncJobScope):
 		return newServiceError(err.Error(), goerrors.CategoryBadInput, ServiceErrorBadInput)
+	case errors.Is(err, ErrEmbeddedAuthUnsupported):
+		return newServiceError(err.Error(), goerrors.CategoryOperation, ServiceErrorEmbeddedAuthUnsupported)
 	}
 
 	switch {
@@ -46,6 +50,8 @@ func serviceErrorMapper(err error) *goerrors.Error {
 		return newServiceError(err.Error(), goerrors.CategoryOperation, ServiceErrorCapabilityUnsupported)
 	case strings.Contains(msg, "oauth callback state"), strings.Contains(msg, "oauth state"):
 		return newServiceError(err.Error(), goerrors.CategoryAuth, ServiceErrorOAuthStateInvalid)
+	case strings.Contains(msg, "replay"):
+		return newServiceError(err.Error(), goerrors.CategoryConflict, ServiceErrorReplayDetected)
 	case strings.Contains(msg, "lock already held"), strings.Contains(msg, "refresh lock"):
 		return newServiceError(err.Error(), goerrors.CategoryConflict, ServiceErrorRefreshLocked)
 	case strings.Contains(msg, "throttl"), strings.Contains(msg, "rate limit"):
