@@ -16,6 +16,7 @@ It is designed as a backend package, not as a standalone API server.
 - Enforces capability access based on granted permissions.
 - Executes provider operations with transport abstraction, request signing, idempotency keys, retry policies, and optional adaptive rate-limit policy.
 - Supports inbound webhook dispatch with claim/complete/fail idempotency semantics.
+- Supports embedded auth primitives (for providers that implement it), including session-token validation, replay protection, and token exchange orchestration.
 - Exposes command/query handlers and facade wiring for integration with `go-command`.
 
 ## When To Use It
@@ -181,6 +182,35 @@ func main() {
 }
 ```
 
+## Embedded Auth (Shopify)
+
+`go-services` now supports a dedicated embedded-auth contract:
+
+- `core.EmbeddedAuthRequest`
+- `core.EmbeddedAuthResult`
+- `Service.AuthenticateEmbedded(ctx, req)`
+
+Shopify providers implement this when configured with app credentials (`client_id`, `client_secret`), and the flow performs:
+
+1. App Bridge session JWT validation (`HS256` + claim checks).
+2. Replay claim (`provider + shop + jti`) with TTL.
+3. Shopify token exchange for offline/online access tokens.
+
+Example:
+
+```go
+result, err := svc.AuthenticateEmbedded(ctx, services.EmbeddedAuthRequest{
+	ProviderID:   "shopify",
+	Scope:        core.ScopeRef{Type: "org", ID: "org_123"},
+	SessionToken: sessionJWTFromAppBridge,
+	RequestedTokenType: services.EmbeddedRequestedTokenTypeOffline,
+})
+if err != nil {
+	return err
+}
+_ = result.Credential.AccessToken
+```
+
 ## Package Map
 
 - `core`: domain contracts, service orchestration, permission/rate-limit/runtime logic.
@@ -198,3 +228,4 @@ func main() {
 - `CHANGELOG.md`
 - `docs/identity_profiles.md`
 - `docs/runbooks/services_failure_modes.md`
+- `docs/shopify_embedded_auth_plan.md`
