@@ -198,3 +198,71 @@ func TestProvider_NormalizeGrantedPermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestProvider_AuthenticateEmbedded_UsesConfiguredEmbeddedService(t *testing.T) {
+	embedded := &embeddedAuthServiceStub{
+		result: core.EmbeddedAuthResult{
+			ProviderID:        ProviderID,
+			Scope:             core.ScopeRef{Type: "org", ID: "org_1"},
+			ShopDomain:        "merchant.myshopify.com",
+			ExternalAccountID: "merchant.myshopify.com",
+			Credential: core.ActiveCredential{
+				TokenType:   "bearer",
+				AccessToken: "token_1",
+			},
+		},
+	}
+	provider, err := New(Config{
+		ClientID:            "client",
+		ClientSecret:        "secret",
+		ShopDomain:          "merchant",
+		EmbeddedAuthService: embedded,
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	embeddedProvider, ok := provider.(core.EmbeddedAuthProvider)
+	if !ok {
+		t.Fatalf("expected provider to implement EmbeddedAuthProvider")
+	}
+
+	result, err := embeddedProvider.AuthenticateEmbedded(context.Background(), core.EmbeddedAuthRequest{
+		Scope:        core.ScopeRef{Type: "org", ID: "org_1"},
+		SessionToken: "session_token",
+	})
+	if err != nil {
+		t.Fatalf("authenticate embedded: %v", err)
+	}
+	if embedded.calls != 1 {
+		t.Fatalf("expected embedded service call count 1, got %d", embedded.calls)
+	}
+	if result.ShopDomain != "merchant.myshopify.com" {
+		t.Fatalf("unexpected shop domain %q", result.ShopDomain)
+	}
+}
+
+type embeddedAuthServiceStub struct {
+	calls  int
+	result core.EmbeddedAuthResult
+	err    error
+}
+
+func (s *embeddedAuthServiceStub) AuthenticateEmbedded(
+	_ context.Context,
+	req core.EmbeddedAuthRequest,
+) (core.EmbeddedAuthResult, error) {
+	s.calls++
+	if s.err != nil {
+		return core.EmbeddedAuthResult{}, s.err
+	}
+	out := s.result
+	if out.ProviderID == "" {
+		out.ProviderID = req.ProviderID
+	}
+	if out.Scope == (core.ScopeRef{}) {
+		out.Scope = req.Scope
+	}
+	return out, nil
+}
+
+var _ core.EmbeddedAuthService = (*embeddedAuthServiceStub)(nil)
