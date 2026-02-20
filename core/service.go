@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrProviderNotFound       = errors.New("core: provider not found")
-	ErrCapabilityNotSupported = errors.New("core: capability not supported")
+	ErrProviderNotFound        = errors.New("core: provider not found")
+	ErrCapabilityNotSupported  = errors.New("core: capability not supported")
+	ErrEmbeddedAuthUnsupported = errors.New("core: embedded auth not supported")
 )
 
 type Service struct {
@@ -314,6 +315,54 @@ func (s *Service) resolveCallbackURL(ctx context.Context, req CallbackURLResolve
 		return "", err
 	}
 	return strings.TrimSpace(resolved), nil
+}
+
+func (s *Service) AuthenticateEmbedded(
+	ctx context.Context,
+	req EmbeddedAuthRequest,
+) (result EmbeddedAuthResult, err error) {
+	startedAt := time.Now().UTC()
+	fields := map[string]any{
+		"provider_id": req.ProviderID,
+		"scope_type":  req.Scope.Type,
+		"scope_id":    req.Scope.ID,
+	}
+	defer func() {
+		if result.ShopDomain != "" {
+			fields["shop_domain"] = result.ShopDomain
+		}
+		s.observeOperation(ctx, startedAt, "authenticate_embedded", err, fields)
+	}()
+
+	if err = req.Scope.Validate(); err != nil {
+		err = s.mapError(err)
+		return EmbeddedAuthResult{}, err
+	}
+	req.ProviderID = strings.TrimSpace(req.ProviderID)
+	if req.ProviderID == "" {
+		err = s.mapError(fmt.Errorf("core: provider id is required"))
+		return EmbeddedAuthResult{}, err
+	}
+
+	provider, err := s.resolveProvider(req.ProviderID)
+	if err != nil {
+		return EmbeddedAuthResult{}, err
+	}
+	embeddedProvider, ok := provider.(EmbeddedAuthProvider)
+	if !ok {
+		err = s.mapError(fmt.Errorf("%w for provider %q", ErrEmbeddedAuthUnsupported, req.ProviderID))
+		return EmbeddedAuthResult{}, err
+	}
+	req.ProviderID = provider.ID()
+	result, err = embeddedProvider.AuthenticateEmbedded(ctx, req)
+	if err != nil {
+		err = s.mapError(err)
+		return EmbeddedAuthResult{}, err
+	}
+	if strings.TrimSpace(result.ProviderID) == "" {
+		result.ProviderID = req.ProviderID
+	}
+	return result, nil
 }
 
 func (s *Service) Connect(ctx context.Context, req ConnectRequest) (response BeginAuthResponse, err error) {
