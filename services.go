@@ -11,6 +11,7 @@ type Option = core.Option
 type Service = core.Service
 
 type ServiceDependencies = core.ServiceDependencies
+type EmbeddedAuthService = core.EmbeddedAuthService
 type OAuthStateStore = core.OAuthStateStore
 type ConnectionLocker = core.ConnectionLocker
 type RefreshBackoffScheduler = core.RefreshBackoffScheduler
@@ -39,6 +40,11 @@ type ConnectRequest = core.ConnectRequest
 type ReconsentRequest = core.ReconsentRequest
 
 type CompleteAuthRequest = core.CompleteAuthRequest
+type EmbeddedAuthRequest = core.EmbeddedAuthRequest
+type EmbeddedAuthResult = core.EmbeddedAuthResult
+type EmbeddedSessionClaims = core.EmbeddedSessionClaims
+type EmbeddedAccessToken = core.EmbeddedAccessToken
+type EmbeddedRequestedTokenType = core.EmbeddedRequestedTokenType
 
 type RefreshRequest = core.RefreshRequest
 
@@ -48,8 +54,10 @@ type CreateSyncJobResult = core.CreateSyncJobResult
 type GetSyncJobRequest = core.GetSyncJobRequest
 
 const (
-	CallbackURLResolveFlowConnect   = core.CallbackURLResolveFlowConnect
-	CallbackURLResolveFlowReconsent = core.CallbackURLResolveFlowReconsent
+	CallbackURLResolveFlowConnect     = core.CallbackURLResolveFlowConnect
+	CallbackURLResolveFlowReconsent   = core.CallbackURLResolveFlowReconsent
+	EmbeddedRequestedTokenTypeOffline = core.EmbeddedRequestedTokenTypeOffline
+	EmbeddedRequestedTokenTypeOnline  = core.EmbeddedRequestedTokenTypeOnline
 )
 
 var (
