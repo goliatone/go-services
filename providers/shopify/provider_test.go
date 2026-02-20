@@ -3,6 +3,7 @@ package shopify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -238,6 +239,127 @@ func TestProvider_AuthenticateEmbedded_UsesConfiguredEmbeddedService(t *testing.
 	}
 	if result.ShopDomain != "merchant.myshopify.com" {
 		t.Fatalf("unexpected shop domain %q", result.ShopDomain)
+	}
+}
+
+func TestNewEmbedded_SucceedsWithMinimalConfig(t *testing.T) {
+	provider, err := NewEmbedded(EmbeddedConfig{
+		ClientID:     "client",
+		ClientSecret: "secret",
+	})
+	if err != nil {
+		t.Fatalf("new embedded provider: %v", err)
+	}
+	if provider.ID() != ProviderID {
+		t.Fatalf("expected provider id %q, got %q", ProviderID, provider.ID())
+	}
+}
+
+func TestNew_EmbeddedOnlyMode_DoesNotRequireOAuthEndpoints(t *testing.T) {
+	provider, err := New(Config{
+		Mode:         ModeEmbeddedOnly,
+		ClientID:     "client",
+		ClientSecret: "secret",
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if provider.ID() != ProviderID {
+		t.Fatalf("expected provider id %q, got %q", ProviderID, provider.ID())
+	}
+}
+
+func TestProvider_EmbeddedOnlyMode_AuthenticateEmbeddedWorks(t *testing.T) {
+	embedded := &embeddedAuthServiceStub{
+		result: core.EmbeddedAuthResult{
+			ProviderID:        ProviderID,
+			Scope:             core.ScopeRef{Type: "org", ID: "org_1"},
+			ShopDomain:        "merchant.myshopify.com",
+			ExternalAccountID: "merchant.myshopify.com",
+			Credential: core.ActiveCredential{
+				TokenType:   "bearer",
+				AccessToken: "token_1",
+			},
+		},
+	}
+	provider, err := New(Config{
+		Mode:                ModeEmbeddedOnly,
+		EmbeddedAuthService: embedded,
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	embeddedProvider, ok := provider.(core.EmbeddedAuthProvider)
+	if !ok {
+		t.Fatalf("expected provider to implement EmbeddedAuthProvider")
+	}
+
+	result, err := embeddedProvider.AuthenticateEmbedded(context.Background(), core.EmbeddedAuthRequest{
+		Scope:        core.ScopeRef{Type: "org", ID: "org_1"},
+		SessionToken: "session_token",
+	})
+	if err != nil {
+		t.Fatalf("authenticate embedded: %v", err)
+	}
+	if embedded.calls != 1 {
+		t.Fatalf("expected embedded service call count 1, got %d", embedded.calls)
+	}
+	if result.ShopDomain != "merchant.myshopify.com" {
+		t.Fatalf("unexpected shop domain %q", result.ShopDomain)
+	}
+}
+
+func TestProvider_EmbeddedOnlyMode_OAuthMethodsReturnUnsupported(t *testing.T) {
+	provider, err := New(Config{
+		Mode:         ModeEmbeddedOnly,
+		ClientID:     "client",
+		ClientSecret: "secret",
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	_, err = provider.BeginAuth(context.Background(), core.BeginAuthRequest{
+		Scope: core.ScopeRef{Type: "org", ID: "org_1"},
+	})
+	if !errors.Is(err, ErrAuthFlowUnsupported) {
+		t.Fatalf("expected begin auth unsupported error, got %v", err)
+	}
+
+	_, err = provider.CompleteAuth(context.Background(), core.CompleteAuthRequest{
+		Scope: core.ScopeRef{Type: "org", ID: "org_1"},
+		Code:  "code_1",
+	})
+	if !errors.Is(err, ErrAuthFlowUnsupported) {
+		t.Fatalf("expected complete auth unsupported error, got %v", err)
+	}
+
+	_, err = provider.Refresh(context.Background(), core.ActiveCredential{
+		RefreshToken: "refresh_token",
+	})
+	if !errors.Is(err, ErrAuthFlowUnsupported) {
+		t.Fatalf("expected refresh unsupported error, got %v", err)
+	}
+}
+
+func TestProvider_AuthenticateEmbedded_ReturnsTypedNotConfiguredError(t *testing.T) {
+	provider, err := New(Config{
+		Mode: ModeEmbeddedOnly,
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	embeddedProvider, ok := provider.(core.EmbeddedAuthProvider)
+	if !ok {
+		t.Fatalf("expected provider to implement EmbeddedAuthProvider")
+	}
+
+	_, err = embeddedProvider.AuthenticateEmbedded(context.Background(), core.EmbeddedAuthRequest{
+		Scope:        core.ScopeRef{Type: "org", ID: "org_1"},
+		SessionToken: "session_token",
+	})
+	if !errors.Is(err, ErrEmbeddedAuthServiceNotConfigured) {
+		t.Fatalf("expected embedded auth service not configured error, got %v", err)
 	}
 }
 
