@@ -10,6 +10,7 @@ import (
 
 	"github.com/goliatone/go-services/core"
 	"github.com/goliatone/go-services/providers"
+	shopifyembedded "github.com/goliatone/go-services/providers/shopify/embedded"
 )
 
 const (
@@ -41,10 +42,20 @@ type Config struct {
 	DefaultScopes       []string
 	SupportedScopeTypes []string
 	TokenTTL            time.Duration
+	TokenRequestTimeout time.Duration
+	HTTPClient          providers.HTTPDoer
+
+	EmbeddedAuthService        core.EmbeddedAuthService
+	EmbeddedExpectedShopDomain string
+	EmbeddedClockSkew          time.Duration
+	EmbeddedMaxIssuedAtAge     time.Duration
+	EmbeddedReplayTTL          time.Duration
+	EmbeddedReplayMaxEntries   int
 }
 
 type Provider struct {
 	*providers.OAuth2Provider
+	embeddedAuth core.EmbeddedAuthService
 }
 
 func DefaultConfig() Config {
@@ -78,13 +89,40 @@ func New(cfg Config) (core.Provider, error) {
 		DefaultScopes:       normalizeShopifyScopes(cfg.DefaultScopes),
 		SupportedScopeTypes: cfg.SupportedScopeTypes,
 		TokenTTL:            cfg.TokenTTL,
+		TokenRequestTimeout: cfg.TokenRequestTimeout,
+		HTTPClient:          cfg.HTTPClient,
 		Capabilities:        BaselineCapabilities(),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &Provider{OAuth2Provider: oauthProvider}, nil
+	embeddedAuth := cfg.EmbeddedAuthService
+	if embeddedAuth == nil &&
+		strings.TrimSpace(cfg.ClientID) != "" &&
+		strings.TrimSpace(cfg.ClientSecret) != "" {
+		embeddedService, buildErr := shopifyembedded.NewService(shopifyembedded.ServiceConfig{
+			ProviderID:          ProviderID,
+			ClientID:            cfg.ClientID,
+			ClientSecret:        cfg.ClientSecret,
+			ExpectedShopDomain:  firstNonEmpty(cfg.EmbeddedExpectedShopDomain, cfg.ShopDomain),
+			ClockSkew:           cfg.EmbeddedClockSkew,
+			MaxIssuedAtAge:      cfg.EmbeddedMaxIssuedAtAge,
+			ReplayTTL:           cfg.EmbeddedReplayTTL,
+			ReplayMaxEntries:    cfg.EmbeddedReplayMaxEntries,
+			TokenRequestTimeout: cfg.TokenRequestTimeout,
+			HTTPClient:          cfg.HTTPClient,
+		})
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		embeddedAuth = embeddedService
+	}
+
+	return &Provider{
+		OAuth2Provider: oauthProvider,
+		embeddedAuth:   embeddedAuth,
+	}, nil
 }
 
 func BaselineCapabilities() []core.CapabilityDescriptor {
@@ -110,6 +148,19 @@ func BaselineCapabilities() []core.CapabilityDescriptor {
 func (p *Provider) NormalizeGrantedPermissions(_ context.Context, raw []string) ([]string, error) {
 	_ = p
 	return normalizeCanonicalGrants(raw), nil
+}
+
+func (p *Provider) AuthenticateEmbedded(
+	ctx context.Context,
+	req core.EmbeddedAuthRequest,
+) (core.EmbeddedAuthResult, error) {
+	if p == nil || p.embeddedAuth == nil {
+		return core.EmbeddedAuthResult{}, fmt.Errorf("providers/shopify: embedded auth service is not configured")
+	}
+	if strings.TrimSpace(req.ProviderID) == "" {
+		req.ProviderID = ProviderID
+	}
+	return p.embeddedAuth.AuthenticateEmbedded(ctx, req)
 }
 
 func resolveOAuthEndpoints(cfg Config) (string, string, error) {
@@ -220,5 +271,16 @@ func normalizeShopifyGrant(value string) string {
 	return "shopify:" + scope
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 var _ core.Provider = (*Provider)(nil)
 var _ core.GrantAwareProvider = (*Provider)(nil)
+var _ core.EmbeddedAuthProvider = (*Provider)(nil)
