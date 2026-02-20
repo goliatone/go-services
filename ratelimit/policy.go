@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -45,6 +47,20 @@ func (e ThrottledError) Error() string {
 		strings.TrimSpace(e.BucketKey),
 		e.RetryAfter,
 	)
+}
+
+func (e ThrottledError) ToServiceError() *goerrors.Error {
+	metadata := map[string]any{
+		"provider_id": strings.TrimSpace(e.ProviderID),
+		"bucket_key":  strings.TrimSpace(e.BucketKey),
+	}
+	if e.RetryAfter > 0 {
+		metadata["retry_after_ms"] = e.RetryAfter.Milliseconds()
+	}
+	return goerrors.New(e.Error(), goerrors.CategoryRateLimit).
+		WithCode(http.StatusTooManyRequests).
+		WithTextCode(core.ServiceErrorRateLimited).
+		WithMetadata(metadata)
 }
 
 type AdaptivePolicy struct {
