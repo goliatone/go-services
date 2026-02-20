@@ -1,5 +1,29 @@
 # Changelog
 
+# [0.3.0](https://github.com/goliatone/go-services/compare/v0.2.0...v0.3.0) - (2026-02-20)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.3.0 ([1c58309](https://github.com/goliatone/go-services/commit/1c583092d3c2d4c92e9bcb9c23f67bcc4672a4b4))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Replay ledger ([04eb98e](https://github.com/goliatone/go-services/commit/04eb98ea4060767210fc18c1b7f6e5ca1dc0f43a))  - (goliatone)
+- Embedded auth service in shopify ([318fd1a](https://github.com/goliatone/go-services/commit/318fd1a071924595de34baec6bd505c9315d0abb))  - (goliatone)
+- Authenticate embedded ([7bcb2f8](https://github.com/goliatone/go-services/commit/7bcb2f803b5aecda8d3a65c3da1c847fba1244f8))  - (goliatone)
+- Errors for new service ([c40473f](https://github.com/goliatone/go-services/commit/c40473f22daf5dff848c737007ecae2e9172804b))  - (goliatone)
+- Embedded auth implementation ([58d6314](https://github.com/goliatone/go-services/commit/58d6314f8120c1288381c0d8b18b5a0267a0422c))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.2.0 ([9a9b5ac](https://github.com/goliatone/go-services/commit/9a9b5acf27067eead6b7af1b23259532b92e25ce))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update readme ([5551d55](https://github.com/goliatone/go-services/commit/5551d550ecb460ec655b07c23e7d290fef988773))  - (goliatone)
+- Update docs ([5281736](https://github.com/goliatone/go-services/commit/5281736becc057cbf2532a39ad885dbbddbae1b4))  - (goliatone)
+- Update test ([16330e2](https://github.com/goliatone/go-services/commit/16330e26937435cf00fcf9af9e187dc613ca1b9f))  - (goliatone)
+
 # [0.2.0](https://github.com/goliatone/go-services/compare/v0.1.0...v0.2.0) - (2026-02-19)
 
 ## <!-- 1 -->🐛 Bug Fixes
