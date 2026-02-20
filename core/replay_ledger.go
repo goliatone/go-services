@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var _ ReplayLedger = (*MemoryReplayLedger)(nil)
+
 const defaultReplayLedgerTTL = 5 * time.Minute
 const defaultReplayLedgerMaxEntries = 8192
 
@@ -132,5 +134,3 @@ func (l *MemoryReplayLedger) evictOldestLocked(now time.Time) {
 	}
 	_ = now
 }
-
-var _ ReplayLedger = (*MemoryReplayLedger)(nil)
