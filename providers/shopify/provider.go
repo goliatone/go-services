@@ -21,6 +21,13 @@ const (
 	defaultDomainSuffix  = ".myshopify.com"
 )
 
+type Mode string
+
+const (
+	ModeHybrid       Mode = "hybrid"
+	ModeEmbeddedOnly Mode = "embedded_only"
+)
+
 const (
 	ScopeReadProducts  = "read_products"
 	ScopeReadInventory = "read_inventory"
@@ -34,6 +41,7 @@ const (
 )
 
 type Config struct {
+	Mode                Mode
 	ClientID            string
 	ClientSecret        string
 	ShopDomain          string
@@ -53,20 +61,62 @@ type Config struct {
 	EmbeddedReplayMaxEntries   int
 }
 
+type EmbeddedConfig struct {
+	ClientID            string
+	ClientSecret        string
+	SupportedScopeTypes []string
+	TokenRequestTimeout time.Duration
+	HTTPClient          providers.HTTPDoer
+
+	EmbeddedAuthService        core.EmbeddedAuthService
+	EmbeddedExpectedShopDomain string
+	EmbeddedClockSkew          time.Duration
+	EmbeddedMaxIssuedAtAge     time.Duration
+	EmbeddedReplayTTL          time.Duration
+	EmbeddedReplayMaxEntries   int
+}
+
 type Provider struct {
-	*providers.OAuth2Provider
-	embeddedAuth core.EmbeddedAuthService
+	id                  string
+	mode                Mode
+	oauth               *providers.OAuth2Provider
+	embeddedAuth        core.EmbeddedAuthService
+	supportedScopeTypes []string
+	capabilities        []core.CapabilityDescriptor
 }
 
 func DefaultConfig() Config {
 	return Config{
+		Mode:                ModeHybrid,
 		DefaultScopes:       []string{ScopeReadProducts, ScopeReadInventory, ScopeReadOrders},
 		SupportedScopeTypes: []string{"org"},
 	}
 }
 
+func NewEmbedded(cfg EmbeddedConfig) (core.Provider, error) {
+	return New(Config{
+		Mode:                       ModeEmbeddedOnly,
+		ClientID:                   cfg.ClientID,
+		ClientSecret:               cfg.ClientSecret,
+		SupportedScopeTypes:        append([]string(nil), cfg.SupportedScopeTypes...),
+		TokenRequestTimeout:        cfg.TokenRequestTimeout,
+		HTTPClient:                 cfg.HTTPClient,
+		EmbeddedAuthService:        cfg.EmbeddedAuthService,
+		EmbeddedExpectedShopDomain: cfg.EmbeddedExpectedShopDomain,
+		EmbeddedClockSkew:          cfg.EmbeddedClockSkew,
+		EmbeddedMaxIssuedAtAge:     cfg.EmbeddedMaxIssuedAtAge,
+		EmbeddedReplayTTL:          cfg.EmbeddedReplayTTL,
+		EmbeddedReplayMaxEntries:   cfg.EmbeddedReplayMaxEntries,
+	})
+}
+
 func New(cfg Config) (core.Provider, error) {
 	defaults := DefaultConfig()
+	mode, err := normalizeMode(cfg.Mode)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Mode = mode
 	if len(cfg.DefaultScopes) == 0 {
 		cfg.DefaultScopes = defaults.DefaultScopes
 	}
@@ -74,54 +124,44 @@ func New(cfg Config) (core.Provider, error) {
 		cfg.SupportedScopeTypes = defaults.SupportedScopeTypes
 	}
 
-	authURL, tokenURL, err := resolveOAuthEndpoints(cfg)
-	if err != nil {
-		return nil, err
-	}
+	var oauthProvider *providers.OAuth2Provider
+	if cfg.Mode != ModeEmbeddedOnly {
+		authURL, tokenURL, resolveErr := resolveOAuthEndpoints(cfg)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
 
-	oauthProvider, err := providers.NewOAuth2Provider(providers.OAuth2Config{
-		ID:                  ProviderID,
-		AuthURL:             authURL,
-		TokenURL:            tokenURL,
-		ClientID:            cfg.ClientID,
-		ClientSecret:        cfg.ClientSecret,
-		ClientSecretInBody:  true,
-		DefaultScopes:       normalizeShopifyScopes(cfg.DefaultScopes),
-		SupportedScopeTypes: cfg.SupportedScopeTypes,
-		TokenTTL:            cfg.TokenTTL,
-		TokenRequestTimeout: cfg.TokenRequestTimeout,
-		HTTPClient:          cfg.HTTPClient,
-		Capabilities:        BaselineCapabilities(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	embeddedAuth := cfg.EmbeddedAuthService
-	if embeddedAuth == nil &&
-		strings.TrimSpace(cfg.ClientID) != "" &&
-		strings.TrimSpace(cfg.ClientSecret) != "" {
-		embeddedService, buildErr := shopifyembedded.NewService(shopifyembedded.ServiceConfig{
-			ProviderID:          ProviderID,
+		oauthProvider, err = providers.NewOAuth2Provider(providers.OAuth2Config{
+			ID:                  ProviderID,
+			AuthURL:             authURL,
+			TokenURL:            tokenURL,
 			ClientID:            cfg.ClientID,
 			ClientSecret:        cfg.ClientSecret,
-			ExpectedShopDomain:  firstNonEmpty(cfg.EmbeddedExpectedShopDomain, cfg.ShopDomain),
-			ClockSkew:           cfg.EmbeddedClockSkew,
-			MaxIssuedAtAge:      cfg.EmbeddedMaxIssuedAtAge,
-			ReplayTTL:           cfg.EmbeddedReplayTTL,
-			ReplayMaxEntries:    cfg.EmbeddedReplayMaxEntries,
+			ClientSecretInBody:  true,
+			DefaultScopes:       normalizeShopifyScopes(cfg.DefaultScopes),
+			SupportedScopeTypes: cfg.SupportedScopeTypes,
+			TokenTTL:            cfg.TokenTTL,
 			TokenRequestTimeout: cfg.TokenRequestTimeout,
 			HTTPClient:          cfg.HTTPClient,
+			Capabilities:        BaselineCapabilities(),
 		})
-		if buildErr != nil {
-			return nil, buildErr
+		if err != nil {
+			return nil, err
 		}
-		embeddedAuth = embeddedService
+	}
+
+	embeddedAuth, err := resolveEmbeddedAuthService(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Provider{
-		OAuth2Provider: oauthProvider,
-		embeddedAuth:   embeddedAuth,
+		id:                  ProviderID,
+		mode:                cfg.Mode,
+		oauth:               oauthProvider,
+		embeddedAuth:        embeddedAuth,
+		supportedScopeTypes: append([]string(nil), cfg.SupportedScopeTypes...),
+		capabilities:        cloneCapabilities(BaselineCapabilities()),
 	}, nil
 }
 
@@ -150,17 +190,130 @@ func (p *Provider) NormalizeGrantedPermissions(_ context.Context, raw []string) 
 	return normalizeCanonicalGrants(raw), nil
 }
 
+func (p *Provider) ID() string {
+	if p == nil {
+		return ""
+	}
+	return p.id
+}
+
+func (p *Provider) AuthKind() core.AuthKind {
+	_ = p
+	return core.AuthKindOAuth2AuthCode
+}
+
+func (p *Provider) SupportedScopeTypes() []string {
+	if p == nil {
+		return []string{}
+	}
+	return append([]string(nil), p.supportedScopeTypes...)
+}
+
+func (p *Provider) Capabilities() []core.CapabilityDescriptor {
+	if p == nil {
+		return []core.CapabilityDescriptor{}
+	}
+	return cloneCapabilities(p.capabilities)
+}
+
+func (p *Provider) BeginAuth(ctx context.Context, req core.BeginAuthRequest) (core.BeginAuthResponse, error) {
+	if p == nil {
+		return core.BeginAuthResponse{}, fmt.Errorf("providers/shopify: provider is nil")
+	}
+	if p.oauth == nil {
+		return core.BeginAuthResponse{}, p.authFlowUnsupportedError("begin auth")
+	}
+	return p.oauth.BeginAuth(ctx, req)
+}
+
+func (p *Provider) CompleteAuth(
+	ctx context.Context,
+	req core.CompleteAuthRequest,
+) (core.CompleteAuthResponse, error) {
+	if p == nil {
+		return core.CompleteAuthResponse{}, fmt.Errorf("providers/shopify: provider is nil")
+	}
+	if p.oauth == nil {
+		return core.CompleteAuthResponse{}, p.authFlowUnsupportedError("complete auth")
+	}
+	return p.oauth.CompleteAuth(ctx, req)
+}
+
+func (p *Provider) Refresh(ctx context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
+	if p == nil {
+		return core.RefreshResult{}, fmt.Errorf("providers/shopify: provider is nil")
+	}
+	if p.oauth == nil {
+		return core.RefreshResult{}, p.authFlowUnsupportedError("refresh")
+	}
+	return p.oauth.Refresh(ctx, cred)
+}
+
 func (p *Provider) AuthenticateEmbedded(
 	ctx context.Context,
 	req core.EmbeddedAuthRequest,
 ) (core.EmbeddedAuthResult, error) {
 	if p == nil || p.embeddedAuth == nil {
-		return core.EmbeddedAuthResult{}, fmt.Errorf("providers/shopify: embedded auth service is not configured")
+		return core.EmbeddedAuthResult{}, fmt.Errorf(
+			"providers/shopify: embedded auth service is not configured: %w",
+			ErrEmbeddedAuthServiceNotConfigured,
+		)
 	}
 	if strings.TrimSpace(req.ProviderID) == "" {
 		req.ProviderID = ProviderID
 	}
 	return p.embeddedAuth.AuthenticateEmbedded(ctx, req)
+}
+
+func (p *Provider) authFlowUnsupportedError(action string) error {
+	mode := ModeHybrid
+	if p != nil && strings.TrimSpace(string(p.mode)) != "" {
+		mode = p.mode
+	}
+	return fmt.Errorf(
+		"providers/shopify: oauth2 auth-code %s is disabled in mode %q: %w",
+		action,
+		mode,
+		ErrAuthFlowUnsupported,
+	)
+}
+
+func normalizeMode(mode Mode) (Mode, error) {
+	normalized := Mode(strings.TrimSpace(strings.ToLower(string(mode))))
+	if normalized == "" {
+		return ModeHybrid, nil
+	}
+	switch normalized {
+	case ModeHybrid, ModeEmbeddedOnly:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("providers/shopify: unsupported mode %q", mode)
+	}
+}
+
+func resolveEmbeddedAuthService(cfg Config) (core.EmbeddedAuthService, error) {
+	embeddedAuth := cfg.EmbeddedAuthService
+	if embeddedAuth == nil &&
+		strings.TrimSpace(cfg.ClientID) != "" &&
+		strings.TrimSpace(cfg.ClientSecret) != "" {
+		embeddedService, err := shopifyembedded.NewService(shopifyembedded.ServiceConfig{
+			ProviderID:          ProviderID,
+			ClientID:            cfg.ClientID,
+			ClientSecret:        cfg.ClientSecret,
+			ExpectedShopDomain:  firstNonEmpty(cfg.EmbeddedExpectedShopDomain, cfg.ShopDomain),
+			ClockSkew:           cfg.EmbeddedClockSkew,
+			MaxIssuedAtAge:      cfg.EmbeddedMaxIssuedAtAge,
+			ReplayTTL:           cfg.EmbeddedReplayTTL,
+			ReplayMaxEntries:    cfg.EmbeddedReplayMaxEntries,
+			TokenRequestTimeout: cfg.TokenRequestTimeout,
+			HTTPClient:          cfg.HTTPClient,
+		})
+		if err != nil {
+			return nil, err
+		}
+		embeddedAuth = embeddedService
+	}
+	return embeddedAuth, nil
 }
 
 func resolveOAuthEndpoints(cfg Config) (string, string, error) {
@@ -279,6 +432,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func cloneCapabilities(input []core.CapabilityDescriptor) []core.CapabilityDescriptor {
+	if len(input) == 0 {
+		return []core.CapabilityDescriptor{}
+	}
+	out := make([]core.CapabilityDescriptor, 0, len(input))
+	for _, descriptor := range input {
+		out = append(out, core.CapabilityDescriptor{
+			Name:           descriptor.Name,
+			RequiredGrants: append([]string(nil), descriptor.RequiredGrants...),
+			OptionalGrants: append([]string(nil), descriptor.OptionalGrants...),
+			DeniedBehavior: descriptor.DeniedBehavior,
+		})
+	}
+	return out
 }
 
 var _ core.Provider = (*Provider)(nil)
