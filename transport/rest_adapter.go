@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goliatone/go-services/core"
 	goerrors "github.com/goliatone/go-errors"
+	"github.com/goliatone/go-services/core"
 )
 
 const KindREST = "rest"

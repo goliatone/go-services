@@ -1,8 +1,6 @@
 package transport
 
 import (
-	"net/http"
-
 	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
@@ -59,4 +57,3 @@ func transportTextCode(category goerrors.Category) string {
 		return core.ServiceErrorInternal
 	}
 }
-
