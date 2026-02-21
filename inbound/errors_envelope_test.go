@@ -3,6 +3,7 @@ package inbound
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	goerrors "github.com/goliatone/go-errors"
@@ -21,6 +22,12 @@ func TestDefaultIdempotencyKeyExtractor_MissingKeyReturnsRichError(t *testing.T)
 	}
 	if rich.Category != goerrors.CategoryBadInput {
 		t.Fatalf("expected bad_input category, got %q", rich.Category)
+	}
+	if rich.TextCode != core.ServiceErrorBadInput {
+		t.Fatalf("expected %q text code, got %q", core.ServiceErrorBadInput, rich.TextCode)
+	}
+	if rich.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d code, got %d", http.StatusBadRequest, rich.Code)
 	}
 }
 
@@ -46,5 +53,11 @@ func TestDispatch_VerificationFailureReturnsRichError(t *testing.T) {
 	}
 	if rich.Category != goerrors.CategoryAuth {
 		t.Fatalf("expected auth category, got %q", rich.Category)
+	}
+	if rich.TextCode != core.ServiceErrorUnauthorized {
+		t.Fatalf("expected %q text code, got %q", core.ServiceErrorUnauthorized, rich.TextCode)
+	}
+	if rich.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d code, got %d", http.StatusUnauthorized, rich.Code)
 	}
 }

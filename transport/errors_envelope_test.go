@@ -32,6 +32,12 @@ func TestRESTAdapter_ResponseLimitReturnsRichError(t *testing.T) {
 	if rich.Category != goerrors.CategoryExternal {
 		t.Fatalf("expected external category, got %q", rich.Category)
 	}
+	if rich.TextCode != core.ServiceErrorExternalFailure {
+		t.Fatalf("expected %q text code, got %q", core.ServiceErrorExternalFailure, rich.TextCode)
+	}
+	if rich.Code != http.StatusBadGateway {
+		t.Fatalf("expected %d code, got %d", http.StatusBadGateway, rich.Code)
+	}
 }
 
 func TestProtocolAdapter_NilReturnsRichError(t *testing.T) {
@@ -47,5 +53,11 @@ func TestProtocolAdapter_NilReturnsRichError(t *testing.T) {
 	}
 	if rich.Category != goerrors.CategoryInternal {
 		t.Fatalf("expected internal category, got %q", rich.Category)
+	}
+	if rich.TextCode != core.ServiceErrorInternal {
+		t.Fatalf("expected %q text code, got %q", core.ServiceErrorInternal, rich.TextCode)
+	}
+	if rich.Code != http.StatusInternalServerError {
+		t.Fatalf("expected %d code, got %d", http.StatusInternalServerError, rich.Code)
 	}
 }

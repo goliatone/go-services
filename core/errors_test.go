@@ -66,6 +66,23 @@ func TestServiceErrorMapper_AssignsStableCodes(t *testing.T) {
 	}
 }
 
+func TestServiceErrorMapper_PreservesSentinelSources(t *testing.T) {
+	mapped := serviceErrorMapper(fmt.Errorf("%w: %q", ErrSyncJobNotFound, "job_1"))
+	if !stderrors.Is(mapped, ErrSyncJobNotFound) {
+		t.Fatalf("expected mapped sync job error to preserve ErrSyncJobNotFound source")
+	}
+
+	mapped = serviceErrorMapper(fmt.Errorf("%w: %q", ErrInvalidSyncJobMode, "other"))
+	if !stderrors.Is(mapped, ErrInvalidSyncJobMode) {
+		t.Fatalf("expected mapped sync mode error to preserve ErrInvalidSyncJobMode source")
+	}
+
+	mapped = serviceErrorMapper(ErrEmbeddedAuthUnsupported)
+	if !stderrors.Is(mapped, ErrEmbeddedAuthUnsupported) {
+		t.Fatalf("expected mapped embedded auth error to preserve ErrEmbeddedAuthUnsupported source")
+	}
+}
+
 func TestServiceMethods_MapErrorsToStableServiceCodes(t *testing.T) {
 	ctx := context.Background()
 	svc, err := NewService(Config{})
