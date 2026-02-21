@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	goerrors "github.com/goliatone/go-errors"
 	glog "github.com/goliatone/go-logger/glog"
 )
 
@@ -416,6 +417,56 @@ func (e *ProviderOperationError) Unwrap() error {
 		return nil
 	}
 	return e.Cause
+}
+
+func (e *ProviderOperationError) ToServiceError() *goerrors.Error {
+	if e == nil {
+		return nil
+	}
+
+	category := goerrors.CategoryExternal
+	textCode := ServiceErrorProviderOperationFailed
+	code := http.StatusBadGateway
+
+	switch e.StatusCode {
+	case http.StatusTooManyRequests:
+		category = goerrors.CategoryRateLimit
+		textCode = ServiceErrorRateLimited
+		code = http.StatusTooManyRequests
+	case http.StatusUnauthorized:
+		category = goerrors.CategoryAuth
+		textCode = ServiceErrorUnauthorized
+		code = http.StatusUnauthorized
+	case http.StatusForbidden:
+		category = goerrors.CategoryAuthz
+		textCode = ServiceErrorForbidden
+		code = http.StatusForbidden
+	default:
+		if e.StatusCode >= 400 {
+			code = e.StatusCode
+		}
+	}
+
+	message := e.Error()
+	if e.Cause != nil {
+		message = e.Cause.Error()
+	}
+
+	metadata := map[string]any{
+		"provider_id":    e.ProviderID,
+		"operation":      e.Operation,
+		"attempt":        e.Attempt,
+		"max_attempts":   e.MaxAttempts,
+		"status_code":    e.StatusCode,
+		"retryable":      e.Retryable,
+		"idempotency":    e.Idempotency,
+		"transport_kind": e.TransportKind,
+	}
+
+	return goerrors.New(message, category).
+		WithCode(code).
+		WithTextCode(textCode).
+		WithMetadata(metadata)
 }
 
 type UpsertInstallationInput struct {
