@@ -9,19 +9,35 @@ import (
 )
 
 const (
-	ServiceErrorBadInput                = "SERVICE_BAD_INPUT"
+	// Generic service text codes.
+	ServiceErrorBadInput        = "SERVICE_BAD_INPUT"
+	ServiceErrorNotFound        = "SERVICE_NOT_FOUND"
+	ServiceErrorUnauthorized    = "SERVICE_UNAUTHORIZED"
+	ServiceErrorForbidden       = "SERVICE_FORBIDDEN"
+	ServiceErrorConflict        = "SERVICE_CONFLICT"
+	ServiceErrorOperationFailed = "SERVICE_OPERATION_FAILED"
+	ServiceErrorExternalFailure = "SERVICE_EXTERNAL_FAILURE"
+	// Service/domain specific text codes.
 	ServiceErrorProviderNotFound        = "SERVICE_PROVIDER_NOT_FOUND"
 	ServiceErrorCapabilityUnsupported   = "SERVICE_CAPABILITY_UNSUPPORTED"
 	ServiceErrorOAuthStateInvalid       = "SERVICE_OAUTH_STATE_INVALID"
 	ServiceErrorEmbeddedAuthUnsupported = "SERVICE_EMBEDDED_AUTH_UNSUPPORTED"
+	ServiceErrorEmbeddedSessionInvalid  = "SERVICE_EMBEDDED_SESSION_INVALID"
+	ServiceErrorEmbeddedExchangeFailed  = "SERVICE_EMBEDDED_EXCHANGE_FAILED"
 	ServiceErrorReplayDetected          = "SERVICE_REPLAY_DETECTED"
 	ServiceErrorRefreshLocked           = "SERVICE_REFRESH_LOCKED"
 	ServiceErrorPermissionDenied        = "SERVICE_PERMISSION_DENIED"
 	ServiceErrorRateLimited             = "SERVICE_RATE_LIMITED"
 	ServiceErrorProviderOperationFailed = "SERVICE_PROVIDER_OPERATION_FAILED"
 	ServiceErrorSyncJobNotFound         = "SERVICE_SYNC_JOB_NOT_FOUND"
+	ServiceErrorSyncCursorConflict      = "SERVICE_SYNC_CURSOR_CONFLICT"
+	ServiceErrorProfileNotFound         = "SERVICE_PROFILE_NOT_FOUND"
 	ServiceErrorInternal                = "SERVICE_INTERNAL_ERROR"
 )
+
+type serviceErrorConvertible interface {
+	ToServiceError() *goerrors.Error
+}
 
 func serviceErrorMapper(err error) *goerrors.Error {
 	if err == nil {
@@ -33,10 +49,20 @@ func serviceErrorMapper(err error) *goerrors.Error {
 		return ensureServiceErrorEnvelope(richErr)
 	}
 
+	var convertible serviceErrorConvertible
+	if errors.As(err, &convertible) {
+		mapped := convertible.ToServiceError()
+		if mapped != nil {
+			return ensureServiceErrorEnvelope(mapped)
+		}
+	}
+
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case errors.Is(err, ErrSyncJobNotFound):
 		return newServiceError(err.Error(), goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound)
+	case errors.Is(err, ErrSyncCursorConflict):
+		return newServiceError(err.Error(), goerrors.CategoryConflict, ServiceErrorSyncCursorConflict)
 	case errors.Is(err, ErrInvalidSyncJobMode), errors.Is(err, ErrInvalidSyncJobScope):
 		return newServiceError(err.Error(), goerrors.CategoryBadInput, ServiceErrorBadInput)
 	case errors.Is(err, ErrEmbeddedAuthUnsupported):
@@ -92,15 +118,19 @@ func defaultServiceTextCode(category goerrors.Category) string {
 	case goerrors.CategoryBadInput, goerrors.CategoryValidation:
 		return ServiceErrorBadInput
 	case goerrors.CategoryNotFound:
-		return ServiceErrorProviderNotFound
-	case goerrors.CategoryAuth, goerrors.CategoryAuthz:
-		return ServiceErrorPermissionDenied
+		return ServiceErrorNotFound
+	case goerrors.CategoryAuth:
+		return ServiceErrorUnauthorized
+	case goerrors.CategoryAuthz:
+		return ServiceErrorForbidden
 	case goerrors.CategoryConflict:
-		return ServiceErrorRefreshLocked
+		return ServiceErrorConflict
 	case goerrors.CategoryRateLimit:
 		return ServiceErrorRateLimited
 	case goerrors.CategoryOperation:
-		return ServiceErrorCapabilityUnsupported
+		return ServiceErrorOperationFailed
+	case goerrors.CategoryExternal:
+		return ServiceErrorExternalFailure
 	default:
 		return ServiceErrorInternal
 	}
