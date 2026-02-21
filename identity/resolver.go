@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -25,6 +26,41 @@ const (
 )
 
 var ErrProfileNotFound = errors.New("identity: profile not found")
+
+type ProfileNotFoundError struct {
+	Cause error
+}
+
+func (e *ProfileNotFoundError) Error() string {
+	if e == nil || e.Cause == nil {
+		return ErrProfileNotFound.Error()
+	}
+	return ErrProfileNotFound.Error() + ": " + e.Cause.Error()
+}
+
+func (e *ProfileNotFoundError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	if e.Cause == nil {
+		return ErrProfileNotFound
+	}
+	return errors.Join(ErrProfileNotFound, e.Cause)
+}
+
+func (e *ProfileNotFoundError) ToServiceError() *goerrors.Error {
+	message := ErrProfileNotFound.Error()
+	if e != nil && e.Cause != nil {
+		message = e.Error()
+	}
+	return goerrors.New(message, goerrors.CategoryNotFound).
+		WithCode(http.StatusNotFound).
+		WithTextCode(core.ServiceErrorProfileNotFound)
+}
+
+func profileNotFound(cause error) error {
+	return &ProfileNotFoundError{Cause: cause}
+}
 
 type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -146,7 +182,7 @@ func DefaultResolver() *Resolver {
 
 func (r *Resolver) Resolve(ctx context.Context, providerID string, cred core.ActiveCredential, metadata map[string]any) (UserProfile, error) {
 	if r == nil {
-		return UserProfile{}, ErrProfileNotFound
+		return UserProfile{}, profileNotFound(nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -167,14 +203,14 @@ func (r *Resolver) Resolve(ctx context.Context, providerID string, cred core.Act
 	}
 	if userInfoURL == "" {
 		if tokenErr != nil {
-			return UserProfile{}, errors.Join(ErrProfileNotFound, tokenErr)
+			return UserProfile{}, profileNotFound(tokenErr)
 		}
-		return UserProfile{}, ErrProfileNotFound
+		return UserProfile{}, profileNotFound(nil)
 	}
 
 	payload, fetchErr := r.fetchUserInfo(ctx, userInfoURL, strings.TrimSpace(cred.AccessToken))
 	if fetchErr != nil {
-		return UserProfile{}, errors.Join(ErrProfileNotFound, fetchErr)
+		return UserProfile{}, profileNotFound(fetchErr)
 	}
 
 	issuer := strings.TrimSpace(readString(payload["iss"]))
@@ -190,7 +226,7 @@ func (r *Resolver) Resolve(ctx context.Context, providerID string, cred core.Act
 	}
 	profile = normalizer(normalizedProviderID, issuer, payload)
 	if strings.TrimSpace(profile.Subject) == "" {
-		return UserProfile{}, ErrProfileNotFound
+		return UserProfile{}, profileNotFound(nil)
 	}
 	return profile, nil
 }
