@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	goerrors "github.com/goliatone/go-errors"
 )
 
 func (s *Service) observeOperation(
@@ -33,6 +35,7 @@ func (s *Service) observeOperation(
 	contextFields["duration_ms"] = time.Since(startedAt).Milliseconds()
 	if err != nil {
 		contextFields["error"] = err.Error()
+		enrichErrorFields(contextFields, err)
 	}
 
 	tags := map[string]string{
@@ -129,4 +132,73 @@ func normalizeOperation(operation string) string {
 	operation = strings.ReplaceAll(operation, " ", "_")
 	operation = strings.ReplaceAll(operation, "-", "_")
 	return operation
+}
+
+func enrichErrorFields(fields map[string]any, err error) {
+	if len(fields) == 0 || err == nil {
+		return
+	}
+
+	var richErr *goerrors.Error
+	if !goerrors.As(err, &richErr) || richErr == nil {
+		return
+	}
+
+	if richErr.Category != "" {
+		fields["error_category"] = richErr.Category.String()
+	}
+	if richErr.Code != 0 {
+		fields["error_code"] = richErr.Code
+	}
+	if strings.TrimSpace(richErr.TextCode) != "" {
+		fields["error_text_code"] = strings.TrimSpace(richErr.TextCode)
+	}
+	fields["error_severity"] = richErr.GetSeverity().String()
+	if loc := richErr.GetLocation(); loc != nil {
+		fields["error_location"] = loc.String()
+	}
+
+	requestID := strings.TrimSpace(richErr.RequestID)
+	if requestID == "" {
+		requestID = firstNonEmptyString(fields, "request_id", "trace_id")
+		if requestID == "" && len(richErr.Metadata) > 0 {
+			requestID = firstNonEmptyAny(richErr.Metadata, "request_id", "trace_id")
+		}
+		if requestID != "" {
+			richErr.WithRequestID(requestID)
+		}
+	}
+	if requestID != "" {
+		fields["request_id"] = requestID
+	}
+
+	if validationErrors := richErr.AllValidationErrors(); len(validationErrors) > 0 {
+		fields["error_validation_errors"] = validationErrors
+	}
+
+	if len(richErr.Metadata) > 0 {
+		fields["error_metadata"] = RedactSensitiveMap(richErr.Metadata)
+		if _, ok := fields["trace_id"]; !ok {
+			if traceID := firstNonEmptyAny(richErr.Metadata, "trace_id"); traceID != "" {
+				fields["trace_id"] = traceID
+			}
+		}
+	}
+}
+
+func firstNonEmptyString(fields map[string]any, keys ...string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		value := strings.TrimSpace(fmt.Sprint(fields[key]))
+		if value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyAny(fields map[string]any, keys ...string) string {
+	return firstNonEmptyString(fields, keys...)
 }

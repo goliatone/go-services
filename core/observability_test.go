@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
+
+	goerrors "github.com/goliatone/go-errors"
 )
 
 type capturedCounter struct {
@@ -169,6 +172,65 @@ func TestServiceObservability_InvokeCapabilityFailure(t *testing.T) {
 	}
 	if !hasLog(logger.snapshot(), "error", "invoke_capability failed", "invoke_capability") {
 		t.Fatalf("expected invoke capability failure log")
+	}
+}
+
+func TestServiceObservability_EnrichesStructuredErrorFields(t *testing.T) {
+	metrics := &captureMetricsRecorder{}
+	logger := newCaptureLogger()
+	svc, err := NewService(DefaultConfig(),
+		WithMetricsRecorder(metrics),
+		WithLoggerProvider(stubLoggerProvider{logger: logger}),
+		WithLogger(logger),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	richErr := goerrors.New("provider timeout", goerrors.CategoryExternal).
+		WithCode(502).
+		WithTextCode(ServiceErrorExternalFailure).
+		WithSeverity(goerrors.SeverityCritical).
+		WithMetadata(map[string]any{
+			"trace_id":     "trace_123",
+			"request_id":   "req_123",
+			"refresh_token": "secret_refresh_token",
+		})
+	svc.observeOperation(
+		context.Background(),
+		time.Now().UTC().Add(-100*time.Millisecond),
+		"provider_operation",
+		richErr,
+		map[string]any{"provider_id": "github"},
+	)
+
+	records := logger.snapshot()
+	if len(records) == 0 {
+		t.Fatalf("expected logs to be emitted")
+	}
+	last := records[len(records)-1]
+	if last.fields["error_category"] != "external" {
+		t.Fatalf("expected error_category external, got %#v", last.fields["error_category"])
+	}
+	if last.fields["error_text_code"] != ServiceErrorExternalFailure {
+		t.Fatalf("expected error_text_code %q, got %#v", ServiceErrorExternalFailure, last.fields["error_text_code"])
+	}
+	if last.fields["error_severity"] != goerrors.SeverityCritical.String() {
+		t.Fatalf("expected critical severity, got %#v", last.fields["error_severity"])
+	}
+	if last.fields["request_id"] != "req_123" {
+		t.Fatalf("expected request_id propagation, got %#v", last.fields["request_id"])
+	}
+	if last.fields["trace_id"] != "trace_123" {
+		t.Fatalf("expected trace_id propagation, got %#v", last.fields["trace_id"])
+	}
+
+	metadata, ok := last.fields["error_metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected redacted error_metadata map, got %#v", last.fields["error_metadata"])
+	}
+	if metadata["refresh_token"] != RedactedValue {
+		t.Fatalf("expected refresh_token to be redacted, got %#v", metadata["refresh_token"])
 	}
 }
 
