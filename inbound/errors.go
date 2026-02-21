@@ -62,4 +62,3 @@ func inboundInternal(message string, metadata map[string]any) error {
 		metadata,
 	)
 }
-
