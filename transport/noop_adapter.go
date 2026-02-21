@@ -3,8 +3,10 @@ package transport
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -36,18 +38,26 @@ func (a *UnsupportedAdapter) Kind() string {
 
 func (a *UnsupportedAdapter) Do(context.Context, core.TransportRequest) (core.TransportResponse, error) {
 	if a == nil {
-		return core.TransportResponse{}, fmt.Errorf("transport: adapter is nil")
-	}
-	if a.reason != "" {
-		return core.TransportResponse{}, fmt.Errorf(
-			"transport: %s adapter is not configured: %s",
-			a.kind,
-			a.reason,
+		return core.TransportResponse{}, transportError(
+			"transport: adapter is nil",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"adapter": "unsupported"},
 		)
 	}
-	return core.TransportResponse{}, fmt.Errorf(
-		"transport: %s adapter is not configured",
-		a.kind,
+	if a.reason != "" {
+		return core.TransportResponse{}, transportError(
+			fmt.Sprintf("transport: %s adapter is not configured: %s", a.kind, a.reason),
+			goerrors.CategoryOperation,
+			http.StatusNotImplemented,
+			map[string]any{"adapter": a.kind, "reason": a.reason},
+		)
+	}
+	return core.TransportResponse{}, transportError(
+		fmt.Sprintf("transport: %s adapter is not configured", a.kind),
+		goerrors.CategoryOperation,
+		http.StatusNotImplemented,
+		map[string]any{"adapter": a.kind},
 	)
 }
 

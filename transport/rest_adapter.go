@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/goliatone/go-services/core"
+	goerrors "github.com/goliatone/go-errors"
 )
 
 const KindREST = "rest"
@@ -45,7 +46,12 @@ func (*RESTAdapter) Kind() string {
 
 func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.TransportResponse, error) {
 	if a == nil || a.Client == nil {
-		return core.TransportResponse{}, fmt.Errorf("transport: rest adapter requires an http client")
+		return core.TransportResponse{}, transportError(
+			"transport: rest adapter requires an http client",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"adapter": KindREST},
+		)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -57,10 +63,21 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 	}
 	parsedURL, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil {
-		return core.TransportResponse{}, err
+		return core.TransportResponse{}, transportWrapError(
+			err,
+			goerrors.CategoryBadInput,
+			"transport: invalid request url",
+			http.StatusBadRequest,
+			map[string]any{"adapter": KindREST, "url": strings.TrimSpace(req.URL)},
+		)
 	}
 	if parsedURL.String() == "" {
-		return core.TransportResponse{}, fmt.Errorf("transport: request url is required")
+		return core.TransportResponse{}, transportError(
+			"transport: request url is required",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"adapter": KindREST},
+		)
 	}
 
 	query := parsedURL.Query()
@@ -81,7 +98,13 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 
 	httpReq, err := http.NewRequestWithContext(requestCtx, method, parsedURL.String(), bytes.NewReader(req.Body))
 	if err != nil {
-		return core.TransportResponse{}, err
+		return core.TransportResponse{}, transportWrapError(
+			err,
+			goerrors.CategoryBadInput,
+			"transport: create http request",
+			http.StatusBadRequest,
+			map[string]any{"adapter": KindREST, "method": method, "url": parsedURL.String()},
+		)
 	}
 	for key, value := range a.DefaultHeaders {
 		if strings.TrimSpace(key) == "" {
@@ -99,19 +122,37 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 	startedAt := time.Now().UTC()
 	httpRes, err := a.Client.Do(httpReq)
 	if err != nil {
-		return core.TransportResponse{}, err
+		return core.TransportResponse{}, transportWrapError(
+			err,
+			goerrors.CategoryExternal,
+			"transport: execute http request",
+			http.StatusBadGateway,
+			map[string]any{"adapter": KindREST, "method": method, "url": parsedURL.String()},
+		)
 	}
 	defer httpRes.Body.Close()
 
 	maxBodyBytes := resolveResponseBodyLimit(req.MaxResponseBodyBytes, a.MaxResponseBodyBytes)
 	body, err := io.ReadAll(io.LimitReader(httpRes.Body, maxBodyBytes+1))
 	if err != nil {
-		return core.TransportResponse{}, err
+		return core.TransportResponse{}, transportWrapError(
+			err,
+			goerrors.CategoryExternal,
+			"transport: read response body",
+			http.StatusBadGateway,
+			map[string]any{"adapter": KindREST, "status_code": httpRes.StatusCode},
+		)
 	}
 	if int64(len(body)) > maxBodyBytes {
-		return core.TransportResponse{}, fmt.Errorf(
-			"transport: response body exceeds limit of %d bytes",
-			maxBodyBytes,
+		return core.TransportResponse{}, transportError(
+			fmt.Sprintf("transport: response body exceeds limit of %d bytes", maxBodyBytes),
+			goerrors.CategoryExternal,
+			http.StatusBadGateway,
+			map[string]any{
+				"adapter":          KindREST,
+				"status_code":      httpRes.StatusCode,
+				"response_limit_b": maxBodyBytes,
+			},
 		)
 	}
 

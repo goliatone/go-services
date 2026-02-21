@@ -2,9 +2,10 @@ package transport
 
 import (
 	"context"
-	"fmt"
+	"net/http"
 	"strings"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -58,7 +59,12 @@ func (a *ProtocolHTTPAdapter) Kind() string {
 
 func (a *ProtocolHTTPAdapter) Do(ctx context.Context, req core.TransportRequest) (core.TransportResponse, error) {
 	if a == nil || a.rest == nil {
-		return core.TransportResponse{}, fmt.Errorf("transport: protocol adapter is nil")
+		return core.TransportResponse{}, transportError(
+			"transport: protocol adapter is nil",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"adapter": "protocol_http"},
+		)
 	}
 	resolved := req
 	if strings.TrimSpace(resolved.Method) == "" {

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -29,7 +31,12 @@ func (*GraphQLAdapter) Kind() string {
 
 func (a *GraphQLAdapter) Do(ctx context.Context, req core.TransportRequest) (core.TransportResponse, error) {
 	if a == nil || a.REST == nil {
-		return core.TransportResponse{}, fmt.Errorf("transport: graphql adapter requires a rest adapter")
+		return core.TransportResponse{}, transportError(
+			"transport: graphql adapter requires a rest adapter",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"adapter": KindGraphQL},
+		)
 	}
 
 	endpoint := strings.TrimSpace(req.URL)
@@ -37,12 +44,22 @@ func (a *GraphQLAdapter) Do(ctx context.Context, req core.TransportRequest) (cor
 		endpoint = a.Endpoint
 	}
 	if endpoint == "" {
-		return core.TransportResponse{}, fmt.Errorf("transport: graphql endpoint is required")
+		return core.TransportResponse{}, transportError(
+			"transport: graphql endpoint is required",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"adapter": KindGraphQL},
+		)
 	}
 
 	query, ok := readGraphQLQuery(req)
 	if !ok {
-		return core.TransportResponse{}, fmt.Errorf("transport: graphql query is required")
+		return core.TransportResponse{}, transportError(
+			"transport: graphql query is required",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"adapter": KindGraphQL, "endpoint": endpoint},
+		)
 	}
 	payload := map[string]any{"query": query}
 	if operationName := readGraphQLOperationName(req.Metadata); operationName != "" {
@@ -54,7 +71,13 @@ func (a *GraphQLAdapter) Do(ctx context.Context, req core.TransportRequest) (cor
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return core.TransportResponse{}, err
+		return core.TransportResponse{}, transportWrapError(
+			err,
+			goerrors.CategoryBadInput,
+			"transport: marshal graphql payload",
+			http.StatusBadRequest,
+			map[string]any{"adapter": KindGraphQL, "endpoint": endpoint},
+		)
 	}
 
 	headers := map[string]string{"Content-Type": "application/json"}
@@ -72,7 +95,13 @@ func (a *GraphQLAdapter) Do(ctx context.Context, req core.TransportRequest) (cor
 		MaxResponseBodyBytes: req.MaxResponseBodyBytes,
 	})
 	if err != nil {
-		return core.TransportResponse{}, err
+		return core.TransportResponse{}, transportWrapError(
+			err,
+			goerrors.CategoryExternal,
+			"transport: graphql request failed",
+			http.StatusBadGateway,
+			map[string]any{"adapter": KindGraphQL, "endpoint": endpoint},
+		)
 	}
 	response.Metadata = ensureMetadata(response.Metadata)
 	response.Metadata["kind"] = KindGraphQL

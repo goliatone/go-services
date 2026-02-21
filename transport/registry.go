@@ -2,10 +2,12 @@ package transport
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -36,20 +38,40 @@ func NewDefaultRegistry() *Registry {
 
 func (r *Registry) Register(adapter core.TransportAdapter) error {
 	if r == nil {
-		return fmt.Errorf("transport: registry is nil")
+		return transportError(
+			"transport: registry is nil",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"component": "registry"},
+		)
 	}
 	if adapter == nil {
-		return fmt.Errorf("transport: adapter is nil")
+		return transportError(
+			"transport: adapter is nil",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"component": "registry"},
+		)
 	}
 	kind := normalizeKind(adapter.Kind())
 	if kind == "" {
-		return fmt.Errorf("transport: adapter kind is required")
+		return transportError(
+			"transport: adapter kind is required",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"component": "registry"},
+		)
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.adapters[kind]; exists {
-		return fmt.Errorf("transport: adapter kind %q already registered", kind)
+		return transportError(
+			fmt.Sprintf("transport: adapter kind %q already registered", kind),
+			goerrors.CategoryConflict,
+			http.StatusConflict,
+			map[string]any{"component": "registry", "adapter": kind},
+		)
 	}
 	r.adapters[kind] = adapter
 	return nil
@@ -57,20 +79,40 @@ func (r *Registry) Register(adapter core.TransportAdapter) error {
 
 func (r *Registry) RegisterFactory(kind string, factory AdapterFactory) error {
 	if r == nil {
-		return fmt.Errorf("transport: registry is nil")
+		return transportError(
+			"transport: registry is nil",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"component": "registry"},
+		)
 	}
 	kind = normalizeKind(kind)
 	if kind == "" {
-		return fmt.Errorf("transport: adapter kind is required")
+		return transportError(
+			"transport: adapter kind is required",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"component": "registry"},
+		)
 	}
 	if factory == nil {
-		return fmt.Errorf("transport: adapter factory is nil")
+		return transportError(
+			"transport: adapter factory is nil",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"component": "registry", "adapter": kind},
+		)
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.factories[kind]; exists {
-		return fmt.Errorf("transport: adapter factory kind %q already registered", kind)
+		return transportError(
+			fmt.Sprintf("transport: adapter factory kind %q already registered", kind),
+			goerrors.CategoryConflict,
+			http.StatusConflict,
+			map[string]any{"component": "registry", "adapter": kind},
+		)
 	}
 	r.factories[kind] = factory
 	return nil
@@ -78,11 +120,21 @@ func (r *Registry) RegisterFactory(kind string, factory AdapterFactory) error {
 
 func (r *Registry) Build(kind string, config map[string]any) (core.TransportAdapter, error) {
 	if r == nil {
-		return nil, fmt.Errorf("transport: registry is nil")
+		return nil, transportError(
+			"transport: registry is nil",
+			goerrors.CategoryInternal,
+			http.StatusInternalServerError,
+			map[string]any{"component": "registry"},
+		)
 	}
 	kind = normalizeKind(kind)
 	if kind == "" {
-		return nil, fmt.Errorf("transport: adapter kind is required")
+		return nil, transportError(
+			"transport: adapter kind is required",
+			goerrors.CategoryBadInput,
+			http.StatusBadRequest,
+			map[string]any{"component": "registry"},
+		)
 	}
 
 	r.mu.RLock()
@@ -93,14 +145,30 @@ func (r *Registry) Build(kind string, config map[string]any) (core.TransportAdap
 		return adapter, nil
 	}
 	if factory == nil {
-		return nil, fmt.Errorf("transport: adapter kind %q not registered", kind)
+		return nil, transportError(
+			fmt.Sprintf("transport: adapter kind %q not registered", kind),
+			goerrors.CategoryNotFound,
+			http.StatusNotFound,
+			map[string]any{"component": "registry", "adapter": kind},
+		)
 	}
 	built, err := factory(cloneMap(config))
 	if err != nil {
-		return nil, err
+		return nil, transportWrapError(
+			err,
+			goerrors.CategoryOperation,
+			fmt.Sprintf("transport: build adapter %q", kind),
+			http.StatusInternalServerError,
+			map[string]any{"component": "registry", "adapter": kind},
+		)
 	}
 	if built == nil {
-		return nil, fmt.Errorf("transport: factory for %q returned nil adapter", kind)
+		return nil, transportError(
+			fmt.Sprintf("transport: factory for %q returned nil adapter", kind),
+			goerrors.CategoryOperation,
+			http.StatusInternalServerError,
+			map[string]any{"component": "registry", "adapter": kind},
+		)
 	}
 	return built, nil
 }
