@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -47,19 +48,28 @@ func NewDispatcher(verifier Verifier, store core.IdempotencyClaimStore) *Dispatc
 
 func (d *Dispatcher) Register(handler core.InboundHandler) error {
 	if d == nil {
-		return fmt.Errorf("inbound: dispatcher is nil")
+		return inboundInternal("inbound: dispatcher is nil", nil)
 	}
 	if handler == nil {
-		return fmt.Errorf("inbound: handler is nil")
+		return inboundBadInput("inbound: handler is nil", nil)
 	}
 	surface := normalizeSurface(handler.Surface())
 	if !isSupportedSurface(surface) {
-		return fmt.Errorf("inbound: unsupported surface %q", surface)
+		return inboundBadInput(
+			fmt.Sprintf("inbound: unsupported surface %q", surface),
+			map[string]any{"surface": surface},
+		)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.handlers[surface]; exists {
-		return fmt.Errorf("inbound: handler already registered for surface %q", surface)
+		return inboundError(
+			fmt.Sprintf("inbound: handler already registered for surface %q", surface),
+			goerrors.CategoryConflict,
+			http.StatusConflict,
+			core.ServiceErrorConflict,
+			map[string]any{"surface": surface},
+		)
 	}
 	d.handlers[surface] = handler
 	return nil
@@ -67,15 +77,20 @@ func (d *Dispatcher) Register(handler core.InboundHandler) error {
 
 func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (core.InboundResult, error) {
 	if d == nil {
-		return core.InboundResult{}, fmt.Errorf("inbound: dispatcher is nil")
+		return core.InboundResult{}, inboundInternal("inbound: dispatcher is nil", nil)
 	}
 	req.ProviderID = strings.TrimSpace(req.ProviderID)
 	req.Surface = normalizeSurface(req.Surface)
 	if req.ProviderID == "" {
-		return core.InboundResult{}, fmt.Errorf("inbound: provider id is required")
+		return core.InboundResult{}, inboundBadInput("inbound: provider id is required", map[string]any{
+			"surface": req.Surface,
+		})
 	}
 	if !isSupportedSurface(req.Surface) {
-		return core.InboundResult{}, fmt.Errorf("inbound: unsupported surface %q", req.Surface)
+		return core.InboundResult{}, inboundBadInput(
+			fmt.Sprintf("inbound: unsupported surface %q", req.Surface),
+			map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
+		)
 	}
 	if d.Verifier != nil {
 		if err := d.Verifier.Verify(ctx, req); err != nil {
@@ -87,7 +102,14 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 					"surface":     req.Surface,
 					"rejected":    true,
 				},
-			}, err
+			}, inboundWrapError(
+				err,
+				goerrors.CategoryAuth,
+				"inbound: request verification failed",
+				http.StatusUnauthorized,
+				core.ServiceErrorUnauthorized,
+				map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
+			)
 		}
 	}
 
@@ -99,12 +121,30 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 		}
 		key, err := extractor(req)
 		if err != nil {
-			return core.InboundResult{}, err
+			return core.InboundResult{}, inboundWrapError(
+				err,
+				goerrors.CategoryBadInput,
+				"inbound: resolve idempotency key",
+				http.StatusBadRequest,
+				core.ServiceErrorBadInput,
+				map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
+			)
 		}
 		var accepted bool
 		claimID, accepted, err = d.Store.Claim(ctx, req.ProviderID+":"+req.Surface+":"+key, d.keyTTL())
 		if err != nil {
-			return core.InboundResult{}, err
+			return core.InboundResult{}, inboundWrapError(
+				err,
+				goerrors.CategoryOperation,
+				"inbound: idempotency claim failed",
+				http.StatusInternalServerError,
+				core.ServiceErrorOperationFailed,
+				map[string]any{
+					"provider_id": req.ProviderID,
+					"surface":     req.Surface,
+					"idempotency": key,
+				},
+			)
 		}
 		if !accepted {
 			return core.InboundResult{
@@ -121,28 +161,66 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 
 	handler := d.handlerFor(req.Surface)
 	if handler == nil {
-		return core.InboundResult{}, fmt.Errorf("inbound: no handler registered for surface %q", req.Surface)
+		return core.InboundResult{}, inboundError(
+			fmt.Sprintf("inbound: no handler registered for surface %q", req.Surface),
+			goerrors.CategoryNotFound,
+			http.StatusNotFound,
+			core.ServiceErrorNotFound,
+			map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
+		)
 	}
 	result, err := handler.Handle(ctx, req)
 	if err != nil {
+		handlerErr := inboundWrapError(
+			err,
+			goerrors.CategoryOperation,
+			"inbound: handler execution failed",
+			http.StatusBadGateway,
+			core.ServiceErrorOperationFailed,
+			map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
+		)
 		if d.Store != nil && claimID != "" {
 			if failErr := d.Store.Fail(ctx, claimID, err, time.Time{}); failErr != nil {
 				return core.InboundResult{}, errors.Join(
-					err,
-					fmt.Errorf("inbound: mark idempotency claim failed: %w", failErr),
+					handlerErr,
+					inboundWrapError(
+						failErr,
+						goerrors.CategoryOperation,
+						"inbound: mark idempotency claim failed",
+						http.StatusInternalServerError,
+						core.ServiceErrorInternal,
+						map[string]any{"provider_id": req.ProviderID, "surface": req.Surface, "claim_id": claimID},
+					),
 				)
 			}
 		}
-		return core.InboundResult{}, err
+		return core.InboundResult{}, handlerErr
 	}
 	retryableFailure := !result.Accepted || result.StatusCode >= http.StatusInternalServerError
 	if retryableFailure {
-		retryErr := fmt.Errorf("inbound: handler returned retryable status %d", result.StatusCode)
+		retryErr := inboundError(
+			fmt.Sprintf("inbound: handler returned retryable status %d", result.StatusCode),
+			goerrors.CategoryOperation,
+			http.StatusBadGateway,
+			core.ServiceErrorOperationFailed,
+			map[string]any{
+				"provider_id": req.ProviderID,
+				"surface":     req.Surface,
+				"status_code": result.StatusCode,
+			},
+		)
 		if d.Store != nil && claimID != "" {
 			if failErr := d.Store.Fail(ctx, claimID, retryErr, time.Time{}); failErr != nil {
 				return result, errors.Join(
 					retryErr,
-					fmt.Errorf("inbound: mark idempotency claim failed: %w", failErr),
+					inboundWrapError(
+						failErr,
+						goerrors.CategoryOperation,
+						"inbound: mark idempotency claim failed",
+						http.StatusInternalServerError,
+						core.ServiceErrorInternal,
+						map[string]any{"provider_id": req.ProviderID, "surface": req.Surface, "claim_id": claimID},
+					),
 				)
 			}
 		}
@@ -150,7 +228,14 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 	}
 	if d.Store != nil && claimID != "" {
 		if err := d.Store.Complete(ctx, claimID); err != nil {
-			return core.InboundResult{}, err
+			return core.InboundResult{}, inboundWrapError(
+				err,
+				goerrors.CategoryOperation,
+				"inbound: complete idempotency claim",
+				http.StatusInternalServerError,
+				core.ServiceErrorOperationFailed,
+				map[string]any{"provider_id": req.ProviderID, "surface": req.Surface, "claim_id": claimID},
+			)
 		}
 	}
 	result.Metadata = ensureMetadata(result.Metadata)
@@ -182,7 +267,10 @@ func DefaultIdempotencyKeyExtractor(req core.InboundRequest) (string, error) {
 			return value, nil
 		}
 	}
-	return "", fmt.Errorf("inbound: idempotency key is required")
+	return "", inboundBadInput("inbound: idempotency key is required", map[string]any{
+		"provider_id": req.ProviderID,
+		"surface":     req.Surface,
+	})
 }
 
 type claimStatus string
@@ -233,11 +321,11 @@ func (s *InMemoryClaimStore) Claim(
 	lease time.Duration,
 ) (string, bool, error) {
 	if s == nil {
-		return "", false, fmt.Errorf("inbound: idempotency store is nil")
+		return "", false, inboundInternal("inbound: idempotency store is nil", nil)
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return "", false, fmt.Errorf("inbound: idempotency key is required")
+		return "", false, inboundBadInput("inbound: idempotency key is required", nil)
 	}
 	now := s.now()
 	if lease <= 0 {
@@ -294,11 +382,11 @@ func (s *InMemoryClaimStore) Claim(
 
 func (s *InMemoryClaimStore) Complete(_ context.Context, claimID string) error {
 	if s == nil {
-		return fmt.Errorf("inbound: idempotency store is nil")
+		return inboundInternal("inbound: idempotency store is nil", nil)
 	}
 	claimID = strings.TrimSpace(claimID)
 	if claimID == "" {
-		return fmt.Errorf("inbound: claim id is required")
+		return inboundBadInput("inbound: claim id is required", nil)
 	}
 
 	s.mu.Lock()
@@ -332,11 +420,11 @@ func (s *InMemoryClaimStore) Fail(
 	retryAt time.Time,
 ) error {
 	if s == nil {
-		return fmt.Errorf("inbound: idempotency store is nil")
+		return inboundInternal("inbound: idempotency store is nil", nil)
 	}
 	claimID = strings.TrimSpace(claimID)
 	if claimID == "" {
-		return fmt.Errorf("inbound: claim id is required")
+		return inboundBadInput("inbound: claim id is required", nil)
 	}
 
 	s.mu.Lock()
