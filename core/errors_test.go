@@ -10,6 +10,23 @@ import (
 	goerrors "github.com/goliatone/go-errors"
 )
 
+type testConvertibleError struct {
+	message string
+}
+
+func (e testConvertibleError) Error() string {
+	if strings.TrimSpace(e.message) == "" {
+		return "convertible error"
+	}
+	return e.message
+}
+
+func (e testConvertibleError) ToServiceError() *goerrors.Error {
+	return goerrors.New(e.Error(), goerrors.CategoryRateLimit).
+		WithCode(429).
+		WithTextCode(ServiceErrorRateLimited)
+}
+
 func TestServiceErrorMapper_AssignsStableCodes(t *testing.T) {
 	mapped := serviceErrorMapper(stderrors.New("core: oauth callback state mismatch"))
 	if mapped.TextCode != ServiceErrorOAuthStateInvalid {
@@ -38,6 +55,14 @@ func TestServiceErrorMapper_AssignsStableCodes(t *testing.T) {
 	mapped = serviceErrorMapper(fmt.Errorf("%w: %q", ErrInvalidSyncJobMode, "other"))
 	if mapped.TextCode != ServiceErrorBadInput {
 		t.Fatalf("expected bad input code for invalid sync job mode, got %q", mapped.TextCode)
+	}
+
+	mapped = serviceErrorMapper(ErrSyncCursorConflict)
+	if mapped.TextCode != ServiceErrorSyncCursorConflict {
+		t.Fatalf("expected sync cursor conflict code, got %q", mapped.TextCode)
+	}
+	if mapped.Category != goerrors.CategoryConflict {
+		t.Fatalf("expected conflict category, got %q", mapped.Category)
 	}
 }
 
@@ -119,5 +144,43 @@ func TestRefresh_RejectsProviderConnectionMismatch(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider mismatch") {
 		t.Fatalf("expected provider mismatch error, got %v", err)
+	}
+}
+
+func TestServiceErrorMapper_UsesTypedServiceConversion(t *testing.T) {
+	mapped := serviceErrorMapper(fmt.Errorf("wrap: %w", testConvertibleError{message: "rate limited"}))
+	if mapped == nil {
+		t.Fatalf("expected mapped error")
+	}
+	if mapped.TextCode != ServiceErrorRateLimited {
+		t.Fatalf("expected %q text code, got %q", ServiceErrorRateLimited, mapped.TextCode)
+	}
+	if mapped.Category != goerrors.CategoryRateLimit {
+		t.Fatalf("expected rate_limit category, got %q", mapped.Category)
+	}
+}
+
+func TestDefaultServiceTextCode_UsesCatalogDefaults(t *testing.T) {
+	cases := []struct {
+		category goerrors.Category
+		want     string
+	}{
+		{category: goerrors.CategoryBadInput, want: ServiceErrorBadInput},
+		{category: goerrors.CategoryValidation, want: ServiceErrorBadInput},
+		{category: goerrors.CategoryNotFound, want: ServiceErrorNotFound},
+		{category: goerrors.CategoryAuth, want: ServiceErrorUnauthorized},
+		{category: goerrors.CategoryAuthz, want: ServiceErrorForbidden},
+		{category: goerrors.CategoryConflict, want: ServiceErrorConflict},
+		{category: goerrors.CategoryRateLimit, want: ServiceErrorRateLimited},
+		{category: goerrors.CategoryOperation, want: ServiceErrorOperationFailed},
+		{category: goerrors.CategoryExternal, want: ServiceErrorExternalFailure},
+		{category: goerrors.CategoryInternal, want: ServiceErrorInternal},
+	}
+
+	for _, tc := range cases {
+		mapped := ensureServiceErrorEnvelope(goerrors.New("test", tc.category))
+		if mapped.TextCode != tc.want {
+			t.Fatalf("category %q: expected text code %q, got %q", tc.category, tc.want, mapped.TextCode)
+		}
 	}
 }
