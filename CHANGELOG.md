@@ -1,5 +1,30 @@
 # Changelog
 
+# [0.4.0](https://github.com/goliatone/go-services/compare/v0.3.0...v0.4.0) - (2026-02-21)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.4.0 ([0ef7d2e](https://github.com/goliatone/go-services/commit/0ef7d2e552de3142b71d28201776ba122f3ec45b))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- New errors to handle rich mapping ([439fee1](https://github.com/goliatone/go-services/commit/439fee14078a8405bf9447db3093c88bc75025e6))  - (goliatone)
+- Rich errors mapping ([fc2af6d](https://github.com/goliatone/go-services/commit/fc2af6dec1d7c7be0fa425e385393bef47533569))  - (goliatone)
+- Rich errors to shopify prov ([a4418cf](https://github.com/goliatone/go-services/commit/a4418cfd61606563a8ce7a407b8b8f4dba9d7d3b))  - (goliatone)
+- Rich errors to rate limit ([fe7a98d](https://github.com/goliatone/go-services/commit/fe7a98d62fb2536ed5943c201e866d1249cddae2))  - (goliatone)
+- Support embedded only shopify provider ([734f21b](https://github.com/goliatone/go-services/commit/734f21b16cbfff438267e3e1a23fc9eae5ee02b7))  - (goliatone)
+- Shopify errors ([d2ff2ff](https://github.com/goliatone/go-services/commit/d2ff2ffdf604efdc960ec9dd71929a1e2238ad70))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.3.0 ([2555fa0](https://github.com/goliatone/go-services/commit/2555fa0f0d6b4cd48d7b259bc3d6445ee360c0ef))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update readme ([49c89f5](https://github.com/goliatone/go-services/commit/49c89f58aea43493ff742287bd39165f346d222a))  - (goliatone)
+- Udpate tests ([0f165eb](https://github.com/goliatone/go-services/commit/0f165ebd7a1bd3802c550cf5d28eec08c6e3da4e))  - (goliatone)
+- Update test ([a95dce8](https://github.com/goliatone/go-services/commit/a95dce80fc4a8cb834ceca6dd1ee07b7c3636016))  - (goliatone)
+
 # [0.3.0](https://github.com/goliatone/go-services/compare/v0.2.0...v0.3.0) - (2026-02-20)
 
 ## <!-- 13 -->📦 Bumps
