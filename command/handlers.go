@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	gocmd "github.com/goliatone/go-command"
 	"github.com/goliatone/go-services/core"
@@ -38,7 +37,7 @@ func NewConnectCommand(service MutatingService) *ConnectCommand {
 
 func (c *ConnectCommand) Execute(ctx context.Context, msg ConnectMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: connect service is required")
+		return commandDependencyError("command: connect service is required")
 	}
 	out, err := c.service.Connect(ctx, msg.Request)
 	if err != nil {
@@ -58,7 +57,7 @@ func NewStartReconsentCommand(service MutatingService) *StartReconsentCommand {
 
 func (c *StartReconsentCommand) Execute(ctx context.Context, msg StartReconsentMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: re-consent service is required")
+		return commandDependencyError("command: re-consent service is required")
 	}
 	out, err := c.service.StartReconsent(ctx, msg.Request)
 	if err != nil {
@@ -78,7 +77,7 @@ func NewCompleteReconsentCommand(service MutatingService) *CompleteReconsentComm
 
 func (c *CompleteReconsentCommand) Execute(ctx context.Context, msg CompleteReconsentMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: complete re-consent service is required")
+		return commandDependencyError("command: complete re-consent service is required")
 	}
 	out, err := c.service.CompleteReconsent(ctx, msg.Request)
 	if err != nil {
@@ -98,7 +97,7 @@ func NewCompleteCallbackCommand(service MutatingService) *CompleteCallbackComman
 
 func (c *CompleteCallbackCommand) Execute(ctx context.Context, msg CompleteCallbackMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: callback service is required")
+		return commandDependencyError("command: callback service is required")
 	}
 	out, err := c.service.CompleteCallback(ctx, msg.Request)
 	if err != nil {
@@ -118,7 +117,7 @@ func NewRefreshCommand(service MutatingService) *RefreshCommand {
 
 func (c *RefreshCommand) Execute(ctx context.Context, msg RefreshMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: refresh service is required")
+		return commandDependencyError("command: refresh service is required")
 	}
 	out, err := c.service.Refresh(ctx, msg.Request)
 	if err != nil {
@@ -138,7 +137,7 @@ func NewRevokeCommand(service MutatingService) *RevokeCommand {
 
 func (c *RevokeCommand) Execute(ctx context.Context, msg RevokeMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: revoke service is required")
+		return commandDependencyError("command: revoke service is required")
 	}
 	return c.service.Revoke(ctx, msg.ConnectionID, msg.Reason)
 }
@@ -153,7 +152,7 @@ func NewInvokeCapabilityCommand(service MutatingService) *InvokeCapabilityComman
 
 func (c *InvokeCapabilityCommand) Execute(ctx context.Context, msg InvokeCapabilityMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: capability service is required")
+		return commandDependencyError("command: capability service is required")
 	}
 	out, err := c.service.InvokeCapability(ctx, msg.Request)
 	if err != nil {
@@ -173,7 +172,7 @@ func NewSubscribeCommand(service MutatingService) *SubscribeCommand {
 
 func (c *SubscribeCommand) Execute(ctx context.Context, msg SubscribeMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: subscribe service is required")
+		return commandDependencyError("command: subscribe service is required")
 	}
 	out, err := c.service.Subscribe(ctx, msg.Request)
 	if err != nil {
@@ -193,7 +192,7 @@ func NewRenewSubscriptionCommand(service MutatingService) *RenewSubscriptionComm
 
 func (c *RenewSubscriptionCommand) Execute(ctx context.Context, msg RenewSubscriptionMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: renew subscription service is required")
+		return commandDependencyError("command: renew subscription service is required")
 	}
 	out, err := c.service.RenewSubscription(ctx, msg.Request)
 	if err != nil {
@@ -213,7 +212,7 @@ func NewCancelSubscriptionCommand(service MutatingService) *CancelSubscriptionCo
 
 func (c *CancelSubscriptionCommand) Execute(ctx context.Context, msg CancelSubscriptionMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: cancel subscription service is required")
+		return commandDependencyError("command: cancel subscription service is required")
 	}
 	return c.service.CancelSubscription(ctx, msg.Request)
 }
@@ -228,7 +227,7 @@ func NewAdvanceSyncCursorCommand(service MutatingService) *AdvanceSyncCursorComm
 
 func (c *AdvanceSyncCursorCommand) Execute(ctx context.Context, msg AdvanceSyncCursorMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: sync cursor service is required")
+		return commandDependencyError("command: sync cursor service is required")
 	}
 	out, err := c.service.AdvanceSyncCursor(ctx, msg.Input)
 	if err != nil {
@@ -248,7 +247,7 @@ func NewUpsertInstallationCommand(service MutatingService) *UpsertInstallationCo
 
 func (c *UpsertInstallationCommand) Execute(ctx context.Context, msg UpsertInstallationMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: installation service is required")
+		return commandDependencyError("command: installation service is required")
 	}
 	out, err := c.service.UpsertInstallation(ctx, msg.Input)
 	if err != nil {
@@ -268,7 +267,7 @@ func NewUpdateInstallationStatusCommand(service MutatingService) *UpdateInstalla
 
 func (c *UpdateInstallationStatusCommand) Execute(ctx context.Context, msg UpdateInstallationStatusMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: installation service is required")
+		return commandDependencyError("command: installation service is required")
 	}
 	return c.service.UpdateInstallationStatus(ctx, msg.InstallationID, msg.Status, msg.Reason)
 }
@@ -283,7 +282,7 @@ func NewCreateSyncJobCommand(service SyncJobMutatingService) *CreateSyncJobComma
 
 func (c *CreateSyncJobCommand) Execute(ctx context.Context, msg CreateSyncJobMessage) error {
 	if c == nil || c.service == nil {
-		return fmt.Errorf("command: sync job service is required")
+		return commandDependencyError("command: sync job service is required")
 	}
 	out, err := c.service.CreateSyncJob(ctx, msg.Request)
 	if err != nil {

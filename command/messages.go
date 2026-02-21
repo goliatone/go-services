@@ -1,7 +1,6 @@
 package command
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/goliatone/go-services/core"
@@ -32,7 +31,7 @@ func (ConnectMessage) Type() string { return TypeConnect }
 
 func (m ConnectMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if err := validateScope(m.Request.Scope); err != nil {
 		return err
@@ -48,7 +47,7 @@ func (StartReconsentMessage) Type() string { return TypeStartReconsent }
 
 func (m StartReconsentMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ConnectionID) == "" {
-		return fmt.Errorf("command: connection id is required")
+		return commandValidationError("connection_id", "connection id is required")
 	}
 	return nil
 }
@@ -61,7 +60,7 @@ func (CompleteReconsentMessage) Type() string { return TypeCompleteReconsent }
 
 func (m CompleteReconsentMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if err := validateScope(m.Request.Scope); err != nil {
 		return err
@@ -77,7 +76,7 @@ func (CompleteCallbackMessage) Type() string { return TypeCompleteCallback }
 
 func (m CompleteCallbackMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if err := validateScope(m.Request.Scope); err != nil {
 		return err
@@ -93,10 +92,10 @@ func (RefreshMessage) Type() string { return TypeRefresh }
 
 func (m RefreshMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if strings.TrimSpace(m.Request.ConnectionID) == "" {
-		return fmt.Errorf("command: connection id is required")
+		return commandValidationError("connection_id", "connection id is required")
 	}
 	return nil
 }
@@ -110,7 +109,7 @@ func (RevokeMessage) Type() string { return TypeRevoke }
 
 func (m RevokeMessage) Validate() error {
 	if strings.TrimSpace(m.ConnectionID) == "" {
-		return fmt.Errorf("command: connection id is required")
+		return commandValidationError("connection_id", "connection id is required")
 	}
 	return nil
 }
@@ -123,10 +122,10 @@ func (InvokeCapabilityMessage) Type() string { return TypeInvokeCapability }
 
 func (m InvokeCapabilityMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if strings.TrimSpace(m.Request.Capability) == "" {
-		return fmt.Errorf("command: capability is required")
+		return commandValidationError("capability", "capability is required")
 	}
 	if strings.TrimSpace(m.Request.ConnectionID) == "" {
 		if err := validateScope(m.Request.Scope); err != nil {
@@ -144,16 +143,16 @@ func (SubscribeMessage) Type() string { return TypeSubscribe }
 
 func (m SubscribeMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ConnectionID) == "" {
-		return fmt.Errorf("command: connection id is required")
+		return commandValidationError("connection_id", "connection id is required")
 	}
 	if strings.TrimSpace(m.Request.ResourceType) == "" {
-		return fmt.Errorf("command: resource type is required")
+		return commandValidationError("resource_type", "resource type is required")
 	}
 	if strings.TrimSpace(m.Request.ResourceID) == "" {
-		return fmt.Errorf("command: resource id is required")
+		return commandValidationError("resource_id", "resource id is required")
 	}
 	if strings.TrimSpace(m.Request.CallbackURL) == "" {
-		return fmt.Errorf("command: callback url is required")
+		return commandValidationError("callback_url", "callback url is required")
 	}
 	return nil
 }
@@ -166,7 +165,7 @@ func (RenewSubscriptionMessage) Type() string { return TypeRenewSubscription }
 
 func (m RenewSubscriptionMessage) Validate() error {
 	if strings.TrimSpace(m.Request.SubscriptionID) == "" {
-		return fmt.Errorf("command: subscription id is required")
+		return commandValidationError("subscription_id", "subscription id is required")
 	}
 	return nil
 }
@@ -179,7 +178,7 @@ func (CancelSubscriptionMessage) Type() string { return TypeCancelSubscription }
 
 func (m CancelSubscriptionMessage) Validate() error {
 	if strings.TrimSpace(m.Request.SubscriptionID) == "" {
-		return fmt.Errorf("command: subscription id is required")
+		return commandValidationError("subscription_id", "subscription id is required")
 	}
 	return nil
 }
@@ -192,19 +191,19 @@ func (AdvanceSyncCursorMessage) Type() string { return TypeAdvanceSyncCursor }
 
 func (m AdvanceSyncCursorMessage) Validate() error {
 	if strings.TrimSpace(m.Input.ConnectionID) == "" {
-		return fmt.Errorf("command: connection id is required")
+		return commandValidationError("connection_id", "connection id is required")
 	}
 	if strings.TrimSpace(m.Input.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if strings.TrimSpace(m.Input.ResourceType) == "" {
-		return fmt.Errorf("command: resource type is required")
+		return commandValidationError("resource_type", "resource type is required")
 	}
 	if strings.TrimSpace(m.Input.ResourceID) == "" {
-		return fmt.Errorf("command: resource id is required")
+		return commandValidationError("resource_id", "resource id is required")
 	}
 	if strings.TrimSpace(m.Input.Cursor) == "" {
-		return fmt.Errorf("command: cursor is required")
+		return commandValidationError("cursor", "cursor is required")
 	}
 	return nil
 }
@@ -217,13 +216,13 @@ func (UpsertInstallationMessage) Type() string { return TypeUpsertInstallation }
 
 func (m UpsertInstallationMessage) Validate() error {
 	if strings.TrimSpace(m.Input.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	if err := validateScope(m.Input.Scope); err != nil {
 		return err
 	}
 	if strings.TrimSpace(m.Input.InstallType) == "" {
-		return fmt.Errorf("command: install type is required")
+		return commandValidationError("install_type", "install type is required")
 	}
 	return nil
 }
@@ -238,10 +237,10 @@ func (UpdateInstallationStatusMessage) Type() string { return TypeUpdateInstalla
 
 func (m UpdateInstallationStatusMessage) Validate() error {
 	if strings.TrimSpace(m.InstallationID) == "" {
-		return fmt.Errorf("command: installation id is required")
+		return commandValidationError("installation_id", "installation id is required")
 	}
 	if strings.TrimSpace(string(m.Status)) == "" {
-		return fmt.Errorf("command: installation status is required")
+		return commandValidationError("status", "installation status is required")
 	}
 	return nil
 }
@@ -254,7 +253,7 @@ func (CreateSyncJobMessage) Type() string { return TypeCreateSyncJob }
 
 func (m CreateSyncJobMessage) Validate() error {
 	if strings.TrimSpace(m.Request.ProviderID) == "" {
-		return fmt.Errorf("command: provider id is required")
+		return commandValidationError("provider_id", "provider id is required")
 	}
 	scope := core.ScopeRef{
 		Type: strings.TrimSpace(strings.ToLower(m.Request.ScopeType)),
@@ -265,14 +264,14 @@ func (m CreateSyncJobMessage) Validate() error {
 	}
 	mode := strings.TrimSpace(strings.ToLower(string(m.Request.Mode)))
 	if mode != string(core.SyncJobModeFull) && mode != string(core.SyncJobModeDelta) {
-		return fmt.Errorf("command: sync job mode must be full or delta")
+		return commandInvalidInputError("command: sync job mode must be full or delta")
 	}
 	return nil
 }
 
 func validateScope(scope core.ScopeRef) error {
 	if err := scope.Validate(); err != nil {
-		return fmt.Errorf("command: %w", err)
+		return commandWrapValidation(err, "command: invalid scope")
 	}
 	return nil
 }
