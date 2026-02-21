@@ -192,8 +192,8 @@ func TestServiceObservability_EnrichesStructuredErrorFields(t *testing.T) {
 		WithTextCode(ServiceErrorExternalFailure).
 		WithSeverity(goerrors.SeverityCritical).
 		WithMetadata(map[string]any{
-			"trace_id":     "trace_123",
-			"request_id":   "req_123",
+			"trace_id":      "trace_123",
+			"request_id":    "req_123",
 			"refresh_token": "secret_refresh_token",
 		})
 	svc.observeOperation(
