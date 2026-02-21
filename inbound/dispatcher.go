@@ -95,21 +95,21 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req core.InboundRequest) (cor
 	if d.Verifier != nil {
 		if err := d.Verifier.Verify(ctx, req); err != nil {
 			return core.InboundResult{
-				Accepted:   false,
-				StatusCode: http.StatusUnauthorized,
-				Metadata: map[string]any{
-					"provider_id": req.ProviderID,
-					"surface":     req.Surface,
-					"rejected":    true,
-				},
-			}, inboundWrapError(
-				err,
-				goerrors.CategoryAuth,
-				"inbound: request verification failed",
-				http.StatusUnauthorized,
-				core.ServiceErrorUnauthorized,
-				map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
-			)
+					Accepted:   false,
+					StatusCode: http.StatusUnauthorized,
+					Metadata: map[string]any{
+						"provider_id": req.ProviderID,
+						"surface":     req.Surface,
+						"rejected":    true,
+					},
+				}, inboundWrapError(
+					err,
+					goerrors.CategoryAuth,
+					"inbound: request verification failed",
+					http.StatusUnauthorized,
+					core.ServiceErrorUnauthorized,
+					map[string]any{"provider_id": req.ProviderID, "surface": req.Surface},
+				)
 		}
 	}
 
