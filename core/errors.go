@@ -60,13 +60,13 @@ func serviceErrorMapper(err error) *goerrors.Error {
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case errors.Is(err, ErrSyncJobNotFound):
-		return newServiceError(err.Error(), goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound)
+		return newServiceErrorFromSource(err, goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound)
 	case errors.Is(err, ErrSyncCursorConflict):
-		return newServiceError(err.Error(), goerrors.CategoryConflict, ServiceErrorSyncCursorConflict)
+		return newServiceErrorFromSource(err, goerrors.CategoryConflict, ServiceErrorSyncCursorConflict)
 	case errors.Is(err, ErrInvalidSyncJobMode), errors.Is(err, ErrInvalidSyncJobScope):
-		return newServiceError(err.Error(), goerrors.CategoryBadInput, ServiceErrorBadInput)
+		return newServiceErrorFromSource(err, goerrors.CategoryBadInput, ServiceErrorBadInput)
 	case errors.Is(err, ErrEmbeddedAuthUnsupported):
-		return newServiceError(err.Error(), goerrors.CategoryOperation, ServiceErrorEmbeddedAuthUnsupported)
+		return newServiceErrorFromSource(err, goerrors.CategoryOperation, ServiceErrorEmbeddedAuthUnsupported)
 	}
 
 	switch {
@@ -93,6 +93,16 @@ func serviceErrorMapper(err error) *goerrors.Error {
 func newServiceError(message string, category goerrors.Category, textCode string) *goerrors.Error {
 	return ensureServiceErrorEnvelope(
 		goerrors.New(message, category).
+			WithTextCode(textCode),
+	)
+}
+
+func newServiceErrorFromSource(source error, category goerrors.Category, textCode string) *goerrors.Error {
+	if source == nil {
+		return newServiceError("", category, textCode)
+	}
+	return ensureServiceErrorEnvelope(
+		goerrors.Wrap(source, category, source.Error()).
 			WithTextCode(textCode),
 	)
 }
