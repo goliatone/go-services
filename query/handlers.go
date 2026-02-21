@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/goliatone/go-services/core"
 )
@@ -39,7 +38,7 @@ func NewLoadSyncCursorQuery(reader SyncCursorReader) *LoadSyncCursorQuery {
 
 func (q *LoadSyncCursorQuery) Query(ctx context.Context, msg LoadSyncCursorMessage) (core.SyncCursor, error) {
 	if q == nil || q.reader == nil {
-		return core.SyncCursor{}, fmt.Errorf("query: sync cursor reader is required")
+		return core.SyncCursor{}, queryDependencyError("query: sync cursor reader is required")
 	}
 	return q.reader.LoadSyncCursor(ctx, msg.ConnectionID, msg.ResourceType, msg.ResourceID)
 }
@@ -57,7 +56,7 @@ func (q *ListServicesActivityQuery) Query(
 	msg ListServicesActivityMessage,
 ) (core.ServicesActivityPage, error) {
 	if q == nil || q.reader == nil {
-		return core.ServicesActivityPage{}, fmt.Errorf("query: services activity reader is required")
+		return core.ServicesActivityPage{}, queryDependencyError("query: services activity reader is required")
 	}
 	return q.reader.List(ctx, msg.Filter)
 }
@@ -72,7 +71,7 @@ func NewGetInstallationQuery(reader InstallationReader) *GetInstallationQuery {
 
 func (q *GetInstallationQuery) Query(ctx context.Context, msg GetInstallationMessage) (core.Installation, error) {
 	if q == nil || q.reader == nil {
-		return core.Installation{}, fmt.Errorf("query: installation reader is required")
+		return core.Installation{}, queryDependencyError("query: installation reader is required")
 	}
 	return q.reader.GetInstallation(ctx, msg.InstallationID)
 }
@@ -90,7 +89,7 @@ func (q *ListInstallationsQuery) Query(
 	msg ListInstallationsMessage,
 ) ([]core.Installation, error) {
 	if q == nil || q.reader == nil {
-		return nil, fmt.Errorf("query: installation reader is required")
+		return nil, queryDependencyError("query: installation reader is required")
 	}
 	return q.reader.ListInstallations(ctx, msg.ProviderID, msg.Scope)
 }
@@ -105,7 +104,7 @@ func NewGetSyncJobQuery(reader SyncJobReader) *GetSyncJobQuery {
 
 func (q *GetSyncJobQuery) Query(ctx context.Context, msg GetSyncJobMessage) (core.SyncJob, error) {
 	if q == nil || q.reader == nil {
-		return core.SyncJob{}, fmt.Errorf("query: sync job reader is required")
+		return core.SyncJob{}, queryDependencyError("query: sync job reader is required")
 	}
 	return q.reader.GetSyncJob(ctx, msg.Request)
 }

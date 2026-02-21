@@ -1,7 +1,6 @@
 package query
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/goliatone/go-services/core"
@@ -25,13 +24,13 @@ func (LoadSyncCursorMessage) Type() string { return TypeLoadSyncCursor }
 
 func (m LoadSyncCursorMessage) Validate() error {
 	if strings.TrimSpace(m.ConnectionID) == "" {
-		return fmt.Errorf("query: connection id is required")
+		return queryValidationError("connection_id", "connection id is required")
 	}
 	if strings.TrimSpace(m.ResourceType) == "" {
-		return fmt.Errorf("query: resource type is required")
+		return queryValidationError("resource_type", "resource type is required")
 	}
 	if strings.TrimSpace(m.ResourceID) == "" {
-		return fmt.Errorf("query: resource id is required")
+		return queryValidationError("resource_id", "resource id is required")
 	}
 	return nil
 }
@@ -44,10 +43,10 @@ func (ListServicesActivityMessage) Type() string { return TypeListServicesActivi
 
 func (m ListServicesActivityMessage) Validate() error {
 	if m.Filter.Page < 0 {
-		return fmt.Errorf("query: page must be >= 0")
+		return queryInvalidInputError("query: page must be >= 0")
 	}
 	if m.Filter.PerPage < 0 {
-		return fmt.Errorf("query: per_page must be >= 0")
+		return queryInvalidInputError("query: per_page must be >= 0")
 	}
 	return nil
 }
@@ -60,7 +59,7 @@ func (GetInstallationMessage) Type() string { return TypeGetInstallation }
 
 func (m GetInstallationMessage) Validate() error {
 	if strings.TrimSpace(m.InstallationID) == "" {
-		return fmt.Errorf("query: installation id is required")
+		return queryValidationError("installation_id", "installation id is required")
 	}
 	return nil
 }
@@ -74,10 +73,10 @@ func (ListInstallationsMessage) Type() string { return TypeListInstallations }
 
 func (m ListInstallationsMessage) Validate() error {
 	if strings.TrimSpace(m.ProviderID) == "" {
-		return fmt.Errorf("query: provider id is required")
+		return queryValidationError("provider_id", "provider id is required")
 	}
 	if err := m.Scope.Validate(); err != nil {
-		return fmt.Errorf("query: %w", err)
+		return queryWrapValidation(err, "query: invalid scope")
 	}
 	return nil
 }
@@ -90,16 +89,16 @@ func (GetSyncJobMessage) Type() string { return TypeGetSyncJob }
 
 func (m GetSyncJobMessage) Validate() error {
 	if strings.TrimSpace(m.Request.SyncJobID) == "" {
-		return fmt.Errorf("query: sync job id is required")
+		return queryValidationError("sync_job_id", "sync job id is required")
 	}
 	scopeType := strings.TrimSpace(strings.ToLower(m.Request.ScopeType))
 	scopeID := strings.TrimSpace(m.Request.ScopeID)
 	if (scopeType == "") != (scopeID == "") {
-		return fmt.Errorf("query: scope type and scope id must both be provided")
+		return queryInvalidInputError("query: scope type and scope id must both be provided")
 	}
 	if scopeType != "" {
 		if err := (core.ScopeRef{Type: scopeType, ID: scopeID}).Validate(); err != nil {
-			return fmt.Errorf("query: %w", err)
+			return queryWrapValidation(err, "query: invalid scope")
 		}
 	}
 	return nil
