@@ -65,6 +65,50 @@ func TestRegister_UsesValidationTargets(t *testing.T) {
 	}
 }
 
+func TestRegister_DefaultsToCanonicalSourceLabelAndTargets(t *testing.T) {
+	var labels []string
+	var calls []string
+	reg, err := Register(context.Background(), func(_ context.Context, dialect string, label string, _ fs.FS) error {
+		calls = append(calls, dialect)
+		labels = append(labels, label)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if reg.SourceLabel != SourceLabel {
+		t.Fatalf("expected source label %q, got %q", SourceLabel, reg.SourceLabel)
+	}
+	if len(reg.ValidationTargets) != 2 ||
+		reg.ValidationTargets[0] != DialectPostgres ||
+		reg.ValidationTargets[1] != DialectSQLite {
+		t.Fatalf("expected canonical validation targets [postgres sqlite], got %v", reg.ValidationTargets)
+	}
+	if len(calls) != 2 || calls[0] != DialectPostgres || calls[1] != DialectSQLite {
+		t.Fatalf("expected canonical dialect registration order [postgres sqlite], got %v", calls)
+	}
+	for _, label := range labels {
+		if label != SourceLabel {
+			t.Fatalf("expected callback source label %q, got %q", SourceLabel, label)
+		}
+	}
+}
+
+func TestRegister_RejectsUnknownValidationTargets(t *testing.T) {
+	_, err := Register(
+		context.Background(),
+		func(context.Context, string, string, fs.FS) error { return nil },
+		WithValidationTargets("mysql"),
+	)
+	if err == nil {
+		t.Fatalf("expected unknown validation target error")
+	}
+	if !strings.Contains(err.Error(), `validation target "mysql" does not have a registered filesystem`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRateLimitStateUniquenessMigrationPair_ExistsForBothDialects(t *testing.T) {
 	root := services.GetCoreMigrationsFS()
 	paths := []string{
