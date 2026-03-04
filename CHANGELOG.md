@@ -1,13 +1,24 @@
 # Changelog
 
-## [Unreleased]
+# [0.5.0](https://github.com/goliatone/go-services/compare/v0.4.0...v0.5.0) - (2026-03-04)
 
-### ⚙️ Miscellaneous Tasks
+## <!-- 13 -->📦 Bumps
 
-- Align dependency baselines with released `go-auth`/`go-users` ecosystem versions (`go-command v0.16.1`, `go-config v0.12.0`, `go-job v0.15.0`, `go-persistence-bun v0.11.0`, `go-repository-bun v0.15.1`, `go-repository-cache v0.7.1`, Bun `v1.2.16`).
-- Harden migration registration contract defaults for canonical source label (`go-services`) and dual-dialect validation targets (`postgres`, `sqlite`), including unknown-target guardrails.
-- Add standalone migration integration matrix tests for apply/rollback/reapply across sqlite and postgres (`GO_SERVICES_TEST_POSTGRES_DSN` gated).
-- Update migration docs with canonical combined registration order (`go-auth -> go-users -> go-services -> app-local`) and standalone setup guidance.
+- Bump version: v0.5.0 ([62f9807](https://github.com/goliatone/go-services/commit/62f98071c9ca086a8b3b8bc85c4704b42671940d))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Update validation and source labels ([a831318](https://github.com/goliatone/go-services/commit/a831318f2dd03cda5bb7447fce8915033638790e))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.4.0 ([d782aa9](https://github.com/goliatone/go-services/commit/d782aa954a9828a43de6d68c165edd4c2200f403))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update docs ([ef68a60](https://github.com/goliatone/go-services/commit/ef68a600d259f8bce3ea3c264d84335c97d08250))  - (goliatone)
+- Update deps ([0ca02c4](https://github.com/goliatone/go-services/commit/0ca02c411b836c16423c6791884fa3dba48706c8))  - (goliatone)
+- Update tests ([9e42a1d](https://github.com/goliatone/go-services/commit/9e42a1ddbf35ccf32945f78257b2f67afad25cdd))  - (goliatone)
 
 # [0.4.0](https://github.com/goliatone/go-services/compare/v0.3.0...v0.4.0) - (2026-02-21)
 
@@ -222,3 +233,5 @@
 - Update docs ([4a6a3b2](https://github.com/goliatone/go-services/commit/4a6a3b258a73d56b14344d2208c8fcfaccd5bdc5))  - (goliatone)
 - Update tasks ([f392e29](https://github.com/goliatone/go-services/commit/f392e29375aff5028b765ee2e14edf40ce20d34a))  - (goliatone)
 - Initial commit ([654b36d](https://github.com/goliatone/go-services/commit/654b36d1f22be1ea4b973f9e2f55b0b63e77faa9))  - (goliatone)
+
+
