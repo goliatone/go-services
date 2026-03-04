@@ -13,6 +13,7 @@ import (
 const (
 	DialectPostgres = "postgres"
 	DialectSQLite   = "sqlite"
+	SourceLabel     = "go-services"
 )
 
 type FilesystemSpec struct {
@@ -127,7 +128,7 @@ func Filesystems(sources ...fs.FS) ([]FilesystemSpec, error) {
 
 func Register(ctx context.Context, registerFn RegisterFunc, opts ...Option) (Registration, error) {
 	reg := Registration{
-		SourceLabel:       "go-services",
+		SourceLabel:       SourceLabel,
 		ValidationTargets: []string{DialectPostgres, DialectSQLite},
 	}
 
@@ -157,7 +158,27 @@ func Register(ctx context.Context, registerFn RegisterFunc, opts ...Option) (Reg
 		return reg, fmt.Errorf("migrations: register function is required")
 	}
 
+	reg.SourceLabel = strings.TrimSpace(reg.SourceLabel)
 	targets := dedupe(reg.ValidationTargets)
+	if len(targets) == 0 {
+		return reg, fmt.Errorf("migrations: validation targets are required")
+	}
+	reg.ValidationTargets = targets
+
+	availableDialects := make(map[string]struct{}, len(reg.Filesystems))
+	for _, fsys := range reg.Filesystems {
+		availableDialects[fsys.Dialect] = struct{}{}
+	}
+	for _, target := range targets {
+		if _, exists := availableDialects[target]; exists {
+			continue
+		}
+		return reg, fmt.Errorf(
+			"migrations: validation target %q does not have a registered filesystem",
+			target,
+		)
+	}
+
 	for _, fsys := range reg.Filesystems {
 		if !slices.Contains(targets, fsys.Dialect) {
 			continue
