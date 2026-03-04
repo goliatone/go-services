@@ -6,7 +6,7 @@ It is designed as a backend package and not as a standalone API server.
 
 ## Status
 
-- Current release: `v0.1.0`
+- Current release: `v0.4.0`
 - API stability: pre-`v1.0.0` (breaking changes are still possible)
 
 ## What This Package Does
@@ -94,6 +94,7 @@ go get github.com/goliatone/go-services@latest
 - `services.GetMigrationsFS()`
 - `migrations.Filesystems()`
 - `migrations.Register(...)`
+- `migrations.SourceLabel`
 
 ```go
 import (
@@ -108,8 +109,23 @@ _, err := servicemigrations.Register(
 	func(ctx context.Context, dialect string, source string, fsys fs.FS) error {
 		return myMigrationRunner.Register(ctx, dialect, source, fsys)
 	},
+	servicemigrations.WithDialectSourceLabel(servicemigrations.SourceLabel),
+	servicemigrations.WithValidationTargets(
+		servicemigrations.DialectPostgres,
+		servicemigrations.DialectSQLite,
+	),
 )
 ```
+
+Canonical registration order for combined installs is:
+`go-auth -> go-users -> go-services -> app-local`.
+
+Standalone installs should only register `go-services` (source label: `go-services`) and still validate both `postgres` and `sqlite` targets.
+
+Migration matrix tests are in `./migrations`:
+
+- SQLite runs by default.
+- Postgres is opt-in with `GO_SERVICES_TEST_POSTGRES_DSN`.
 
 ### 2. Build a service with stores, secrets, and providers
 
