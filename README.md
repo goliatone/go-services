@@ -6,7 +6,7 @@ It is designed as a backend package and not as a standalone API server.
 
 ## Status
 
-- Current release: `v0.4.0`
+- Current release: `v0.5.0`
 - API stability: pre-`v1.0.0` (breaking changes are still possible)
 
 ## What This Package Does
