@@ -31,23 +31,21 @@ type RetryPolicy struct {
 func (p RetryPolicy) NormalizeAttempt(opts core.JobNackOptions, attempt int) core.JobNackOptions {
 	out := opts
 	out.Reason = strings.TrimSpace(out.Reason)
+	if out.Disposition == "" {
+		out.Disposition = core.JobNackDispositionRetry
+	}
 	if out.Delay < 0 {
 		out.Delay = 0
 	}
 	if p.MaxDelay > 0 && out.Delay > p.MaxDelay {
 		out.Delay = p.MaxDelay
 	}
-	if out.DeadLetter {
-		out.Requeue = false
-	}
-	if p.MaxAttempts > 0 && attempt >= p.MaxAttempts {
-		out.Requeue = false
-		if p.DeadLetterOnMax || out.DeadLetter {
-			out.DeadLetter = true
+	if p.MaxAttempts > 0 && attempt >= p.MaxAttempts && out.Disposition == core.JobNackDispositionRetry {
+		if p.DeadLetterOnMax {
+			out.Disposition = core.JobNackDispositionDeadLetter
+		} else {
+			out.Disposition = core.JobNackDispositionFailed
 		}
-	}
-	if !out.Requeue && !out.DeadLetter {
-		out.Requeue = true
 	}
 	return out
 }
@@ -82,21 +80,23 @@ func FromExecutionMessage(msg *job.ExecutionMessage) *core.JobExecutionMessage {
 
 // ToNackOptions maps go-services nack options to go-job.
 func ToNackOptions(opts core.JobNackOptions) queue.NackOptions {
+	disposition := queue.NackDisposition(strings.TrimSpace(string(opts.Disposition)))
+	if disposition == "" {
+		disposition = queue.NackDispositionRetry
+	}
 	return queue.NackOptions{
-		Delay:      opts.Delay,
-		Requeue:    opts.Requeue,
-		DeadLetter: opts.DeadLetter,
-		Reason:     opts.Reason,
+		Disposition: disposition,
+		Delay:       opts.Delay,
+		Reason:      opts.Reason,
 	}
 }
 
 // FromNackOptions maps go-job nack options to go-services.
 func FromNackOptions(opts queue.NackOptions) core.JobNackOptions {
 	return core.JobNackOptions{
-		Delay:      opts.Delay,
-		Requeue:    opts.Requeue,
-		DeadLetter: opts.DeadLetter,
-		Reason:     opts.Reason,
+		Disposition: core.JobNackDisposition(strings.TrimSpace(string(opts.Disposition))),
+		Delay:       opts.Delay,
+		Reason:      opts.Reason,
 	}
 }
 
@@ -108,14 +108,69 @@ func NewEnqueuerAdapter(enqueuer queue.Enqueuer) *EnqueuerAdapter {
 	return &EnqueuerAdapter{enqueuer: enqueuer}
 }
 
-func (a *EnqueuerAdapter) Enqueue(ctx context.Context, msg *core.JobExecutionMessage) error {
+func (a *EnqueuerAdapter) Enqueue(ctx context.Context, msg *core.JobExecutionMessage) (core.JobEnqueueReceipt, error) {
 	if a == nil || a.enqueuer == nil {
-		return fmt.Errorf("gojob: enqueuer is not configured")
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: enqueuer is not configured")
 	}
 	if msg == nil {
-		return fmt.Errorf("gojob: execution message is required")
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: execution message is required")
 	}
-	return a.enqueuer.Enqueue(ctx, ToExecutionMessage(msg))
+	receipt, err := a.enqueuer.Enqueue(ctx, ToExecutionMessage(msg))
+	if err != nil {
+		return core.JobEnqueueReceipt{}, err
+	}
+	return toEnqueueReceipt(receipt), nil
+}
+
+func (a *EnqueuerAdapter) EnqueueAt(ctx context.Context, msg *core.JobExecutionMessage, at time.Time) (core.JobEnqueueReceipt, error) {
+	if a == nil || a.enqueuer == nil {
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: enqueuer is not configured")
+	}
+	if msg == nil {
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: execution message is required")
+	}
+	scheduled, ok := a.enqueuer.(queue.ScheduledEnqueuer)
+	if !ok {
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: %w", queue.ErrScheduledEnqueueUnsupported)
+	}
+	receipt, err := scheduled.EnqueueAt(ctx, ToExecutionMessage(msg), at)
+	if err != nil {
+		return core.JobEnqueueReceipt{}, err
+	}
+	return toEnqueueReceipt(receipt), nil
+}
+
+func (a *EnqueuerAdapter) EnqueueAfter(ctx context.Context, msg *core.JobExecutionMessage, delay time.Duration) (core.JobEnqueueReceipt, error) {
+	if a == nil || a.enqueuer == nil {
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: enqueuer is not configured")
+	}
+	if msg == nil {
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: execution message is required")
+	}
+	scheduled, ok := a.enqueuer.(queue.ScheduledEnqueuer)
+	if !ok {
+		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: %w", queue.ErrScheduledEnqueueUnsupported)
+	}
+	receipt, err := scheduled.EnqueueAfter(ctx, ToExecutionMessage(msg), delay)
+	if err != nil {
+		return core.JobEnqueueReceipt{}, err
+	}
+	return toEnqueueReceipt(receipt), nil
+}
+
+func (a *EnqueuerAdapter) GetDispatchStatus(ctx context.Context, dispatchID string) (core.JobDispatchStatus, error) {
+	if a == nil || a.enqueuer == nil {
+		return core.JobDispatchStatus{}, fmt.Errorf("gojob: enqueuer is not configured")
+	}
+	reader, ok := a.enqueuer.(queue.DispatchStatusReader)
+	if !ok {
+		return core.JobDispatchStatus{}, fmt.Errorf("gojob: %w", queue.ErrDispatchStatusUnsupported)
+	}
+	status, err := reader.GetDispatchStatus(ctx, strings.TrimSpace(dispatchID))
+	if err != nil {
+		return core.JobDispatchStatus{}, err
+	}
+	return FromDispatchStatus(status), nil
 }
 
 type DeliveryAdapter struct {
@@ -235,12 +290,42 @@ func copyAnyMap(in map[string]any) map[string]any {
 	return out
 }
 
+func toEnqueueReceipt(receipt queue.EnqueueReceipt) core.JobEnqueueReceipt {
+	return core.JobEnqueueReceipt{
+		DispatchID: strings.TrimSpace(receipt.DispatchID),
+		EnqueuedAt: receipt.EnqueuedAt.UTC(),
+	}
+}
+
+// FromDispatchStatus maps go-job dispatch lifecycle status to go-services.
+func FromDispatchStatus(status queue.DispatchStatus) core.JobDispatchStatus {
+	return core.JobDispatchStatus{
+		DispatchID:     strings.TrimSpace(status.DispatchID),
+		State:          core.JobDispatchState(strings.TrimSpace(string(status.State))),
+		Attempt:        status.Attempt,
+		EnqueuedAt:     toUTCTimePointer(status.EnqueuedAt),
+		UpdatedAt:      toUTCTimePointer(status.UpdatedAt),
+		NextRunAt:      toUTCTimePointer(status.NextRunAt),
+		TerminalReason: strings.TrimSpace(status.TerminalReason),
+	}
+}
+
+func toUTCTimePointer(input *time.Time) *time.Time {
+	if input == nil {
+		return nil
+	}
+	value := input.UTC()
+	return &value
+}
+
 var (
-	_ core.JobEnqueuer   = (*EnqueuerAdapter)(nil)
-	_ core.JobDelivery   = (*DeliveryAdapter)(nil)
-	_ core.JobDequeuer   = (*DequeuerAdapter)(nil)
-	_ worker.Hook        = (*WorkerHookAdapter)(nil)
-	_ core.JobWorkerHook = (*capturingCoreHook)(nil)
+	_ core.JobEnqueuer             = (*EnqueuerAdapter)(nil)
+	_ core.JobScheduledEnqueuer    = (*EnqueuerAdapter)(nil)
+	_ core.JobDispatchStatusReader = (*EnqueuerAdapter)(nil)
+	_ core.JobDelivery             = (*DeliveryAdapter)(nil)
+	_ core.JobDequeuer             = (*DequeuerAdapter)(nil)
+	_ worker.Hook                  = (*WorkerHookAdapter)(nil)
+	_ core.JobWorkerHook           = (*capturingCoreHook)(nil)
 )
 
 // capturingCoreHook only exists to assert local compile-time compatibility.
