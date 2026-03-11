@@ -765,15 +765,60 @@ type JobExecutionMessage struct {
 	DedupPolicy    string
 }
 
+type JobEnqueueReceipt struct {
+	DispatchID string
+	EnqueuedAt time.Time
+}
+
+type JobDispatchState string
+
+const (
+	JobDispatchStateAccepted   JobDispatchState = "accepted"
+	JobDispatchStateRunning    JobDispatchState = "running"
+	JobDispatchStateRetrying   JobDispatchState = "retrying"
+	JobDispatchStateCanceled   JobDispatchState = "canceled"
+	JobDispatchStateFailed     JobDispatchState = "failed"
+	JobDispatchStateDeadLetter JobDispatchState = "dead_letter"
+	JobDispatchStateSucceeded  JobDispatchState = "succeeded"
+)
+
+type JobDispatchStatus struct {
+	DispatchID     string
+	State          JobDispatchState
+	Attempt        int
+	EnqueuedAt     *time.Time
+	UpdatedAt      *time.Time
+	NextRunAt      *time.Time
+	TerminalReason string
+}
+
+type JobNackDisposition string
+
+const (
+	JobNackDispositionRetry      JobNackDisposition = "retry"
+	JobNackDispositionDeadLetter JobNackDisposition = "dead_letter"
+	JobNackDispositionFailed     JobNackDisposition = "failed"
+	JobNackDispositionCanceled   JobNackDisposition = "canceled"
+)
+
 type JobNackOptions struct {
-	Delay      time.Duration
-	Requeue    bool
-	DeadLetter bool
-	Reason     string
+	Disposition JobNackDisposition
+	Delay       time.Duration
+	Reason      string
 }
 
 type JobEnqueuer interface {
-	Enqueue(ctx context.Context, msg *JobExecutionMessage) error
+	Enqueue(ctx context.Context, msg *JobExecutionMessage) (JobEnqueueReceipt, error)
+}
+
+type JobScheduledEnqueuer interface {
+	JobEnqueuer
+	EnqueueAt(ctx context.Context, msg *JobExecutionMessage, at time.Time) (JobEnqueueReceipt, error)
+	EnqueueAfter(ctx context.Context, msg *JobExecutionMessage, delay time.Duration) (JobEnqueueReceipt, error)
+}
+
+type JobDispatchStatusReader interface {
+	GetDispatchStatus(ctx context.Context, dispatchID string) (JobDispatchStatus, error)
 }
 
 type JobDelivery interface {
