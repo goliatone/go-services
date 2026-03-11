@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/goliatone/go-command"
 	job "github.com/goliatone/go-job"
+	"github.com/goliatone/go-job/queue"
 	jobqueuecommand "github.com/goliatone/go-job/queue/command"
 	glog "github.com/goliatone/go-logger/glog"
 	"github.com/goliatone/go-services/adapters/gocommand"
@@ -30,14 +32,18 @@ func TestRuntimeCompatibility_GoJobGoCommandGoLogger(t *testing.T) {
 
 	enqueueProbe := &compatEnqueuer{}
 	enqueueAdapter := gojob.NewEnqueuerAdapter(enqueueProbe)
-	if err := enqueueAdapter.Enqueue(ctx, &core.JobExecutionMessage{
+	receipt, err := enqueueAdapter.Enqueue(ctx, &core.JobExecutionMessage{
 		JobID:          gojob.JobIDRefresh,
 		ScriptPath:     "services.refresh",
 		Parameters:     map[string]any{"connection_id": "conn_1"},
 		IdempotencyKey: "idem_1",
 		DedupPolicy:    "drop",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("enqueue via gojob adapter: %v", err)
+	}
+	if receipt.DispatchID == "" || receipt.EnqueuedAt.IsZero() {
+		t.Fatalf("expected enqueue receipt, got %+v", receipt)
 	}
 	if enqueueProbe.last == nil || enqueueProbe.last.JobID != gojob.JobIDRefresh {
 		t.Fatalf("expected go-job message mapping through enqueuer adapter")
@@ -162,9 +168,12 @@ type compatEnqueuer struct {
 	last *job.ExecutionMessage
 }
 
-func (e *compatEnqueuer) Enqueue(_ context.Context, msg *job.ExecutionMessage) error {
+func (e *compatEnqueuer) Enqueue(_ context.Context, msg *job.ExecutionMessage) (queue.EnqueueReceipt, error) {
 	e.last = msg
-	return nil
+	return queue.EnqueueReceipt{
+		DispatchID: "dispatch-compat",
+		EnqueuedAt: time.Now().UTC(),
+	}, nil
 }
 
 type compatProvider struct {

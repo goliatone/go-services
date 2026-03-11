@@ -3,6 +3,7 @@ package gojob
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,8 +57,12 @@ func TestEnqueueAndDequeueAdapters(t *testing.T) {
 		IdempotencyKey: "idem-outbox",
 		DedupPolicy:    "merge",
 	}
-	if err := enqueueAdapter.Enqueue(ctx, msg); err != nil {
+	receipt, err := enqueueAdapter.Enqueue(ctx, msg)
+	if err != nil {
 		t.Fatalf("enqueue: %v", err)
+	}
+	if receipt.DispatchID == "" || receipt.EnqueuedAt.IsZero() {
+		t.Fatalf("expected enqueue receipt metadata, got %+v", receipt)
 	}
 	if enqueuer.last == nil || enqueuer.last.JobID != JobIDOutboxDispatch {
 		t.Fatalf("expected mapped go-job message")
@@ -81,6 +86,84 @@ func TestEnqueueAndDequeueAdapters(t *testing.T) {
 	}
 }
 
+func TestEnqueueAdapterScheduledAndDispatchStatus(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	next := now.Add(2 * time.Minute)
+	enqueuer := &stubQueueEnqueuer{
+		status: queue.DispatchStatus{
+			DispatchID:     "dispatch-after",
+			State:          queue.DispatchStateRetrying,
+			Attempt:        3,
+			EnqueuedAt:     &now,
+			UpdatedAt:      &now,
+			NextRunAt:      &next,
+			TerminalReason: "transient",
+		},
+	}
+	adapter := NewEnqueuerAdapter(enqueuer)
+	msg := &core.JobExecutionMessage{
+		JobID:      JobIDRefresh,
+		ScriptPath: "services.refresh",
+	}
+
+	runAt := now.Add(time.Minute)
+	receipt, err := adapter.EnqueueAt(ctx, msg, runAt)
+	if err != nil {
+		t.Fatalf("enqueue at: %v", err)
+	}
+	if receipt.DispatchID != "dispatch-at" {
+		t.Fatalf("expected enqueue-at receipt, got %+v", receipt)
+	}
+	if !enqueuer.lastAt.Equal(runAt) {
+		t.Fatalf("expected enqueue-at schedule to be forwarded")
+	}
+
+	receipt, err = adapter.EnqueueAfter(ctx, msg, 30*time.Second)
+	if err != nil {
+		t.Fatalf("enqueue after: %v", err)
+	}
+	if receipt.DispatchID != "dispatch-after" {
+		t.Fatalf("expected enqueue-after receipt, got %+v", receipt)
+	}
+	if enqueuer.lastDelay != 30*time.Second {
+		t.Fatalf("expected enqueue-after delay to be forwarded")
+	}
+
+	status, err := adapter.GetDispatchStatus(ctx, "dispatch-after")
+	if err != nil {
+		t.Fatalf("dispatch status: %v", err)
+	}
+	if status.DispatchID != "dispatch-after" || status.State != core.JobDispatchStateRetrying {
+		t.Fatalf("expected mapped dispatch status, got %+v", status)
+	}
+	if status.EnqueuedAt == nil || status.EnqueuedAt.IsZero() {
+		t.Fatalf("expected enqueued_at status timestamp")
+	}
+	if status.NextRunAt == nil || status.NextRunAt.IsZero() {
+		t.Fatalf("expected next_run_at status timestamp")
+	}
+}
+
+func TestEnqueueAdapterUnsupportedScheduledAndStatus(t *testing.T) {
+	ctx := context.Background()
+	adapter := NewEnqueuerAdapter(&stubBasicQueueEnqueuer{})
+	msg := &core.JobExecutionMessage{
+		JobID:      JobIDRefresh,
+		ScriptPath: "services.refresh",
+	}
+
+	if _, err := adapter.EnqueueAt(ctx, msg, time.Now().UTC().Add(time.Minute)); !errors.Is(err, queue.ErrScheduledEnqueueUnsupported) {
+		t.Fatalf("expected scheduled enqueue unsupported, got %v", err)
+	}
+	if _, err := adapter.EnqueueAfter(ctx, msg, time.Second); !errors.Is(err, queue.ErrScheduledEnqueueUnsupported) {
+		t.Fatalf("expected delayed enqueue unsupported, got %v", err)
+	}
+	if _, err := adapter.GetDispatchStatus(ctx, "dispatch-missing"); !errors.Is(err, queue.ErrDispatchStatusUnsupported) {
+		t.Fatalf("expected dispatch status unsupported, got %v", err)
+	}
+}
+
 func TestNackRetryPolicyBoundaries(t *testing.T) {
 	ctx := context.Background()
 	rawDelivery := &stubQueueDelivery{
@@ -96,30 +179,27 @@ func TestNackRetryPolicyBoundaries(t *testing.T) {
 	})
 
 	if err := adapter.NackForAttempt(ctx, core.JobNackOptions{
-		Delay:   30 * time.Second,
-		Requeue: true,
-		Reason:  "transient",
+		Disposition: core.JobNackDispositionRetry,
+		Delay:       30 * time.Second,
+		Reason:      "transient",
 	}, 1); err != nil {
 		t.Fatalf("nack attempt 1: %v", err)
 	}
 	if rawDelivery.nackOpts.Delay != 10*time.Second {
 		t.Fatalf("expected delay to be bounded, got %s", rawDelivery.nackOpts.Delay)
 	}
-	if !rawDelivery.nackOpts.Requeue {
+	if rawDelivery.nackOpts.Disposition != queue.NackDispositionRetry {
 		t.Fatalf("expected message to be requeued before max attempts")
 	}
 
 	if err := adapter.NackForAttempt(ctx, core.JobNackOptions{
-		Delay:   time.Second,
-		Requeue: true,
-		Reason:  "still failing",
+		Disposition: core.JobNackDispositionRetry,
+		Delay:       time.Second,
+		Reason:      "still failing",
 	}, 3); err != nil {
 		t.Fatalf("nack max attempt: %v", err)
 	}
-	if rawDelivery.nackOpts.Requeue {
-		t.Fatalf("expected no requeue once max attempts is reached")
-	}
-	if !rawDelivery.nackOpts.DeadLetter {
+	if rawDelivery.nackOpts.Disposition != queue.NackDispositionDeadLetter {
 		t.Fatalf("expected dead letter on max attempts")
 	}
 }
@@ -167,12 +247,52 @@ func TestWorkerHookAdapterEventMapping(t *testing.T) {
 }
 
 type stubQueueEnqueuer struct {
-	last *job.ExecutionMessage
+	last      *job.ExecutionMessage
+	lastAt    time.Time
+	lastDelay time.Duration
+	status    queue.DispatchStatus
 }
 
-func (s *stubQueueEnqueuer) Enqueue(_ context.Context, msg *job.ExecutionMessage) error {
+func (s *stubQueueEnqueuer) Enqueue(_ context.Context, msg *job.ExecutionMessage) (queue.EnqueueReceipt, error) {
 	s.last = msg
-	return nil
+	return queue.EnqueueReceipt{
+		DispatchID: "dispatch-test",
+		EnqueuedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *stubQueueEnqueuer) EnqueueAt(_ context.Context, msg *job.ExecutionMessage, at time.Time) (queue.EnqueueReceipt, error) {
+	s.last = msg
+	s.lastAt = at
+	return queue.EnqueueReceipt{
+		DispatchID: "dispatch-at",
+		EnqueuedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *stubQueueEnqueuer) EnqueueAfter(_ context.Context, msg *job.ExecutionMessage, delay time.Duration) (queue.EnqueueReceipt, error) {
+	s.last = msg
+	s.lastDelay = delay
+	return queue.EnqueueReceipt{
+		DispatchID: "dispatch-after",
+		EnqueuedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *stubQueueEnqueuer) GetDispatchStatus(_ context.Context, dispatchID string) (queue.DispatchStatus, error) {
+	if strings.TrimSpace(dispatchID) == "" || strings.TrimSpace(s.status.DispatchID) != strings.TrimSpace(dispatchID) {
+		return queue.DispatchStatus{}, queue.ErrDispatchNotFound
+	}
+	return s.status, nil
+}
+
+type stubBasicQueueEnqueuer struct{}
+
+func (stubBasicQueueEnqueuer) Enqueue(_ context.Context, _ *job.ExecutionMessage) (queue.EnqueueReceipt, error) {
+	return queue.EnqueueReceipt{
+		DispatchID: "dispatch-basic",
+		EnqueuedAt: time.Now().UTC(),
+	}, nil
 }
 
 type stubQueueDequeuer struct {
