@@ -1,5 +1,25 @@
 # Changelog
 
+# [0.6.0](https://github.com/goliatone/go-services/compare/v0.5.0...v0.6.0) - (2026-03-11)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.6.0 ([60bf4c5](https://github.com/goliatone/go-services/commit/60bf4c5abb48326cfd05967589f009c697752387))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Job contract reflect latest go-job ([52393fb](https://github.com/goliatone/go-services/commit/52393fbb358a6335153f044a197f77bc79e6cae4))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.5.0 ([eeade85](https://github.com/goliatone/go-services/commit/eeade850336c47f667d6cadd458c4ad2e67a6c1f))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update tests ([9c7e0d5](https://github.com/goliatone/go-services/commit/9c7e0d5cf640184d604aafc4bb489e3edca63949))  - (goliatone)
+- Update readme ([ca6d2aa](https://github.com/goliatone/go-services/commit/ca6d2aa639e3dde2354737650704544296f7cc49))  - (goliatone)
+- Update deps ([8457300](https://github.com/goliatone/go-services/commit/84573007a59125eca52157850abc2cf3dc4210be))  - (goliatone)
+
 # [0.5.0](https://github.com/goliatone/go-services/compare/v0.4.0...v0.5.0) - (2026-03-04)
 
 ## <!-- 13 -->📦 Bumps
