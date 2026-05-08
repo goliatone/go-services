@@ -53,6 +53,8 @@ func shouldRedactKey(key string) bool {
 		"access_key",
 		"refresh",
 		"credential",
+		"private_key",
+		"signing_key",
 		"signature",
 	}
 	for _, token := range sensitiveTokens {
