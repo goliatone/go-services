@@ -16,6 +16,8 @@ import (
 	servicemigrations "github.com/goliatone/go-services/migrations"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
 func TestStandaloneMigrationsSQLiteApplyRollbackReapply(t *testing.T) {
@@ -81,6 +83,13 @@ func TestStandaloneMigrationsPostgresApplyRollbackReapply(t *testing.T) {
 
 	if err := applyTrack(ctx, db, servicemigrations.DialectPostgres, true); err != nil {
 		t.Fatalf("apply postgres migrations: %v", err)
+	}
+	bunDB := bun.NewDB(db, pgdialect.New())
+	if err := servicemigrations.VerifySQLSchema(ctx, bunDB); err != nil {
+		t.Fatalf("verify postgres SQL schema: %v", err)
+	}
+	if err := servicemigrations.VerifyOAuthStorageSchema(ctx, bunDB); err != nil {
+		t.Fatalf("verify postgres OAuth storage schema: %v", err)
 	}
 	assertTableExistsPostgres(t, db, schemaName, "service_connections")
 	assertTableExistsPostgres(t, db, schemaName, "service_sync_job_idempotency")

@@ -9,7 +9,10 @@ import (
 )
 
 func TestOperationalActivitySink_NonBlockingFallbackWhenQueueIsFull(t *testing.T) {
-	primary := &blockingActivitySink{block: make(chan struct{})}
+	primary := &blockingActivitySink{
+		block:   make(chan struct{}),
+		started: make(chan struct{}),
+	}
 	fallback := &bufferCapturingActivitySink{}
 	sink, err := NewOperationalActivitySink(primary, fallback, ActivityRetentionPolicy{}, 1)
 	if err != nil {
@@ -24,9 +27,14 @@ func TestOperationalActivitySink_NonBlockingFallbackWhenQueueIsFull(t *testing.T
 	if err := sink.Record(context.Background(), entry); err != nil {
 		t.Fatalf("record first: %v", err)
 	}
+	<-primary.started
+
+	if err := sink.Record(context.Background(), ServiceActivityEntry{ID: "b", Action: "second"}); err != nil {
+		t.Fatalf("record queued entry: %v", err)
+	}
 
 	start := time.Now()
-	err = sink.Record(context.Background(), ServiceActivityEntry{ID: "b", Action: "second"})
+	err = sink.Record(context.Background(), ServiceActivityEntry{ID: "c", Action: "third"})
 	if err != nil {
 		t.Fatalf("record fallback entry: %v", err)
 	}
@@ -97,10 +105,17 @@ func TestOperationalActivitySink_EnforceRetention(t *testing.T) {
 }
 
 type blockingActivitySink struct {
-	block chan struct{}
+	block       chan struct{}
+	started     chan struct{}
+	startedOnce sync.Once
 }
 
 func (s *blockingActivitySink) Record(context.Context, ServiceActivityEntry) error {
+	if s.started != nil {
+		s.startedOnce.Do(func() {
+			close(s.started)
+		})
+	}
 	<-s.block
 	return nil
 }
