@@ -95,6 +95,9 @@ go get github.com/goliatone/go-services@latest
 - `migrations.Filesystems()`
 - `migrations.Register(...)`
 - `migrations.SourceLabel`
+- `migrations.SourceDescriptorForDialect(...)`
+- `migrations.VerifySQLSchema(...)`
+- `migrations.VerifyOAuthStorageSchema(...)`
 
 ```go
 import (
@@ -117,8 +120,52 @@ _, err := servicemigrations.Register(
 )
 ```
 
-Canonical registration order for combined installs is:
-`go-auth -> go-users -> go-services -> app-local`.
+After applying migrations, verify the expected services schema:
+
+```go
+if err := servicemigrations.VerifySQLSchema(ctx, db); err != nil {
+	return err
+}
+
+// Narrow OAuth storage diagnostic, not a full services schema check.
+if err := servicemigrations.VerifyOAuthStorageSchema(ctx, db); err != nil {
+	return err
+}
+```
+
+Consumers that build a composed migration graph can adapt the neutral source descriptor without importing a `go-persistence-bun` adapter from this package:
+
+```go
+descriptor, err := servicemigrations.SourceDescriptorForDialect(servicemigrations.DialectPostgres)
+if err != nil {
+	return err
+}
+
+err = myMigrationRunner.Register(ctx, descriptor.Dialect, descriptor.Label, descriptor.Root)
+```
+
+For source-stable ordered composition, treat source keys and explicit order values as released ABI once deployed. The app or shared composition layer owns source dependency edges and order values; `go-services` only identifies its own source. Existing ordered-source APIs may still be positional by registration order, so inserting a new source before released app-local migrations requires a compatibility plan.
+
+Future-facing source-stable composition should adapt the descriptor into the composition layer's source type:
+
+```go
+descriptor, err := servicemigrations.SourceDescriptorForDialect(servicemigrations.DialectSQLite)
+if err != nil {
+	return err
+}
+
+source := SourceStableMigrationSource{
+	Name:              descriptor.Name,
+	Key:               descriptor.Key,
+	Label:             descriptor.Label,
+	Order:             30, // owned by the app or shared composition layer
+	Dialect:           descriptor.Dialect,
+	Root:              descriptor.Root,
+	ValidationTargets: descriptor.ValidationTargets,
+}
+```
+
+For combined installs, the consuming app or composition layer decides the source graph. A common app may run `go-auth -> go-users -> go-services -> app-local`, while shared layers such as `go-admin` can adapt the descriptor and own any service-module edges.
 
 Standalone installs should only register `go-services` (source label: `go-services`) and still validate both `postgres` and `sqlite` targets.
 
