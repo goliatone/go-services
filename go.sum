@@ -65,6 +65,8 @@ github.com/goliatone/go-persistence-bun v0.14.0 h1:WaOlotusDjszalVZt/6zUV9sqEGQR
 github.com/goliatone/go-persistence-bun v0.14.0/go.mod h1:hrsGtNrREROFmcc3P1JFYLtunY2JwfPfsRhRUT3+Gyc=
 github.com/goliatone/go-persistence-bun v0.15.0 h1:Yd+asYGNxK9NVM59es0mKdovdJPr2cvJxrfZIs4nKAM=
 github.com/goliatone/go-persistence-bun v0.15.0/go.mod h1:hrsGtNrREROFmcc3P1JFYLtunY2JwfPfsRhRUT3+Gyc=
+github.com/goliatone/go-persistence-bun v0.16.0 h1:mArQ3cprmn4gitXXqNDjsgGQ2S8G3mrk0gVZF+gWFZo=
+github.com/goliatone/go-persistence-bun v0.16.0/go.mod h1:hrsGtNrREROFmcc3P1JFYLtunY2JwfPfsRhRUT3+Gyc=
 github.com/goliatone/go-repository-bun v0.15.1 h1:t2RHhqM6OBjyybJE9wnKtVYXM8f4Jb2s1s/q2sSCS60=
 github.com/goliatone/go-repository-bun v0.15.1/go.mod h1:bOFyQOGKyPJX+tkd7A7DhASqcPMvwdhDq41AmWujFqs=
 github.com/goliatone/go-repository-cache v0.7.1 h1:/JHBAWnBDiz9Gz1ko3XZMmq5ZuOOHRdedMZfoBCVWk8=
