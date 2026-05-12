@@ -3,19 +3,20 @@ module github.com/goliatone/go-services
 go 1.26.0
 
 require (
-	github.com/goliatone/go-command v0.18.0
+	github.com/goliatone/go-command v0.19.0
 	github.com/goliatone/go-config v0.13.0
 	github.com/goliatone/go-errors v0.10.0
 	github.com/goliatone/go-job v0.19.0
 	github.com/goliatone/go-logger v0.8.0
 	github.com/goliatone/go-options v0.7.1
-	github.com/goliatone/go-persistence-bun v0.13.0
+	github.com/goliatone/go-persistence-bun v0.14.0
 	github.com/goliatone/go-repository-bun v0.15.1
 	github.com/goliatone/go-repository-cache v0.7.1
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/uptrace/bun v1.2.18
+	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 )
 
