@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 )
@@ -98,9 +99,7 @@ func (s *inMemorySyncConflictStore) Resolve(
 	if conflict.Resolution == nil {
 		conflict.Resolution = make(map[string]any)
 	}
-	for key, value := range resolution.Patch {
-		conflict.Resolution[key] = value
-	}
+	maps.Copy(conflict.Resolution, resolution.Patch)
 	if resolution.Reason != "" {
 		conflict.Resolution["reason"] = resolution.Reason
 	}

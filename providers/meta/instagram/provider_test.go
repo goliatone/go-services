@@ -101,7 +101,7 @@ func TestProvider_NormalizeGrantedPermissions(t *testing.T) {
 
 func parseScopeSet(raw string) map[string]bool {
 	set := map[string]bool{}
-	for _, scope := range strings.Fields(raw) {
+	for scope := range strings.FieldsSeq(raw) {
 		set[strings.TrimSpace(scope)] = true
 	}
 	return set

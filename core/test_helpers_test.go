@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -706,9 +707,7 @@ func (l mapRawLoader) LoadRaw(context.Context) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	out := make(map[string]any, len(l.values))
-	for key, value := range l.values {
-		out[key] = value
-	}
+	maps.Copy(out, l.values)
 	return out, nil
 }
 

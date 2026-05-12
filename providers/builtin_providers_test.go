@@ -424,7 +424,7 @@ func beginScopeSet(t *testing.T, provider core.Provider) map[string]bool {
 		t.Fatalf("parse begin auth url: %v", err)
 	}
 	scopeSet := map[string]bool{}
-	for _, scope := range strings.Fields(parsed.Query().Get("scope")) {
+	for scope := range strings.FieldsSeq(parsed.Query().Get("scope")) {
 		scopeSet[strings.TrimSpace(scope)] = true
 	}
 	return scopeSet

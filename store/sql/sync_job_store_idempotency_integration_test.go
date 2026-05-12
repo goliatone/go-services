@@ -189,7 +189,7 @@ func TestSyncJobStore_CreateSyncJob_ConcurrentReplaySingleWinner(t *testing.T) {
 	results := make(chan result, workers)
 
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

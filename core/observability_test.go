@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -58,9 +59,7 @@ func newCaptureLogger() *captureLogger {
 
 func (l *captureLogger) WithFields(fields map[string]any) Logger {
 	merged := cloneFieldMap(l.defaults)
-	for key, value := range fields {
-		merged[key] = value
-	}
+	maps.Copy(merged, fields)
 	return &captureLogger{mu: l.mu, records: l.records, defaults: merged}
 }
 
@@ -103,9 +102,7 @@ func cloneFieldMap(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
+	maps.Copy(output, input)
 	return output
 }
 

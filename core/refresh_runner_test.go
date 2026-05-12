@@ -228,16 +228,14 @@ func TestRefresh_IdempotentCredentialRotationUnderConcurrentExecution(t *testing
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 2 {
+		wg.Go(func() {
 			_, refreshErr := svc.Refresh(ctx, RefreshRequest{
 				ProviderID:   "github",
 				ConnectionID: connection.ID,
 			})
 			errCh <- refreshErr
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)

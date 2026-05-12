@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -218,10 +219,5 @@ func testSigV4Config() SigV4Config {
 }
 
 func containsScope(scopes []string, target string) bool {
-	for _, scope := range scopes {
-		if scope == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(scopes, target)
 }

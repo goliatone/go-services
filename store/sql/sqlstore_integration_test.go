@@ -869,7 +869,7 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 		"scope_id":    "usr_activity",
 	}
 	oldCreatedAt := time.Now().UTC().Add(-48 * time.Hour)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		entry := core.ServiceActivityEntry{
 			ID:        fmt.Sprintf("act_old_%d", i),
 			Actor:     "system",
@@ -884,7 +884,7 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 			t.Fatalf("record old entry %d: %v", i, err)
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		entry := core.ServiceActivityEntry{
 			ID:      fmt.Sprintf("act_new_%d", i),
 			Actor:   "webhook",
@@ -1440,7 +1440,7 @@ func TestRateLimitStateStore_ConcurrentDuplicateInsertIsPrevented(t *testing.T) 
 	errCh := make(chan error, workers)
 	var wg sync.WaitGroup
 
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -1985,16 +1985,14 @@ func TestService_GrantLifecyclePermissionAndRefreshIdempotency_Integration(t *te
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 2 {
+		wg.Go(func() {
 			_, refreshErr := svc.Refresh(ctx, core.RefreshRequest{
 				ProviderID:   "github",
 				ConnectionID: completed.Connection.ID,
 			})
 			errCh <- refreshErr
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)
