@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -739,9 +740,7 @@ func mergeProviderOperationMetadata(base map[string]any, extras map[string]any) 
 		return map[string]any{}
 	}
 	merged := copyAnyMap(base)
-	for key, value := range extras {
-		merged[key] = value
-	}
+	maps.Copy(merged, extras)
 	return merged
 }
 
@@ -873,9 +872,7 @@ func copyStringMap(in map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 

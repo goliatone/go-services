@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 )
@@ -270,12 +271,8 @@ func mergeMetadata(left map[string]any, right map[string]any) map[string]any {
 		return make(map[string]any)
 	}
 	merged := make(map[string]any, size)
-	for key, value := range right {
-		merged[key] = value
-	}
-	for key, value := range left {
-		merged[key] = value
-	}
+	maps.Copy(merged, right)
+	maps.Copy(merged, left)
 	return merged
 }
 

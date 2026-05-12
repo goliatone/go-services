@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -768,9 +769,7 @@ func applyOAuthStateContext(req CompleteAuthRequest, record OAuthStateRecord) Co
 		req.RedirectURI = strings.TrimSpace(record.RedirectURI)
 	}
 	mergedMetadata := copyAnyMap(record.Metadata)
-	for key, value := range req.Metadata {
-		mergedMetadata[key] = value
-	}
+	maps.Copy(mergedMetadata, req.Metadata)
 	if len(record.RequestedGrants) > 0 {
 		mergedMetadata["requested_grants"] = append([]string(nil), record.RequestedGrants...)
 	}

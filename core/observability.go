@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -105,9 +106,7 @@ func cloneFields(fields map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	copied := make(map[string]any, len(fields))
-	for key, value := range fields {
-		copied[key] = value
-	}
+	maps.Copy(copied, fields)
 	return copied
 }
 

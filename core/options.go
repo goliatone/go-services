@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/goliatone/go-config/cfgx"
@@ -261,9 +262,7 @@ func (l staticRawConfigLoader) LoadRaw(context.Context) (map[string]any, error) 
 		return map[string]any{}, nil
 	}
 	out := make(map[string]any, len(l.Values))
-	for key, value := range l.Values {
-		out[key] = value
-	}
+	maps.Copy(out, l.Values)
 	return out, nil
 }
 

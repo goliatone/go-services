@@ -106,10 +106,7 @@ func (l *MemoryReplayLedger) enforceCapacityLocked(now time.Time, incoming int) 
 	if l.maxEntries <= 0 {
 		return
 	}
-	target := l.maxEntries - incoming
-	if target < 0 {
-		target = 0
-	}
+	target := max(l.maxEntries-incoming, 0)
 	for len(l.entries) > target {
 		l.evictOldestLocked(now)
 	}

@@ -1,5 +1,7 @@
 package core
 
+import "maps"
+
 import "context"
 
 type NopMetricsRecorder struct{}
@@ -13,9 +15,7 @@ func cloneTags(tags map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	copied := make(map[string]string, len(tags))
-	for key, value := range tags {
-		copied[key] = value
-	}
+	maps.Copy(copied, tags)
 	return copied
 }
 

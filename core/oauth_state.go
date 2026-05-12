@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -122,10 +123,7 @@ func (s *MemoryOAuthStateStore) enforceCapacityLocked(now time.Time, incoming in
 	if s.maxEntries <= 0 {
 		return
 	}
-	target := s.maxEntries - incoming
-	if target < 0 {
-		target = 0
-	}
+	target := max(s.maxEntries-incoming, 0)
 	for len(s.entries) > target {
 		s.evictOldestLocked(now)
 	}
@@ -177,8 +175,6 @@ func copyAnyMap(in map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
