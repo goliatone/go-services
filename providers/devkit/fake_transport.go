@@ -3,6 +3,7 @@ package devkit
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 
@@ -85,15 +86,9 @@ func cloneTransportRequest(in core.TransportRequest) core.TransportRequest {
 		MaxResponseBodyBytes: in.MaxResponseBodyBytes,
 		Idempotency:          in.Idempotency,
 	}
-	for key, value := range in.Headers {
-		out.Headers[key] = value
-	}
-	for key, value := range in.Query {
-		out.Query[key] = value
-	}
-	for key, value := range in.Metadata {
-		out.Metadata[key] = value
-	}
+	maps.Copy(out.Headers, in.Headers)
+	maps.Copy(out.Query, in.Query)
+	maps.Copy(out.Metadata, in.Metadata)
 	return out
 }
 
@@ -104,12 +99,8 @@ func cloneTransportResponse(in core.TransportResponse) core.TransportResponse {
 		Body:       append([]byte(nil), in.Body...),
 		Metadata:   map[string]any{},
 	}
-	for key, value := range in.Headers {
-		out.Headers[key] = value
-	}
-	for key, value := range in.Metadata {
-		out.Metadata[key] = value
-	}
+	maps.Copy(out.Headers, in.Headers)
+	maps.Copy(out.Metadata, in.Metadata)
 	return out
 }
 

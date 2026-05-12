@@ -3,6 +3,7 @@ package shopify
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -29,10 +30,7 @@ func NormalizeAdminAPIResponse(_ context.Context, response core.TransportRespons
 	}
 
 	if used, limit, ok := parseShopifyCallLimit(headerValue(meta.Headers, "x-shopify-shop-api-call-limit")); ok {
-		remaining := limit - used
-		if remaining < 0 {
-			remaining = 0
-		}
+		remaining := max(limit-used, 0)
 		meta.Headers["X-RateLimit-Limit"] = strconv.Itoa(limit)
 		meta.Headers["X-RateLimit-Remaining"] = strconv.Itoa(remaining)
 		meta.Metadata["shopify_api_call_used"] = used
@@ -108,9 +106,7 @@ func copyStringMap(input map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 
@@ -119,9 +115,7 @@ func copyAnyMap(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 

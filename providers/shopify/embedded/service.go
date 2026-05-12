@@ -3,6 +3,7 @@ package embedded
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -160,9 +161,7 @@ func (s *Service) AuthenticateEmbedded(
 		"embedded_session_jti":  claims.JTI,
 		"embedded_session_dest": claims.Destination,
 	}
-	for key, value := range token.Metadata {
-		credentialMetadata[key] = value
-	}
+	maps.Copy(credentialMetadata, token.Metadata)
 	tokenType := strings.ToLower(strings.TrimSpace(token.TokenType))
 	if tokenType == "" {
 		tokenType = "bearer"

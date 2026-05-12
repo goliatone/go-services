@@ -3,6 +3,7 @@ package amazon
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -491,9 +492,7 @@ func cloneAnyMap(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 
@@ -510,9 +509,7 @@ func copyStringMap(input map[string]string) map[string]string {
 
 func mergeMetadata(base map[string]any, extras map[string]any) map[string]any {
 	out := cloneAnyMap(base)
-	for key, value := range extras {
-		out[key] = value
-	}
+	maps.Copy(out, extras)
 	return out
 }
 

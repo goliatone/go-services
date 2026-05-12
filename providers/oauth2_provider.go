@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -603,9 +604,7 @@ func cloneMetadata(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
+	maps.Copy(output, input)
 	return output
 }
 
