@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -81,9 +82,7 @@ func (a *GraphQLAdapter) Do(ctx context.Context, req core.TransportRequest) (cor
 	}
 
 	headers := map[string]string{"Content-Type": "application/json"}
-	for key, value := range req.Headers {
-		headers[key] = value
-	}
+	maps.Copy(headers, req.Headers)
 
 	response, err := a.REST.Do(ctx, core.TransportRequest{
 		Method:               "POST",
@@ -148,9 +147,7 @@ func readGraphQLVariables(metadata map[string]any) (map[string]any, bool) {
 			return map[string]any{}, true
 		}
 		cloned := make(map[string]any, len(typed))
-		for key, item := range typed {
-			cloned[key] = item
-		}
+		maps.Copy(cloned, typed)
 		return cloned, true
 	}
 	return nil, false

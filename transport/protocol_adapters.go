@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -109,9 +110,7 @@ func cloneMetadata(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 
