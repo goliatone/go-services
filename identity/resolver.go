@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -436,9 +437,7 @@ func copyMap(src map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	dst := make(map[string]any, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 

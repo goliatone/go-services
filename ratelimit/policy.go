@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -120,9 +121,7 @@ func (p *AdaptivePolicy) AfterCall(ctx context.Context, key core.RateLimitKey, r
 	state.LastStatus = res.StatusCode
 	state.UpdatedAt = now
 	state.Metadata = cloneMap(state.Metadata)
-	for k, v := range cloneMap(res.Metadata) {
-		state.Metadata[k] = v
-	}
+	maps.Copy(state.Metadata, cloneMap(res.Metadata))
 
 	_, hasLimit := parseHeaderInt(res.Headers, "x-ratelimit-limit")
 	if limit, ok := parseHeaderInt(res.Headers, "x-ratelimit-limit"); ok {
@@ -314,9 +313,7 @@ func cloneMap(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
+	maps.Copy(output, input)
 	return output
 }
 
