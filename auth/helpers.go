@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 )
@@ -88,8 +89,6 @@ func cloneMetadata(metadata map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any, len(metadata))
-	for key, value := range metadata {
-		out[key] = value
-	}
+	maps.Copy(out, metadata)
 	return out
 }
