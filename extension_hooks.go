@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -161,9 +162,7 @@ func (h *ExtensionHooks) BuildCommandQueryBundles(
 	}
 	sort.Strings(names)
 	factories := make(map[string]CommandQueryBundleFactory, len(h.bundles))
-	for name, factory := range h.bundles {
-		factories[name] = factory
-	}
+	maps.Copy(factories, h.bundles)
 	h.mu.RUnlock()
 
 	result := make(map[string]any, len(names))
