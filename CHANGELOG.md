@@ -1,5 +1,35 @@
 # Changelog
 
+# [0.7.0](https://github.com/goliatone/go-services/compare/v0.6.1...v0.7.0) - (2026-05-12)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.7.0 ([4152493](https://github.com/goliatone/go-services/commit/4152493e4cfa830c26d801317b5c3e36d7cf38b2))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Migration source descriptor ([4d90a24](https://github.com/goliatone/go-services/commit/4d90a24f26ef293ec147721b42aea6b81a48cb3e))  - (goliatone)
+- Migration schema composition ([da02c4d](https://github.com/goliatone/go-services/commit/da02c4dc6ad4fced362f0d40f1626e32e1d3e710))  - (goliatone)
+- Linter setup ([90c9973](https://github.com/goliatone/go-services/commit/90c9973ac0eb201e173e8eb34e968d1d0e4d5ee9))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update readme ([717806c](https://github.com/goliatone/go-services/commit/717806c64496eff961a5b5c879f5c66405cd3420))  - (goliatone)
+- Update tasks ([62772a3](https://github.com/goliatone/go-services/commit/62772a3115c26f0074a5018c2fca25e53d5918d8))  - (goliatone)
+- Update deps ([1741662](https://github.com/goliatone/go-services/commit/17416628014fec3e0176f8d1252cb04e9f9c1729))  - (goliatone)
+- Code quality ([01e7568](https://github.com/goliatone/go-services/commit/01e7568a603b06c32b7c002571cebdff7a0dc1f2))  - (goliatone)
+- Update tests ([d45408c](https://github.com/goliatone/go-services/commit/d45408c202fe13f336385cf03d188d549bd844e2))  - (goliatone)
+
+# [0.6.1](https://github.com/goliatone/go-services/compare/v0.6.0...v0.6.1) - (2026-05-08)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.6.0 ([e876505](https://github.com/goliatone/go-services/commit/e876505b30122fe6147b599bae41cc3a6275940b))  - (goliatone)
+
+## <!-- 30 -->📝 Other
+
+- Exchange google service account assertions ([c71a464](https://github.com/goliatone/go-services/commit/c71a46417ef3aee188287142de243da48305d1c6))  - (goliatone)
+
 # [0.6.0](https://github.com/goliatone/go-services/compare/v0.5.0...v0.6.0) - (2026-03-11)
 
 ## <!-- 13 -->📦 Bumps
