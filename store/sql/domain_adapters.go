@@ -1,6 +1,7 @@
 package sqlstore
 
 import (
+	"maps"
 	"time"
 
 	"github.com/goliatone/go-services/core"
@@ -289,8 +290,6 @@ func copyAnyMap(in map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -216,12 +217,8 @@ func mergeAnyMap(left map[string]any, right map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	merged := map[string]any{}
-	for key, value := range left {
-		merged[key] = value
-	}
-	for key, value := range right {
-		merged[key] = value
-	}
+	maps.Copy(merged, left)
+	maps.Copy(merged, right)
 	return merged
 }
 

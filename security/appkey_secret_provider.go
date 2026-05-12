@@ -209,14 +209,12 @@ func normalizeKey(value []byte) []byte {
 }
 
 func envelopeAAD(keyID string, version int, algorithm string) []byte {
-	return []byte(
-		fmt.Sprintf(
-			"%s|%s|%d|%s",
-			envelopePrefix,
-			strings.TrimSpace(keyID),
-			version,
-			strings.ToLower(strings.TrimSpace(algorithm)),
-		),
+	return fmt.Appendf(nil,
+		"%s|%s|%d|%s",
+		envelopePrefix,
+		strings.TrimSpace(keyID),
+		version,
+		strings.ToLower(strings.TrimSpace(algorithm)),
 	)
 }
 
