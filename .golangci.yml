@@ -46,12 +46,13 @@ linters:
       - comments
       - common-false-positives
     rules:
+      # Test scenarios accumulate one branch per assertion and often remain clearest as
+      # end-to-end narratives. Enforce correctness analyzers and duplication in tests,
+      # but reserve function-size and cyclomatic thresholds for production code.
       - path: _test\.go
         linters:
-          - dupl
           - funlen
           - gocyclo
-          - nestif
 
 formatters:
   enable:

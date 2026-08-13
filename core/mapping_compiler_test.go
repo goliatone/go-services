@@ -68,6 +68,39 @@ func TestMappingCompilerValidateMappingSpecDeterministicHash(t *testing.T) {
 	}
 }
 
+func TestMappingTypeCompatibilityMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		target    string
+		transform string
+		want      bool
+	}{
+		{"identity accepts same", "string", "string", "identity", true},
+		{"identity rejects different", "string", "integer", "identity", false},
+		{"to string", "boolean", "string", "to_string", true},
+		{"to int accepts number", "number", "integer", "to_int", true},
+		{"to int rejects object", "object", "integer", "to_int", false},
+		{"to float accepts integer", "integer", "number", "to_float", true},
+		{"to float rejects boolean", "boolean", "number", "to_float", false},
+		{"to bool accepts string", "string", "boolean", "to_bool", true},
+		{"to bool rejects number", "number", "boolean", "to_bool", false},
+		{"text transforms", "string", "string", "trim", true},
+		{"text transforms reject number", "number", "string", "uppercase", false},
+		{"unix time", "integer", "string", "unix_time_to_rfc3339", true},
+		{"unix time rejects bool", "boolean", "string", "unix_time_to_rfc3339", false},
+		{"unknown", "string", "string", "unknown", false},
+		{"unknown source is deferred", "", "string", "identity", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isMappingTypeCompatible(test.source, test.target, test.transform); got != test.want {
+				t.Fatalf("compatibility = %v; want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMappingCompilerValidateMappingSpecIssueOrderingAndCoverage(t *testing.T) {
 	compiler := NewMappingCompiler()
 	result, err := compiler.ValidateMappingSpec(context.Background(), ValidateMappingSpecRequest{

@@ -208,8 +208,8 @@ func TestProcessor_ReprocessesRetryReadyDeliveries(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	handler.err = nil
 	handler.result = core.InboundResult{Accepted: true, StatusCode: 202}
-	if _, err := processor.Process(context.Background(), req); err != nil {
-		t.Fatalf("expected retry-ready delivery to be reprocessed: %v", err)
+	if _, testErr := processor.Process(context.Background(), req); testErr != nil {
+		t.Fatalf("expected retry-ready delivery to be reprocessed: %v", testErr)
 	}
 	record, err = ledger.Get(context.Background(), "github", "delivery-retry-ready")
 	if err != nil {

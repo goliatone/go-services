@@ -66,15 +66,54 @@ func (s AWSSigV4Signer) Sign(_ context.Context, req *http.Request, cred ActiveCr
 
 func (s AWSSigV4Signer) resolveProfile(cred ActiveCredential) (awsSigV4Profile, error) {
 	metadata := cred.Metadata
+	mode, err := s.resolveSigningMode(metadata)
+	if err != nil {
+		return awsSigV4Profile{}, err
+	}
+	accessKeyID, secretAccessKey, region, service, err := s.resolveSigningCoordinates(metadata)
+	if err != nil {
+		return awsSigV4Profile{}, err
+	}
+
+	accessTokenHeader := firstNonEmpty(
+		strings.TrimSpace(strings.ToLower(s.AccessTokenHeader)),
+		strings.TrimSpace(strings.ToLower(metadataString(metadata, "aws_access_token_header"))),
+	)
+	if accessTokenHeader == "" && strings.TrimSpace(cred.AccessToken) != "" {
+		accessTokenHeader = defaultAWSSigV4AccessTokenHeader
+	}
+	now := s.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+
+	return awsSigV4Profile{
+		AccessKeyID:       accessKeyID,
+		SecretAccessKey:   secretAccessKey,
+		SessionToken:      firstNonEmpty(strings.TrimSpace(s.SessionToken), metadataString(metadata, "aws_session_token", "session_token")),
+		Region:            region,
+		Service:           service,
+		Mode:              mode,
+		QueryExpiry:       s.resolveQueryExpiry(metadata),
+		UnsignedPayload:   s.UnsignedPayload || metadataBool(metadata, "aws_unsigned_payload"),
+		AccessTokenHeader: accessTokenHeader,
+		Now:               now,
+	}, nil
+}
+
+func (s AWSSigV4Signer) resolveSigningMode(metadata map[string]any) (string, error) {
 	mode := firstNonEmpty(
 		strings.TrimSpace(strings.ToLower(s.Mode)),
 		strings.TrimSpace(strings.ToLower(metadataString(metadata, "aws_signing_mode", "signing_mode"))),
 		defaultAWSSigV4Mode,
 	)
 	if mode != "header" && mode != "query" {
-		return awsSigV4Profile{}, fmt.Errorf("core: unsupported aws sigv4 signing mode %q", mode)
+		return "", fmt.Errorf("core: unsupported aws sigv4 signing mode %q", mode)
 	}
+	return mode, nil
+}
 
+func (s AWSSigV4Signer) resolveSigningCoordinates(metadata map[string]any) (string, string, string, string, error) {
 	accessKeyID := firstNonEmpty(
 		strings.TrimSpace(s.AccessKeyID),
 		metadataString(metadata, "aws_access_key_id", "access_key_id"),
@@ -92,21 +131,12 @@ func (s AWSSigV4Signer) resolveProfile(cred ActiveCredential) (awsSigV4Profile, 
 		metadataString(metadata, "aws_service", "service"),
 	)
 	if accessKeyID == "" || secretAccessKey == "" || region == "" || service == "" {
-		return awsSigV4Profile{}, fmt.Errorf("core: aws sigv4 requires access key, secret, region, and service")
+		return "", "", "", "", fmt.Errorf("core: aws sigv4 requires access key, secret, region, and service")
 	}
+	return accessKeyID, secretAccessKey, region, service, nil
+}
 
-	sessionToken := firstNonEmpty(
-		strings.TrimSpace(s.SessionToken),
-		metadataString(metadata, "aws_session_token", "session_token"),
-	)
-	accessTokenHeader := firstNonEmpty(
-		strings.TrimSpace(strings.ToLower(s.AccessTokenHeader)),
-		strings.TrimSpace(strings.ToLower(metadataString(metadata, "aws_access_token_header"))),
-	)
-	if accessTokenHeader == "" && strings.TrimSpace(cred.AccessToken) != "" {
-		accessTokenHeader = defaultAWSSigV4AccessTokenHeader
-	}
-
+func (s AWSSigV4Signer) resolveQueryExpiry(metadata map[string]any) time.Duration {
 	queryExpiry := s.QueryExpiry
 	if queryExpiry <= 0 {
 		if raw := metadataString(metadata, "aws_signing_expires", "aws_query_expires"); raw != "" {
@@ -119,24 +149,7 @@ func (s AWSSigV4Signer) resolveProfile(cred ActiveCredential) (awsSigV4Profile, 
 	if queryExpiry <= 0 {
 		queryExpiry = defaultAWSSigV4QueryExpiry
 	}
-	unsignedPayload := s.UnsignedPayload || metadataBool(metadata, "aws_unsigned_payload")
-	now := s.Now
-	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
-	}
-
-	return awsSigV4Profile{
-		AccessKeyID:       accessKeyID,
-		SecretAccessKey:   secretAccessKey,
-		SessionToken:      sessionToken,
-		Region:            region,
-		Service:           service,
-		Mode:              mode,
-		QueryExpiry:       queryExpiry,
-		UnsignedPayload:   unsignedPayload,
-		AccessTokenHeader: accessTokenHeader,
-		Now:               now,
-	}, nil
+	return queryExpiry
 }
 
 func signAWSSigV4Header(

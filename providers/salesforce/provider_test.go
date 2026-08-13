@@ -132,3 +132,44 @@ func TestProvider_ResolveCapabilityOperation_UsesDegradeForOptionalGrantMiss(t *
 		t.Fatalf("expected full transport kind bulk, got %q", full.TransportKind)
 	}
 }
+
+func TestProvider_ResolveCapabilityOperation_ContractMatrix(t *testing.T) {
+	providerRaw, err := New(Config{ClientID: "client", ClientSecret: "secret", TokenURL: "https://auth.example/token"})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	provider := providerRaw.(*Provider)
+	tests := []struct {
+		name       string
+		capability string
+		mode       core.CapabilityDeniedBehavior
+		kind       string
+		method     string
+	}{
+		{name: "read", capability: "crm.accounts.read", kind: "rest", method: http.MethodGet},
+		{name: "write", capability: "crm.accounts.write", kind: "rest", method: http.MethodPost},
+		{name: "bulk", capability: "crm.accounts.bulk_export", kind: "bulk", method: http.MethodPost},
+		{name: "bulk degraded", capability: "crm.accounts.bulk_export", mode: core.CapabilityDeniedBehaviorDegrade, kind: "rest", method: http.MethodGet},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := core.CapabilityResult{Allowed: true, Mode: tc.mode}
+			if tc.mode == core.CapabilityDeniedBehaviorDegrade {
+				decision.Metadata = map[string]any{"missing_grants": []string{GrantBulkExport}}
+			}
+			operation, testErr := provider.ResolveCapabilityOperation(context.Background(), core.CapabilityOperationResolveRequest{
+				ProviderID: "salesforce",
+				Scope:      core.ScopeRef{Type: "org", ID: "org_1"},
+				Connection: core.Connection{ID: "conn_1"},
+				Capability: tc.capability,
+				Decision:   decision,
+			})
+			if testErr != nil {
+				t.Fatalf("resolve operation: %v", testErr)
+			}
+			if operation.TransportKind != tc.kind || operation.TransportRequest.Method != tc.method {
+				t.Fatalf("got transport %q %q, want %q %q", operation.TransportKind, operation.TransportRequest.Method, tc.kind, tc.method)
+			}
+		})
+	}
+}

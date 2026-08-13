@@ -114,25 +114,9 @@ func (s *SyncConflictLedgerService) ResolveSyncConflict(
 		return ResolveSyncConflictResult{}, fmt.Errorf("core: sync conflict ledger store is required")
 	}
 
-	req.ConflictID = strings.TrimSpace(req.ConflictID)
-	if req.ConflictID == "" {
-		return ResolveSyncConflictResult{}, fmt.Errorf("core: conflict id is required")
-	}
-	req.ProviderID = strings.TrimSpace(req.ProviderID)
-	req.Scope = ScopeRef{
-		Type: strings.TrimSpace(strings.ToLower(req.Scope.Type)),
-		ID:   strings.TrimSpace(req.Scope.ID),
-	}
-	if req.ProviderID == "" {
-		return ResolveSyncConflictResult{}, fmt.Errorf("core: provider id is required")
-	}
-	if err := req.Scope.Validate(); err != nil {
+	req = normalizeResolveSyncConflictRequest(req)
+	if err := validateResolveSyncConflictRequest(req); err != nil {
 		return ResolveSyncConflictResult{}, err
-	}
-	req.Resolution = normalizeSyncConflictResolution(req.Resolution)
-	req.Resolution.Patch = RedactSensitiveMap(req.Resolution.Patch)
-	if !req.Resolution.Action.IsValid() {
-		return ResolveSyncConflictResult{}, fmt.Errorf("core: invalid sync conflict resolution action %q", req.Resolution.Action)
 	}
 
 	current, getErr := s.store.Get(ctx, req.ProviderID, req.Scope, req.ConflictID)
@@ -146,16 +130,11 @@ func (s *SyncConflictLedgerService) ResolveSyncConflict(
 		return ResolveSyncConflictResult{Conflict: current}, nil
 	}
 
-	if s.policyHook != nil {
-		resolution, hookErr := s.policyHook.ApplyResolutionPolicy(ctx, current, req.Resolution)
-		if hookErr != nil {
-			return ResolveSyncConflictResult{}, hookErr
-		}
-		req.Resolution = normalizeSyncConflictResolution(resolution)
-		if !req.Resolution.Action.IsValid() {
-			return ResolveSyncConflictResult{}, fmt.Errorf("core: invalid sync conflict resolution action %q", req.Resolution.Action)
-		}
+	resolution, err := s.applyResolutionPolicy(ctx, current, req.Resolution)
+	if err != nil {
+		return ResolveSyncConflictResult{}, err
 	}
+	req.Resolution = resolution
 
 	resolvedAt := s.now()
 	resolved, resolveErr := s.store.Resolve(
@@ -170,13 +149,7 @@ func (s *SyncConflictLedgerService) ResolveSyncConflict(
 		return ResolveSyncConflictResult{}, resolveErr
 	}
 
-	eventName := "services.sync.conflict.resolved"
-	switch req.Resolution.Action {
-	case SyncConflictResolutionIgnore:
-		eventName = "services.sync.conflict.ignored"
-	case SyncConflictResolutionRetry:
-		eventName = "services.sync.conflict.retry_requested"
-	}
+	eventName := syncConflictResolutionEvent(req.Resolution.Action)
 	if publishErr := s.publishAuditEvent(ctx, resolved, eventName, map[string]any{
 		"action":      string(req.Resolution.Action),
 		"reason":      req.Resolution.Reason,
@@ -188,6 +161,64 @@ func (s *SyncConflictLedgerService) ResolveSyncConflict(
 	return ResolveSyncConflictResult{
 		Conflict: resolved,
 	}, nil
+}
+
+func normalizeResolveSyncConflictRequest(req ResolveSyncConflictRequest) ResolveSyncConflictRequest {
+	req.ConflictID = strings.TrimSpace(req.ConflictID)
+	req.ProviderID = strings.TrimSpace(req.ProviderID)
+	req.Scope = ScopeRef{
+		Type: strings.TrimSpace(strings.ToLower(req.Scope.Type)),
+		ID:   strings.TrimSpace(req.Scope.ID),
+	}
+	req.Resolution = normalizeSyncConflictResolution(req.Resolution)
+	req.Resolution.Patch = RedactSensitiveMap(req.Resolution.Patch)
+	return req
+}
+
+func validateResolveSyncConflictRequest(req ResolveSyncConflictRequest) error {
+	if req.ConflictID == "" {
+		return fmt.Errorf("core: conflict id is required")
+	}
+	if req.ProviderID == "" {
+		return fmt.Errorf("core: provider id is required")
+	}
+	if err := req.Scope.Validate(); err != nil {
+		return err
+	}
+	if !req.Resolution.Action.IsValid() {
+		return fmt.Errorf("core: invalid sync conflict resolution action %q", req.Resolution.Action)
+	}
+	return nil
+}
+
+func (s *SyncConflictLedgerService) applyResolutionPolicy(
+	ctx context.Context,
+	conflict SyncConflict,
+	resolution SyncConflictResolution,
+) (SyncConflictResolution, error) {
+	if s.policyHook == nil {
+		return resolution, nil
+	}
+	resolved, err := s.policyHook.ApplyResolutionPolicy(ctx, conflict, resolution)
+	if err != nil {
+		return SyncConflictResolution{}, err
+	}
+	resolved = normalizeSyncConflictResolution(resolved)
+	if !resolved.Action.IsValid() {
+		return SyncConflictResolution{}, fmt.Errorf("core: invalid sync conflict resolution action %q", resolved.Action)
+	}
+	return resolved, nil
+}
+
+func syncConflictResolutionEvent(action SyncConflictResolutionAction) string {
+	switch action {
+	case SyncConflictResolutionIgnore:
+		return "services.sync.conflict.ignored"
+	case SyncConflictResolutionRetry:
+		return "services.sync.conflict.retry_requested"
+	default:
+		return "services.sync.conflict.resolved"
+	}
 }
 
 func (s *SyncConflictLedgerService) publishAuditEvent(

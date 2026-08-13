@@ -43,14 +43,14 @@ func ValidateWebhookLedgerConformance(
 		return fmt.Errorf("devkit: first claim should be accepted")
 	}
 
-	if _, accepted, err := ledger.Claim(ctx, providerID, deliveryID, nil, time.Second); err != nil {
-		return err
-	} else if accepted {
+	if _, secondAccepted, claimErr := ledger.Claim(ctx, providerID, deliveryID, nil, time.Second); claimErr != nil {
+		return claimErr
+	} else if secondAccepted {
 		return fmt.Errorf("devkit: second claim should not be accepted while lease is active")
 	}
 
-	if err := ledger.Complete(ctx, record.ClaimID); err != nil {
-		return err
+	if completeErr := ledger.Complete(ctx, record.ClaimID); completeErr != nil {
+		return completeErr
 	}
 	loaded, err := ledger.Get(ctx, providerID, deliveryID)
 	if err != nil {

@@ -99,7 +99,7 @@ func (p *AppKeySecretProvider) Encrypt(_ context.Context, plaintext []byte) ([]b
 	}
 
 	aad := envelopeAAD(p.keyID, p.version, envelopeAlgorithm)
-	sealed := gcm.Seal(nil, nonce, plaintext, aad)
+	sealed := gcm.Seal(nil, nonce, plaintext, aad) // #nosec G407 -- false positive: nonce is freshly filled by crypto/rand above; TestAppKeySecretProvider_EncryptDecryptRoundTrip exercises the envelope.
 	return encodeEnvelope(envelope{
 		KeyID:      p.keyID,
 		Version:    p.version,
@@ -124,22 +124,31 @@ func (p *AppKeySecretProvider) Decrypt(_ context.Context, ciphertext []byte) ([]
 	if err != nil {
 		return nil, err
 	}
+	if err := p.validateEnvelopeMetadata(parsed); err != nil {
+		return nil, err
+	}
+	return p.decryptEnvelopePayload(parsed)
+}
+
+func (p *AppKeySecretProvider) validateEnvelopeMetadata(parsed envelope) error {
 	if parsed.Algorithm != envelopeAlgorithm {
-		return nil, fmt.Errorf("security: unsupported envelope algorithm %q", parsed.Algorithm)
+		return fmt.Errorf("security: unsupported envelope algorithm %q", parsed.Algorithm)
 	}
 	if parsed.KeyID == "" || parsed.Version <= 0 {
 		if !p.allowLegacyDecrypt {
-			return nil, fmt.Errorf("security: envelope metadata is incomplete")
+			return fmt.Errorf("security: envelope metadata is incomplete")
 		}
 	}
-
 	if parsed.KeyID != "" && parsed.KeyID != p.keyID {
-		return nil, fmt.Errorf("security: key id mismatch: got %q want %q", parsed.KeyID, p.keyID)
+		return fmt.Errorf("security: key id mismatch: got %q want %q", parsed.KeyID, p.keyID)
 	}
 	if parsed.Version > 0 && parsed.Version != p.version {
-		return nil, fmt.Errorf("security: key version mismatch: got %d want %d", parsed.Version, p.version)
+		return fmt.Errorf("security: key version mismatch: got %d want %d", parsed.Version, p.version)
 	}
+	return nil
+}
 
+func (p *AppKeySecretProvider) decryptEnvelopePayload(parsed envelope) ([]byte, error) {
 	nonce, err := decodeCiphertextPayload(parsed.Nonce)
 	if err != nil {
 		return nil, fmt.Errorf("security: decode nonce: %w", err)

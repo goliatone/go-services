@@ -81,16 +81,16 @@ func TestLifecycleRuntime_CompatibilityHooksProjectorsAndActivityControls(t *tes
 			"status": ServiceActivityStatusWarn,
 		},
 	}
-	if err := coordinator.ExecutePreCommitAndEnqueue(ctx, event, outbox); err != nil {
-		t.Fatalf("pre-commit + enqueue: %v", err)
+	if testErr := coordinator.ExecutePreCommitAndEnqueue(ctx, event, outbox); testErr != nil {
+		t.Fatalf("pre-commit + enqueue: %v", testErr)
 	}
 
 	stats, err := dispatcher.DispatchPending(ctx, 10)
 	if err != nil {
 		t.Fatalf("dispatch pending: %v", err)
 	}
-	if err := coordinator.ExecutePostCommit(ctx, event); err != nil {
-		t.Fatalf("post-commit hooks: %v", err)
+	if testErr := coordinator.ExecutePostCommit(ctx, event); testErr != nil {
+		t.Fatalf("post-commit hooks: %v", testErr)
 	}
 
 	if preCalls != 1 || postCalls != 1 {

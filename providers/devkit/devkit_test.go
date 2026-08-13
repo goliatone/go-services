@@ -54,8 +54,8 @@ func TestWebhookDeliveryLedgerFixture_ClaimFailAndConformance(t *testing.T) {
 	if !accepted {
 		t.Fatalf("expected first claim to be accepted")
 	}
-	if err := ledger.Fail(ctx, record.ClaimID, nil, time.Now().UTC().Add(time.Second), 8); err != nil {
-		t.Fatalf("fail delivery: %v", err)
+	if testErr := ledger.Fail(ctx, record.ClaimID, nil, time.Now().UTC().Add(time.Second), 8); testErr != nil {
+		t.Fatalf("fail delivery: %v", testErr)
 	}
 	loaded, err := ledger.Get(ctx, "github", "delivery_1")
 	if err != nil {

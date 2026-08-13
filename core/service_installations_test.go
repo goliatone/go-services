@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 )
@@ -47,8 +46,8 @@ func TestService_InstallationLifecycle_APIs(t *testing.T) {
 		t.Fatalf("expected one installation, got %d", len(items))
 	}
 
-	if err := svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusSuspended, "policy"); err != nil {
-		t.Fatalf("update installation status: %v", err)
+	if testErr := svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusSuspended, "policy"); testErr != nil {
+		t.Fatalf("update installation status: %v", testErr)
 	}
 	updated, err := svc.GetInstallation(ctx, installation.ID)
 	if err != nil {
@@ -103,13 +102,11 @@ func TestService_InstallationLifecycle_EnforcesStatusTransitions(t *testing.T) {
 		t.Fatalf("upsert installation: %v", err)
 	}
 
-	if err := svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusUninstalled, "removed"); err != nil {
-		t.Fatalf("uninstall transition: %v", err)
+	if testErr := svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusUninstalled, "removed"); testErr != nil {
+		t.Fatalf("uninstall transition: %v", testErr)
 	}
 	err = svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatusActive, "reactivate")
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid installation status transition") {
-		t.Fatalf("expected invalid transition error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "invalid installation status transition")
 
 	_, err = svc.UpsertInstallation(ctx, UpsertInstallationInput{
 		ProviderID:  "github",
@@ -117,12 +114,8 @@ func TestService_InstallationLifecycle_EnforcesStatusTransitions(t *testing.T) {
 		InstallType: "marketplace_app",
 		Status:      InstallationStatusSuspended,
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "created with status active") {
-		t.Fatalf("expected active-on-create enforcement error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "created with status active")
 
 	err = svc.UpdateInstallationStatus(ctx, installation.ID, InstallationStatus("invalid_status"), "bad")
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid installation status") {
-		t.Fatalf("expected invalid status error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "invalid installation status")
 }

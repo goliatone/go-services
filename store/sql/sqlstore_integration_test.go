@@ -92,12 +92,12 @@ func TestConnectionAndCredentialStores_EnforceVersioningAndUniqueness(t *testing
 		t.Fatalf("create connection: %v", err)
 	}
 
-	if _, err := connectionStore.Create(ctx, core.CreateConnectionInput{
+	if _, testErr := connectionStore.Create(ctx, core.CreateConnectionInput{
 		ProviderID:        "github",
 		Scope:             core.ScopeRef{Type: "user", ID: "usr_1"},
 		ExternalAccountID: "acct_1",
 		Status:            core.ConnectionStatusActive,
-	}); err == nil {
+	}); testErr == nil {
 		t.Fatalf("expected unique active connection constraint violation")
 	}
 
@@ -252,7 +252,7 @@ func TestAuditAndGrantStores_RedactSensitiveMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new event store: %v", err)
 	}
-	if err := eventStore.Append(ctx, sqlstore.AppendServiceEventInput{
+	if testErr := eventStore.Append(ctx, sqlstore.AppendServiceEventInput{
 		ConnectionID: connection.ID,
 		ProviderID:   connection.ProviderID,
 		ScopeType:    connection.ScopeType,
@@ -263,8 +263,8 @@ func TestAuditAndGrantStores_RedactSensitiveMetadata(t *testing.T) {
 			"access_token": "plain-token",
 			"detail":       "kept",
 		},
-	}); err != nil {
-		t.Fatalf("append service event: %v", err)
+	}); testErr != nil {
+		t.Fatalf("append service event: %v", testErr)
 	}
 
 	grantStore, err := sqlstore.NewGrantStore(client.DB())
@@ -525,8 +525,8 @@ func TestWebhookDeliveryStore_ClaimLifecycle(t *testing.T) {
 	}
 
 	nextAttempt := time.Now().UTC().Add(2 * time.Minute)
-	if err := deliveryStore.Fail(ctx, firstClaimID, fmt.Errorf("transient"), nextAttempt, 3); err != nil {
-		t.Fatalf("fail claimed delivery: %v", err)
+	if testErr := deliveryStore.Fail(ctx, firstClaimID, fmt.Errorf("transient"), nextAttempt, 3); testErr != nil {
+		t.Fatalf("fail claimed delivery: %v", testErr)
 	}
 
 	retried, err := deliveryStore.Get(ctx, "github", "delivery-1")
@@ -557,16 +557,16 @@ func TestWebhookDeliveryStore_ClaimLifecycle(t *testing.T) {
 		t.Fatalf("expected retry-ready delivery to remain unavailable until retry window")
 	}
 
-	if err := deliveryStore.Fail(ctx, retried.ProviderID+":delivery-1:invalid", fmt.Errorf("bad"), time.Now().UTC(), 3); err == nil {
+	if testErr := deliveryStore.Fail(ctx, retried.ProviderID+":delivery-1:invalid", fmt.Errorf("bad"), time.Now().UTC(), 3); testErr == nil {
 		t.Fatalf("expected invalid claim id to fail")
 	}
-	if _, err := client.DB().NewRaw(
+	if _, testErr := client.DB().NewRaw(
 		"UPDATE service_webhook_deliveries SET next_attempt_at = ? WHERE provider_id = ? AND delivery_id = ?",
 		time.Now().UTC().Add(-time.Second),
 		"github",
 		"delivery-1",
-	).Exec(ctx); err != nil {
-		t.Fatalf("set retry-ready window to elapsed: %v", err)
+	).Exec(ctx); testErr != nil {
+		t.Fatalf("set retry-ready window to elapsed: %v", testErr)
 	}
 
 	record, claimed, err = deliveryStore.Claim(
@@ -585,8 +585,8 @@ func TestWebhookDeliveryStore_ClaimLifecycle(t *testing.T) {
 	if record.Attempts != 2 {
 		t.Fatalf("expected attempts to increment on re-claim, got %d", record.Attempts)
 	}
-	if err := deliveryStore.Complete(ctx, record.ClaimID); err != nil {
-		t.Fatalf("complete delivery: %v", err)
+	if testErr := deliveryStore.Complete(ctx, record.ClaimID); testErr != nil {
+		t.Fatalf("complete delivery: %v", testErr)
 	}
 
 	processed, err := deliveryStore.Get(ctx, "github", "delivery-1")
@@ -618,8 +618,8 @@ func TestWebhookDeliveryStore_MarksDeadAfterMaxAttempts(t *testing.T) {
 	if !claimed {
 		t.Fatalf("expected first claim to succeed")
 	}
-	if err := deliveryStore.Fail(ctx, first.ClaimID, fmt.Errorf("temporary"), time.Now().UTC().Add(-time.Second), 2); err != nil {
-		t.Fatalf("first fail: %v", err)
+	if testErr := deliveryStore.Fail(ctx, first.ClaimID, fmt.Errorf("temporary"), time.Now().UTC().Add(-time.Second), 2); testErr != nil {
+		t.Fatalf("first fail: %v", testErr)
 	}
 
 	second, claimed, err := deliveryStore.Claim(ctx, "github", "delivery-dead", []byte(`{"ok":true}`), time.Minute)
@@ -629,8 +629,8 @@ func TestWebhookDeliveryStore_MarksDeadAfterMaxAttempts(t *testing.T) {
 	if !claimed {
 		t.Fatalf("expected second claim to succeed")
 	}
-	if err := deliveryStore.Fail(ctx, second.ClaimID, fmt.Errorf("terminal"), time.Now().UTC(), 2); err != nil {
-		t.Fatalf("second fail: %v", err)
+	if testErr := deliveryStore.Fail(ctx, second.ClaimID, fmt.Errorf("terminal"), time.Now().UTC(), 2); testErr != nil {
+		t.Fatalf("second fail: %v", testErr)
 	}
 
 	dead, err := deliveryStore.Get(ctx, "github", "delivery-dead")
@@ -713,8 +713,8 @@ func TestOutboxStore_ClaimAckRetryLifecycle(t *testing.T) {
 		Payload:    map[string]any{"status": "warn"},
 		Metadata:   map[string]any{"request_id": "req_1"},
 	}
-	if err := outboxStore.Enqueue(ctx, event); err != nil {
-		t.Fatalf("enqueue event: %v", err)
+	if testErr := outboxStore.Enqueue(ctx, event); testErr != nil {
+		t.Fatalf("enqueue event: %v", testErr)
 	}
 
 	claimed, err := outboxStore.ClaimBatch(ctx, 10)
@@ -731,8 +731,8 @@ func TestOutboxStore_ClaimAckRetryLifecycle(t *testing.T) {
 		t.Fatalf("expected initial attempts metadata to be 0")
 	}
 
-	if err := outboxStore.Retry(ctx, event.ID, errors.New("transient"), time.Now().UTC().Add(-time.Second)); err != nil {
-		t.Fatalf("retry event: %v", err)
+	if testErr := outboxStore.Retry(ctx, event.ID, errors.New("transient"), time.Now().UTC().Add(-time.Second)); testErr != nil {
+		t.Fatalf("retry event: %v", testErr)
 	}
 
 	reclaimed, err := outboxStore.ClaimBatch(ctx, 10)
@@ -746,8 +746,8 @@ func TestOutboxStore_ClaimAckRetryLifecycle(t *testing.T) {
 		t.Fatalf("expected attempts metadata=1 after retry")
 	}
 
-	if err := outboxStore.Ack(ctx, event.ID); err != nil {
-		t.Fatalf("ack event: %v", err)
+	if testErr := outboxStore.Ack(ctx, event.ID); testErr != nil {
+		t.Fatalf("ack event: %v", testErr)
 	}
 	claimedAfterAck, err := outboxStore.ClaimBatch(ctx, 10)
 	if err != nil {
@@ -811,8 +811,8 @@ func TestNotificationDispatchStore_IdempotencyLedger(t *testing.T) {
 		Status:         "sent",
 		Metadata:       map[string]any{"channel": "email"},
 	}
-	if err := ledger.Record(ctx, record); err != nil {
-		t.Fatalf("record dispatch: %v", err)
+	if testErr := ledger.Record(ctx, record); testErr != nil {
+		t.Fatalf("record dispatch: %v", testErr)
 	}
 
 	seen, err := ledger.Seen(ctx, record.IdempotencyKey)
@@ -880,8 +880,8 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 			Metadata:  baseMeta,
 			CreatedAt: oldCreatedAt.Add(time.Duration(i) * time.Minute),
 		}
-		if err := activityStore.Record(ctx, entry); err != nil {
-			t.Fatalf("record old entry %d: %v", i, err)
+		if testErr := activityStore.Record(ctx, entry); testErr != nil {
+			t.Fatalf("record old entry %d: %v", i, testErr)
 		}
 	}
 	for i := range 3 {
@@ -902,8 +902,8 @@ func TestActivityStore_OperationalRetentionAndQuery(t *testing.T) {
 		if i == 1 {
 			entry.Metadata["connection_id"] = filterConnection.ID
 		}
-		if err := activityStore.Record(ctx, entry); err != nil {
-			t.Fatalf("record new entry %d: %v", i, err)
+		if testErr := activityStore.Record(ctx, entry); testErr != nil {
+			t.Fatalf("record new entry %d: %v", i, testErr)
 		}
 	}
 
@@ -1142,8 +1142,8 @@ func TestSyncOrchestrator_PersistsCheckpointAndResume(t *testing.T) {
 		t.Fatalf("expected failed job status")
 	}
 
-	if err := orchestrator.Resume(ctx, job.ID); err != nil {
-		t.Fatalf("resume job: %v", err)
+	if testErr := orchestrator.Resume(ctx, job.ID); testErr != nil {
+		t.Fatalf("resume job: %v", testErr)
 	}
 	stored, err := syncJobStore.Get(ctx, job.ID)
 	if err != nil {
@@ -1209,8 +1209,8 @@ func TestInstallationStore_UpsertListAndStatusTransitions(t *testing.T) {
 		t.Fatalf("expected exactly one installation, got %d", len(listed))
 	}
 
-	if err := installationStore.UpdateStatus(ctx, installation.ID, core.InstallationStatusSuspended, "quota exhausted"); err != nil {
-		t.Fatalf("update installation status suspended: %v", err)
+	if testErr := installationStore.UpdateStatus(ctx, installation.ID, core.InstallationStatusSuspended, "quota exhausted"); testErr != nil {
+		t.Fatalf("update installation status suspended: %v", testErr)
 	}
 	suspended, err := installationStore.Get(ctx, installation.ID)
 	if err != nil {
@@ -1284,14 +1284,14 @@ func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {
 		ScopeID:    "org_rl_1",
 		BucketKey:  "api",
 	}
-	if _, err := store.Get(ctx, key); !errors.Is(err, servicesratelimit.ErrStateNotFound) {
-		t.Fatalf("expected state not found error, got %v", err)
+	if _, testErr := store.Get(ctx, key); !errors.Is(testErr, servicesratelimit.ErrStateNotFound) {
+		t.Fatalf("expected state not found error, got %v", testErr)
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
 	retryAfter := 15 * time.Second
 	throttledUntil := now.Add(retryAfter)
-	if err := store.Upsert(ctx, servicesratelimit.State{
+	if testErr := store.Upsert(ctx, servicesratelimit.State{
 		Key:            key,
 		Limit:          5000,
 		Remaining:      0,
@@ -1302,8 +1302,8 @@ func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {
 		Attempts:       2,
 		UpdatedAt:      now,
 		Metadata:       map[string]any{"endpoint": "issues"},
-	}); err != nil {
-		t.Fatalf("upsert rate-limit state: %v", err)
+	}); testErr != nil {
+		t.Fatalf("upsert rate-limit state: %v", testErr)
 	}
 
 	stored, err := store.Get(ctx, key)
@@ -1331,14 +1331,14 @@ func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {
 		t.Fatalf("expected throttled error from persisted state, got %v", beforeErr)
 	}
 
-	if err := policy.AfterCall(ctx, key, core.ProviderResponseMeta{
+	if testErr := policy.AfterCall(ctx, key, core.ProviderResponseMeta{
 		StatusCode: 200,
 		Headers: map[string]string{
 			"X-RateLimit-Limit":     "5000",
 			"X-RateLimit-Remaining": "4999",
 		},
-	}); err != nil {
-		t.Fatalf("policy after-call success transition: %v", err)
+	}); testErr != nil {
+		t.Fatalf("policy after-call success transition: %v", testErr)
 	}
 	updated, err := store.Get(ctx, key)
 	if err != nil {
@@ -1514,8 +1514,8 @@ func TestRepositoryFactory_RateLimitPolicyUsesCachedStoreWhenConfigured(t *testi
 	}
 
 	factory := sqlstore.NewRepositoryFactory(sqlstore.WithRateLimitStateCache(cacheService))
-	if _, err := factory.BuildStores(client); err != nil {
-		t.Fatalf("build stores: %v", err)
+	if _, testErr := factory.BuildStores(client); testErr != nil {
+		t.Fatalf("build stores: %v", testErr)
 	}
 
 	policy := factory.RateLimitPolicy()
@@ -1572,8 +1572,8 @@ func TestSubscriptionLifecycle_RenewAndCancel_Integration(t *testing.T) {
 		},
 	}
 	registry := core.NewProviderRegistry()
-	if err := registry.Register(provider); err != nil {
-		t.Fatalf("register provider: %v", err)
+	if testErr := registry.Register(provider); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	svc, err := core.NewService(core.Config{},
@@ -1618,11 +1618,11 @@ func TestSubscriptionLifecycle_RenewAndCancel_Integration(t *testing.T) {
 		t.Fatalf("expected remote_2 subscription id")
 	}
 
-	if err := svc.CancelSubscription(ctx, core.CancelSubscriptionRequest{
+	if testErr := svc.CancelSubscription(ctx, core.CancelSubscriptionRequest{
 		SubscriptionID: renewed.ID,
 		Reason:         "manual revoke",
-	}); err != nil {
-		t.Fatalf("cancel subscription: %v", err)
+	}); testErr != nil {
+		t.Fatalf("cancel subscription: %v", testErr)
 	}
 	stored, err := subscriptionStore.Get(ctx, renewed.ID)
 	if err != nil {
@@ -1729,12 +1729,12 @@ func TestWebhookTriggeredSync_DedupeAndCursorAdvance_Integration(t *testing.T) {
 	}
 
 	var firstRunCount int
-	if err := client.DB().NewRaw(
+	if testErr := client.DB().NewRaw(
 		"SELECT COUNT(*) FROM service_sync_jobs WHERE connection_id = ? AND mode = ?",
 		connection.ID,
 		string(core.SyncJobModeIncremental),
-	).Scan(ctx, &firstRunCount); err != nil {
-		t.Fatalf("count sync jobs: %v", err)
+	).Scan(ctx, &firstRunCount); testErr != nil {
+		t.Fatalf("count sync jobs: %v", testErr)
 	}
 	if firstRunCount != 1 {
 		t.Fatalf("expected one incremental sync job after first delivery, got %d", firstRunCount)
@@ -1874,8 +1874,8 @@ func TestCursorInvalidationRecoveryAndResumableBackfill_Integration(t *testing.T
 		t.Fatalf("expected failed backfill status")
 	}
 
-	if err := orchestrator.Resume(ctx, job.ID); err != nil {
-		t.Fatalf("resume backfill job: %v", err)
+	if testErr := orchestrator.Resume(ctx, job.ID); testErr != nil {
+		t.Fatalf("resume backfill job: %v", testErr)
 	}
 	stored, err := syncJobStore.Get(ctx, job.ID)
 	if err != nil {
@@ -1932,8 +1932,8 @@ func TestService_GrantLifecyclePermissionAndRefreshIdempotency_Integration(t *te
 		}},
 	}
 	registry := core.NewProviderRegistry()
-	if err := registry.Register(provider); err != nil {
-		t.Fatalf("register provider: %v", err)
+	if testErr := registry.Register(provider); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	svc, err := core.NewService(core.Config{},

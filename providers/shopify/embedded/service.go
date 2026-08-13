@@ -101,16 +101,9 @@ func (s *Service) AuthenticateEmbedded(
 	if s == nil {
 		return core.EmbeddedAuthResult{}, fmt.Errorf("providers/shopify/embedded: service is not configured")
 	}
-	if err := req.Scope.Validate(); err != nil {
+	sessionToken, requestedTokenType, err := validateEmbeddedAuthRequest(req)
+	if err != nil {
 		return core.EmbeddedAuthResult{}, err
-	}
-	sessionToken := strings.TrimSpace(req.SessionToken)
-	if sessionToken == "" {
-		return core.EmbeddedAuthResult{}, &ValidationError{
-			Code:  "session_token_required",
-			Field: "session_token",
-			Cause: ErrInvalidSessionToken,
-		}
 	}
 	expectedShop := strings.TrimSpace(req.ExpectedShopDomain)
 	if expectedShop == "" {
@@ -124,25 +117,12 @@ func (s *Service) AuthenticateEmbedded(
 	if err != nil {
 		return core.EmbeddedAuthResult{}, err
 	}
-	requestedTokenType, _, err := resolveRequestedTokenType(req.RequestedTokenType)
-	if err != nil {
-		return core.EmbeddedAuthResult{}, &ValidationError{
-			Code:  "invalid_requested_token_type",
-			Field: "requested_token_type",
-			Cause: err,
-		}
-	}
 	replayTTL := req.ReplayTTL
 	if replayTTL <= 0 {
 		replayTTL = s.config.ReplayTTL
 	}
-	replayKey := buildReplayKey(s.config.ProviderID, claims.ShopDomain, claims.JTI)
-	accepted, err := s.ledger.Claim(ctx, replayKey, replayTTL)
-	if err != nil {
-		return core.EmbeddedAuthResult{}, err
-	}
-	if !accepted {
-		return core.EmbeddedAuthResult{}, ErrReplayDetected
+	if claimErr := s.claimEmbeddedSession(ctx, claims, replayTTL); claimErr != nil {
+		return core.EmbeddedAuthResult{}, claimErr
 	}
 
 	token, err := s.exchanger.ExchangeSessionToken(ctx, ExchangeSessionTokenRequest{
@@ -154,6 +134,46 @@ func (s *Service) AuthenticateEmbedded(
 		return core.EmbeddedAuthResult{}, err
 	}
 
+	return s.embeddedAuthResult(req, claims, token, requestedTokenType), nil
+}
+
+func validateEmbeddedAuthRequest(req core.EmbeddedAuthRequest) (string, core.EmbeddedRequestedTokenType, error) {
+	if err := req.Scope.Validate(); err != nil {
+		return "", "", err
+	}
+	sessionToken := strings.TrimSpace(req.SessionToken)
+	if sessionToken == "" {
+		return "", "", &ValidationError{
+			Code: "session_token_required", Field: "session_token", Cause: ErrInvalidSessionToken,
+		}
+	}
+	requestedTokenType, _, err := resolveRequestedTokenType(req.RequestedTokenType)
+	if err != nil {
+		return "", "", &ValidationError{
+			Code: "invalid_requested_token_type", Field: "requested_token_type", Cause: err,
+		}
+	}
+	return sessionToken, requestedTokenType, nil
+}
+
+func (s *Service) claimEmbeddedSession(ctx context.Context, claims core.EmbeddedSessionClaims, replayTTL time.Duration) error {
+	replayKey := buildReplayKey(s.config.ProviderID, claims.ShopDomain, claims.JTI)
+	accepted, err := s.ledger.Claim(ctx, replayKey, replayTTL)
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return ErrReplayDetected
+	}
+	return nil
+}
+
+func (s *Service) embeddedAuthResult(
+	req core.EmbeddedAuthRequest,
+	claims core.EmbeddedSessionClaims,
+	token core.EmbeddedAccessToken,
+	requestedTokenType core.EmbeddedRequestedTokenType,
+) core.EmbeddedAuthResult {
 	credentialMetadata := map[string]any{
 		"provider_id":           s.config.ProviderID,
 		"shop_domain":           claims.ShopDomain,
@@ -192,7 +212,7 @@ func (s *Service) AuthenticateEmbedded(
 		Token:             token,
 		Credential:        credential,
 		Metadata:          metadata,
-	}, nil
+	}
 }
 
 func buildReplayKey(providerID string, shopDomain string, jti string) string {

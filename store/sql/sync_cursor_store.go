@@ -73,67 +73,17 @@ func (s *SyncCursorStore) Upsert(ctx context.Context, in core.UpsertSyncCursorIn
 		return core.SyncCursor{}, fmt.Errorf("sqlstore: sync cursor store is not configured")
 	}
 
-	in.ConnectionID = strings.TrimSpace(in.ConnectionID)
-	in.ProviderID = strings.TrimSpace(in.ProviderID)
-	in.ResourceType = strings.TrimSpace(in.ResourceType)
-	in.ResourceID = strings.TrimSpace(in.ResourceID)
-	in.Cursor = strings.TrimSpace(in.Cursor)
-	in.Status = strings.TrimSpace(in.Status)
-	if in.ConnectionID == "" || in.ProviderID == "" {
-		return core.SyncCursor{}, fmt.Errorf("sqlstore: connection id and provider id are required")
-	}
-	if in.ResourceType == "" || in.ResourceID == "" {
-		return core.SyncCursor{}, fmt.Errorf("sqlstore: resource type and resource id are required")
-	}
-	if in.Cursor == "" {
-		return core.SyncCursor{}, fmt.Errorf("sqlstore: cursor is required")
-	}
-	if in.Status == "" {
-		in.Status = "active"
+	in = normalizeSyncCursorInput(in)
+	if err := validateSyncCursorInput(in); err != nil {
+		return core.SyncCursor{}, err
 	}
 	now := time.Now().UTC()
 
 	var out core.SyncCursor
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		record, err := findSyncCursorTx(ctx, tx, in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
-		if err != nil {
-			return err
-		}
-		if record == nil {
-			record = newSyncCursorRecord(in, now)
-			record.ID = uuid.NewString()
-			if _, insertErr := tx.NewInsert().Model(record).Exec(ctx); insertErr != nil {
-				if isUniqueViolation(insertErr) {
-					record, err = findSyncCursorTx(ctx, tx, in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
-					if err != nil {
-						return err
-					}
-					if record == nil {
-						return insertErr
-					}
-				} else {
-					return insertErr
-				}
-			}
-			out = record.toDomain()
-			return nil
-		}
-
-		record.Cursor = in.Cursor
-		record.Status = in.Status
-		record.Metadata = copyAnyMap(in.Metadata)
-		record.UpdatedAt = now
-		if in.LastSyncedAt != nil {
-			value := *in.LastSyncedAt
-			record.LastSyncedAt = &value
-		} else {
-			record.LastSyncedAt = nil
-		}
-		if _, updateErr := tx.NewUpdate().Model(record).Where("id = ?", record.ID).Exec(ctx); updateErr != nil {
-			return updateErr
-		}
-		out = record.toDomain()
-		return nil
+		resolved, err := upsertSyncCursorTx(ctx, tx, in, now)
+		out = resolved
+		return err
 	})
 	if err != nil {
 		return core.SyncCursor{}, err
@@ -156,67 +106,139 @@ func (s *SyncCursorStore) Advance(ctx context.Context, in core.AdvanceSyncCursor
 		Metadata:     copyAnyMap(in.Metadata),
 	}
 	expectedCursor := strings.TrimSpace(in.ExpectedCursor)
-	if upsertInput.Status == "" {
-		upsertInput.Status = "active"
-	}
-	if upsertInput.ConnectionID == "" || upsertInput.ProviderID == "" {
-		return core.SyncCursor{}, fmt.Errorf("sqlstore: connection id and provider id are required")
-	}
-	if upsertInput.ResourceType == "" || upsertInput.ResourceID == "" {
-		return core.SyncCursor{}, fmt.Errorf("sqlstore: resource type and resource id are required")
-	}
-	if upsertInput.Cursor == "" {
-		return core.SyncCursor{}, fmt.Errorf("sqlstore: cursor is required")
+	upsertInput = normalizeSyncCursorInput(upsertInput)
+	if err := validateSyncCursorInput(upsertInput); err != nil {
+		return core.SyncCursor{}, err
 	}
 
 	var out core.SyncCursor
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		record, err := findSyncCursorTx(
-			ctx,
-			tx,
-			upsertInput.ConnectionID,
-			upsertInput.ProviderID,
-			upsertInput.ResourceType,
-			upsertInput.ResourceID,
-		)
-		if err != nil {
-			return err
-		}
-		if record == nil {
-			if expectedCursor != "" {
-				return core.ErrSyncCursorConflict
-			}
-			record = newSyncCursorRecord(upsertInput, time.Now().UTC())
-			record.ID = uuid.NewString()
-			if _, insertErr := tx.NewInsert().Model(record).Exec(ctx); insertErr != nil {
-				return insertErr
-			}
-			out = record.toDomain()
-			return nil
-		}
-
-		if expectedCursor != "" && !strings.EqualFold(record.Cursor, expectedCursor) {
-			return core.ErrSyncCursorConflict
-		}
-
-		record.Cursor = upsertInput.Cursor
-		record.Status = upsertInput.Status
-		record.Metadata = copyAnyMap(upsertInput.Metadata)
-		record.UpdatedAt = time.Now().UTC()
-		if upsertInput.LastSyncedAt != nil {
-			value := *upsertInput.LastSyncedAt
-			record.LastSyncedAt = &value
-		}
-		if _, updateErr := tx.NewUpdate().Model(record).Where("id = ?", record.ID).Exec(ctx); updateErr != nil {
-			return updateErr
-		}
-		out = record.toDomain()
-		return nil
+		resolved, err := advanceSyncCursorTx(ctx, tx, upsertInput, expectedCursor, time.Now().UTC())
+		out = resolved
+		return err
 	})
 	if err != nil {
 		return core.SyncCursor{}, err
 	}
 	return out, nil
+}
+
+func normalizeSyncCursorInput(in core.UpsertSyncCursorInput) core.UpsertSyncCursorInput {
+	in.ConnectionID = strings.TrimSpace(in.ConnectionID)
+	in.ProviderID = strings.TrimSpace(in.ProviderID)
+	in.ResourceType = strings.TrimSpace(in.ResourceType)
+	in.ResourceID = strings.TrimSpace(in.ResourceID)
+	in.Cursor = strings.TrimSpace(in.Cursor)
+	in.Status = strings.TrimSpace(in.Status)
+	if in.Status == "" {
+		in.Status = "active"
+	}
+	return in
+}
+
+func validateSyncCursorInput(in core.UpsertSyncCursorInput) error {
+	if in.ConnectionID == "" || in.ProviderID == "" {
+		return fmt.Errorf("sqlstore: connection id and provider id are required")
+	}
+	if in.ResourceType == "" || in.ResourceID == "" {
+		return fmt.Errorf("sqlstore: resource type and resource id are required")
+	}
+	if in.Cursor == "" {
+		return fmt.Errorf("sqlstore: cursor is required")
+	}
+	return nil
+}
+
+func upsertSyncCursorTx(
+	ctx context.Context,
+	tx bun.Tx,
+	in core.UpsertSyncCursorInput,
+	now time.Time,
+) (core.SyncCursor, error) {
+	record, err := findSyncCursorTx(ctx, tx, in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
+	if err != nil {
+		return core.SyncCursor{}, err
+	}
+	if record == nil {
+		record, err = insertSyncCursorTx(ctx, tx, in, now)
+		if err != nil {
+			return core.SyncCursor{}, err
+		}
+		return record.toDomain(), nil
+	}
+	updateSyncCursorRecord(record, in, now, true)
+	_, err = tx.NewUpdate().Model(record).Where("id = ?", record.ID).Exec(ctx)
+	return record.toDomain(), err
+}
+
+func insertSyncCursorTx(
+	ctx context.Context,
+	tx bun.Tx,
+	in core.UpsertSyncCursorInput,
+	now time.Time,
+) (*syncCursorRecord, error) {
+	record := newSyncCursorRecord(in, now)
+	record.ID = uuid.NewString()
+	if _, err := tx.NewInsert().Model(record).Exec(ctx); err == nil {
+		return record, nil
+	} else if !isUniqueViolation(err) {
+		return nil, err
+	} else {
+		existing, lookupErr := findSyncCursorTx(ctx, tx, in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if existing == nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+}
+
+func advanceSyncCursorTx(
+	ctx context.Context,
+	tx bun.Tx,
+	in core.UpsertSyncCursorInput,
+	expectedCursor string,
+	now time.Time,
+) (core.SyncCursor, error) {
+	record, err := findSyncCursorTx(ctx, tx, in.ConnectionID, in.ProviderID, in.ResourceType, in.ResourceID)
+	if err != nil {
+		return core.SyncCursor{}, err
+	}
+	if record == nil {
+		if expectedCursor != "" {
+			return core.SyncCursor{}, core.ErrSyncCursorConflict
+		}
+		record = newSyncCursorRecord(in, now)
+		record.ID = uuid.NewString()
+		_, err = tx.NewInsert().Model(record).Exec(ctx)
+		return record.toDomain(), err
+	}
+	if expectedCursor != "" && !strings.EqualFold(record.Cursor, expectedCursor) {
+		return core.SyncCursor{}, core.ErrSyncCursorConflict
+	}
+	updateSyncCursorRecord(record, in, now, false)
+	_, err = tx.NewUpdate().Model(record).Where("id = ?", record.ID).Exec(ctx)
+	return record.toDomain(), err
+}
+
+func updateSyncCursorRecord(
+	record *syncCursorRecord,
+	in core.UpsertSyncCursorInput,
+	now time.Time,
+	clearMissingSyncTime bool,
+) {
+	record.Cursor = in.Cursor
+	record.Status = in.Status
+	record.Metadata = copyAnyMap(in.Metadata)
+	record.UpdatedAt = now
+	if in.LastSyncedAt != nil {
+		value := *in.LastSyncedAt
+		record.LastSyncedAt = &value
+	} else if clearMissingSyncTime {
+		record.LastSyncedAt = nil
+	}
 }
 
 func findSyncCursorTx(

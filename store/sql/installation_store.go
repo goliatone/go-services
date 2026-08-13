@@ -38,79 +38,91 @@ func (s *InstallationStore) Upsert(ctx context.Context, in core.UpsertInstallati
 	if s == nil || s.db == nil || s.repo == nil {
 		return core.Installation{}, fmt.Errorf("sqlstore: installation store is not configured")
 	}
+	in = normalizeInstallationInput(in)
+	status, err := validateInstallationInput(in)
+	if err != nil {
+		return core.Installation{}, err
+	}
+	in.Status = status
+
+	now := time.Now().UTC()
+	return runInTxResult(ctx, s.db, func(ctx context.Context, tx bun.Tx) (core.Installation, error) {
+		return upsertInstallationTx(ctx, tx, in, status, now)
+	})
+}
+
+func normalizeInstallationInput(in core.UpsertInstallationInput) core.UpsertInstallationInput {
 	in.ProviderID = strings.TrimSpace(in.ProviderID)
 	in.Scope = core.ScopeRef{
 		Type: strings.TrimSpace(strings.ToLower(in.Scope.Type)),
 		ID:   strings.TrimSpace(in.Scope.ID),
 	}
 	in.InstallType = strings.TrimSpace(strings.ToLower(in.InstallType))
+	return in
+}
+
+func validateInstallationInput(in core.UpsertInstallationInput) (core.InstallationStatus, error) {
 	if in.ProviderID == "" {
-		return core.Installation{}, fmt.Errorf("sqlstore: provider id is required")
+		return "", fmt.Errorf("sqlstore: provider id is required")
 	}
 	if err := in.Scope.Validate(); err != nil {
-		return core.Installation{}, err
+		return "", err
 	}
 	if in.InstallType == "" {
-		return core.Installation{}, fmt.Errorf("sqlstore: install type is required")
+		return "", fmt.Errorf("sqlstore: install type is required")
 	}
-	status, statusErr := parseInstallationStatusValue(in.Status)
-	if statusErr != nil {
-		return core.Installation{}, statusErr
-	}
-	in.Status = status
+	return parseInstallationStatusValue(in.Status)
+}
 
-	now := time.Now().UTC()
-	var out core.Installation
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		record, err := findInstallationTx(ctx, tx, in.ProviderID, in.Scope.Type, in.Scope.ID, in.InstallType)
-		if err != nil {
-			return err
-		}
-		if record == nil {
-			if status != core.InstallationStatusActive {
-				return fmt.Errorf("sqlstore: installation must be created with status active")
-			}
-			record = newInstallationRecord(in, now)
-			record.ID = uuid.NewString()
-			if _, insertErr := tx.NewInsert().Model(record).Exec(ctx); insertErr != nil {
-				return insertErr
-			}
-			out = record.toDomain()
-			return nil
-		}
-
-		candidate := record.toDomain()
-		if transitionErr := candidate.TransitionTo(status, now); transitionErr != nil {
-			return transitionErr
-		}
-
-		record.Status = string(status)
-		record.Metadata = copyAnyMap(in.Metadata)
-		record.UpdatedAt = now
-		if in.GrantedAt != nil {
-			value := *in.GrantedAt
-			record.GrantedAt = &value
-		}
-		if in.RevokedAt != nil {
-			value := *in.RevokedAt
-			record.RevokedAt = &value
-		}
-		if status == core.InstallationStatusUninstalled && record.RevokedAt == nil {
-			record.RevokedAt = &now
-		}
-		if _, updateErr := tx.NewUpdate().
-			Model(record).
-			Where("id = ?", record.ID).
-			Exec(ctx); updateErr != nil {
-			return updateErr
-		}
-		out = record.toDomain()
-		return nil
-	})
+func upsertInstallationTx(
+	ctx context.Context,
+	tx bun.Tx,
+	in core.UpsertInstallationInput,
+	status core.InstallationStatus,
+	now time.Time,
+) (core.Installation, error) {
+	record, err := findInstallationTx(ctx, tx, in.ProviderID, in.Scope.Type, in.Scope.ID, in.InstallType)
 	if err != nil {
 		return core.Installation{}, err
 	}
-	return out, nil
+	if record == nil {
+		if status != core.InstallationStatusActive {
+			return core.Installation{}, fmt.Errorf("sqlstore: installation must be created with status active")
+		}
+		record = newInstallationRecord(in, now)
+		record.ID = uuid.NewString()
+		_, err = tx.NewInsert().Model(record).Exec(ctx)
+		return record.toDomain(), err
+	}
+	candidate := record.toDomain()
+	if transitionErr := candidate.TransitionTo(status, now); transitionErr != nil {
+		return core.Installation{}, transitionErr
+	}
+	updateInstallationRecord(record, in, status, now)
+	_, err = tx.NewUpdate().Model(record).Where("id = ?", record.ID).Exec(ctx)
+	return record.toDomain(), err
+}
+
+func updateInstallationRecord(
+	record *installationRecord,
+	in core.UpsertInstallationInput,
+	status core.InstallationStatus,
+	now time.Time,
+) {
+	record.Status = string(status)
+	record.Metadata = copyAnyMap(in.Metadata)
+	record.UpdatedAt = now
+	if in.GrantedAt != nil {
+		value := *in.GrantedAt
+		record.GrantedAt = &value
+	}
+	if in.RevokedAt != nil {
+		value := *in.RevokedAt
+		record.RevokedAt = &value
+	}
+	if status == core.InstallationStatusUninstalled && record.RevokedAt == nil {
+		record.RevokedAt = &now
+	}
 }
 
 func (s *InstallationStore) Get(ctx context.Context, id string) (core.Installation, error) {

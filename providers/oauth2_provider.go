@@ -212,78 +212,91 @@ func (p *OAuth2Provider) CompleteAuth(ctx context.Context, req core.CompleteAuth
 		return core.CompleteAuthResponse{}, err
 	}
 
-	granted := normalizeGrants(parseScopeList(token.Scope))
-	if len(granted) == 0 {
-		granted = normalizeGrants(readStringSlice(req.Metadata, "granted_grants"))
-	}
-	if len(granted) == 0 {
-		granted = append([]string(nil), requested...)
-	}
-
-	now := p.cfg.Now().UTC()
-	expiresAt := p.resolveExpiresAt(now, token.ExpiresIn)
-	refreshToken := strings.TrimSpace(token.RefreshToken)
-	tokenType := normalizeTokenType(token.TokenType)
-	credentialMetadata := map[string]any{
-		"provider_id": p.cfg.ID,
-		"token_url":   p.cfg.TokenURL,
-	}
-	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
-		credentialMetadata["id_token"] = idToken
-	}
-	credential := core.ActiveCredential{
-		TokenType:       tokenType,
-		AccessToken:     strings.TrimSpace(token.AccessToken),
-		RefreshToken:    refreshToken,
-		RequestedScopes: append([]string(nil), requested...),
-		GrantedScopes:   append([]string(nil), granted...),
-		ExpiresAt:       expiresAt,
-		Refreshable:     refreshToken != "",
-		Metadata:        credentialMetadata,
-	}
-	externalAccountID := strings.TrimSpace(readString(req.Metadata, "external_account_id"))
-	profileMetadata := map[string]any{}
-	if externalAccountID == "" && p.cfg.ProfileResolver != nil {
-		resolverMetadata := cloneMetadata(req.Metadata)
-		if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
-			resolverMetadata["id_token"] = idToken
-		}
-		profile, resolveErr := p.cfg.ProfileResolver.Resolve(ctx, p.cfg.ID, credential, resolverMetadata)
-		if resolveErr == nil {
-			externalAccountID = strings.TrimSpace(profile.ExternalAccountID())
-			if externalAccountID == "" {
-				externalAccountID = strings.TrimSpace(profile.Subject)
-			}
-			profileMetadata = profile.Map()
-			if len(profileMetadata) > 0 {
-				credential.Metadata["identity_profile"] = cloneMetadata(profileMetadata)
-			}
-		}
-	}
+	granted := resolveCompletedOAuthGrants(token.Scope, req.Metadata, requested)
+	credential := p.completedOAuthCredential(token, requested, granted)
+	externalAccountID, profileMetadata := p.resolveOAuthExternalAccount(ctx, req, token, &credential)
 	if externalAccountID == "" {
 		return core.CompleteAuthResponse{}, fmt.Errorf(
 			"providers: external account id is required in metadata for provider %q",
 			p.cfg.ID,
 		)
 	}
-	responseMetadata := map[string]any{
-		"provider_id": p.cfg.ID,
-		"token_url":   p.cfg.TokenURL,
-	}
-	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
-		responseMetadata["id_token"] = idToken
-	}
-	if len(profileMetadata) > 0 {
-		responseMetadata["identity_profile"] = cloneMetadata(profileMetadata)
-	}
-
 	return core.CompleteAuthResponse{
 		ExternalAccountID: externalAccountID,
 		Credential:        credential,
 		RequestedGrants:   append([]string(nil), requested...),
 		GrantedGrants:     append([]string(nil), granted...),
-		Metadata:          responseMetadata,
+		Metadata:          p.oauthCompletionMetadata(token.IDToken, profileMetadata),
 	}, nil
+}
+
+func resolveCompletedOAuthGrants(scope string, metadata map[string]any, requested []string) []string {
+	granted := normalizeGrants(parseScopeList(scope))
+	if len(granted) == 0 {
+		granted = normalizeGrants(readStringSlice(metadata, "granted_grants"))
+	}
+	if len(granted) == 0 {
+		granted = append([]string(nil), requested...)
+	}
+	return granted
+}
+
+func (p *OAuth2Provider) completedOAuthCredential(
+	token tokenEndpointPayload,
+	requested []string,
+	granted []string,
+) core.ActiveCredential {
+	refreshToken := strings.TrimSpace(token.RefreshToken)
+	metadata := map[string]any{"provider_id": p.cfg.ID, "token_url": p.cfg.TokenURL}
+	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+		metadata["id_token"] = idToken
+	}
+	return core.ActiveCredential{
+		TokenType: normalizeTokenType(token.TokenType), AccessToken: strings.TrimSpace(token.AccessToken),
+		RefreshToken: refreshToken, RequestedScopes: append([]string(nil), requested...),
+		GrantedScopes: append([]string(nil), granted...), ExpiresAt: p.resolveExpiresAt(p.cfg.Now().UTC(), token.ExpiresIn),
+		Refreshable: refreshToken != "", Metadata: metadata,
+	}
+}
+
+func (p *OAuth2Provider) resolveOAuthExternalAccount(
+	ctx context.Context,
+	req core.CompleteAuthRequest,
+	token tokenEndpointPayload,
+	credential *core.ActiveCredential,
+) (string, map[string]any) {
+	externalAccountID := strings.TrimSpace(readString(req.Metadata, "external_account_id"))
+	if externalAccountID != "" || p.cfg.ProfileResolver == nil {
+		return externalAccountID, nil
+	}
+	resolverMetadata := cloneMetadata(req.Metadata)
+	if idToken := strings.TrimSpace(token.IDToken); idToken != "" {
+		resolverMetadata["id_token"] = idToken
+	}
+	profile, err := p.cfg.ProfileResolver.Resolve(ctx, p.cfg.ID, *credential, resolverMetadata)
+	if err != nil {
+		return "", nil
+	}
+	externalAccountID = strings.TrimSpace(profile.ExternalAccountID())
+	if externalAccountID == "" {
+		externalAccountID = strings.TrimSpace(profile.Subject)
+	}
+	metadata := profile.Map()
+	if len(metadata) > 0 {
+		credential.Metadata["identity_profile"] = cloneMetadata(metadata)
+	}
+	return externalAccountID, metadata
+}
+
+func (p *OAuth2Provider) oauthCompletionMetadata(idToken string, profile map[string]any) map[string]any {
+	metadata := map[string]any{"provider_id": p.cfg.ID, "token_url": p.cfg.TokenURL}
+	if idToken = strings.TrimSpace(idToken); idToken != "" {
+		metadata["id_token"] = idToken
+	}
+	if len(profile) > 0 {
+		metadata["identity_profile"] = cloneMetadata(profile)
+	}
+	return metadata
 }
 
 func (p *OAuth2Provider) Refresh(ctx context.Context, cred core.ActiveCredential) (core.RefreshResult, error) {
@@ -354,19 +367,60 @@ func (p *OAuth2Provider) Refresh(ctx context.Context, cred core.ActiveCredential
 }
 
 func (p *OAuth2Provider) fetchToken(ctx context.Context, form url.Values) (tokenEndpointPayload, error) {
+	httpReq, cancel, err := p.buildTokenRequest(ctx, form)
+	if err != nil {
+		return tokenEndpointPayload{}, err
+	}
+	defer cancel()
+	response, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return tokenEndpointPayload{}, fmt.Errorf("providers: token request failed: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	return decodeTokenResponse(response)
+}
+
+func (p *OAuth2Provider) buildTokenRequest(
+	ctx context.Context,
+	form url.Values,
+) (*http.Request, context.CancelFunc, error) {
 	if p == nil {
-		return tokenEndpointPayload{}, fmt.Errorf("providers: oauth2 provider is nil")
+		return nil, func() {}, fmt.Errorf("providers: oauth2 provider is nil")
 	}
 	if p.httpClient == nil {
-		return tokenEndpointPayload{}, fmt.Errorf("providers: oauth2 http client is not configured")
+		return nil, func() {}, fmt.Errorf("providers: oauth2 http client is not configured")
+	}
+	if strings.TrimSpace(p.cfg.TokenURL) == "" {
+		return nil, func() {}, fmt.Errorf("providers: token url is required for provider %q", p.cfg.ID)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if strings.TrimSpace(p.cfg.TokenURL) == "" {
-		return tokenEndpointPayload{}, fmt.Errorf("providers: token url is required for provider %q", p.cfg.ID)
+	values := normalizedTokenForm(form)
+	values.Set("client_id", p.cfg.ClientID)
+	if p.cfg.ClientSecretInBody && p.cfg.ClientSecret != "" {
+		values.Set("client_secret", p.cfg.ClientSecret)
 	}
+	requestCtx, cancel := context.WithCancel(ctx)
+	if p.cfg.TokenRequestTimeout > 0 {
+		requestCtx, cancel = context.WithTimeout(ctx, p.cfg.TokenRequestTimeout)
+	}
+	request, err := http.NewRequestWithContext(
+		requestCtx, http.MethodPost, p.cfg.TokenURL, strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		cancel()
+		return nil, func() {}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	if !p.cfg.ClientSecretInBody && p.cfg.ClientSecret != "" {
+		request.SetBasicAuth(p.cfg.ClientID, p.cfg.ClientSecret)
+	}
+	return request, cancel, nil
+}
 
+func normalizedTokenForm(form url.Values) url.Values {
 	values := url.Values{}
 	for key, items := range form {
 		if strings.TrimSpace(key) == "" {
@@ -376,50 +430,20 @@ func (p *OAuth2Provider) fetchToken(ctx context.Context, form url.Values) (token
 			values.Add(key, strings.TrimSpace(item))
 		}
 	}
-	values.Set("client_id", p.cfg.ClientID)
-	if p.cfg.ClientSecretInBody && p.cfg.ClientSecret != "" {
-		values.Set("client_secret", p.cfg.ClientSecret)
-	}
+	return values
+}
 
-	requestCtx := ctx
-	cancel := func() {}
-	if p.cfg.TokenRequestTimeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, p.cfg.TokenRequestTimeout)
-	}
-	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(
-		requestCtx,
-		http.MethodPost,
-		p.cfg.TokenURL,
-		strings.NewReader(values.Encode()),
-	)
+func decodeTokenResponse(response *http.Response) (tokenEndpointPayload, error) {
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxTokenResponseBodyBytes+1))
 	if err != nil {
-		return tokenEndpointPayload{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Accept", "application/json")
-	if !p.cfg.ClientSecretInBody && p.cfg.ClientSecret != "" {
-		httpReq.SetBasicAuth(p.cfg.ClientID, p.cfg.ClientSecret)
-	}
-
-	response, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return tokenEndpointPayload{}, fmt.Errorf("providers: token request failed: %w", err)
-	}
-	defer response.Body.Close()
-
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxTokenResponseBodyBytes+1))
-	if readErr != nil {
-		return tokenEndpointPayload{}, fmt.Errorf("providers: read token response: %w", readErr)
+		return tokenEndpointPayload{}, fmt.Errorf("providers: read token response: %w", err)
 	}
 	if int64(len(body)) > maxTokenResponseBodyBytes {
 		return tokenEndpointPayload{}, fmt.Errorf("providers: token response exceeds %d bytes", maxTokenResponseBodyBytes)
 	}
-
-	payload, parseErr := parseTokenPayload(body, response.Header.Get("Content-Type"))
-	if parseErr != nil {
-		return tokenEndpointPayload{}, fmt.Errorf("providers: decode token response: %w", parseErr)
+	payload, err := parseTokenPayload(body, response.Header.Get("Content-Type"))
+	if err != nil {
+		return tokenEndpointPayload{}, fmt.Errorf("providers: decode token response: %w", err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return tokenEndpointPayload{}, fmt.Errorf(

@@ -280,7 +280,7 @@ func (r *Resolver) fetchUserInfo(ctx context.Context, endpoint string, accessTok
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(res.Body, maxProfileResponseBytes+1))
 	if readErr != nil {
 		return nil, fmt.Errorf("identity: read profile response: %w", readErr)
@@ -445,9 +445,9 @@ func readString(value any) string {
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed)
-	case fmt.Stringer:
-		return strings.TrimSpace(typed.String())
 	case json.Number:
+		return strings.TrimSpace(typed.String())
+	case fmt.Stringer:
 		return strings.TrimSpace(typed.String())
 	case int:
 		return strconv.Itoa(typed)

@@ -117,8 +117,8 @@ func NewProcessor(verifier Verifier, ledger DeliveryLedger, handler Handler) *Pr
 }
 
 func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.InboundResult, error) {
-	if p == nil || p.Handler == nil || p.Ledger == nil {
-		return core.InboundResult{}, fmt.Errorf("webhooks: processor requires handler and ledger")
+	if err := p.validate(); err != nil {
+		return core.InboundResult{}, err
 	}
 
 	providerID := strings.TrimSpace(req.ProviderID)
@@ -154,65 +154,21 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 		return core.InboundResult{}, err
 	}
 	if !claimed {
-		return core.InboundResult{
-			Accepted:   true,
-			StatusCode: http.StatusOK,
-			Metadata: map[string]any{
-				"provider_id": providerID,
-				"delivery_id": delivery.DeliveryID,
-				"status":      delivery.Status,
-				"deduped":     true,
-			},
-		}, nil
+		return dedupedDeliveryResult(providerID, delivery), nil
 	}
 
-	if p.Burst != nil {
-		decision, burstErr := p.Burst.Allow(ctx, req)
-		if burstErr != nil {
-			return core.InboundResult{}, burstErr
-		}
-		if !decision.Allow {
-			if markErr := p.Ledger.Complete(ctx, delivery.ClaimID); markErr != nil {
-				return core.InboundResult{}, markErr
-			}
-			metadata := ensureMetadata(decision.Metadata)
-			metadata["provider_id"] = providerID
-			metadata["delivery_id"] = deliveryID
-			metadata["deduped"] = true
-			return core.InboundResult{
-				Accepted:   true,
-				StatusCode: http.StatusOK,
-				Metadata:   metadata,
-			}, nil
-		}
+	burstResult, handled, err := p.applyBurstPolicy(ctx, req, delivery, providerID, deliveryID)
+	if err != nil || handled {
+		return burstResult, err
 	}
 
 	result, err := p.Handler.Handle(ctx, req)
 	if err != nil {
-		nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
-		if failErr := p.Ledger.Fail(ctx, delivery.ClaimID, err, nextAttemptAt, p.maxAttempts()); failErr != nil {
-			return core.InboundResult{}, errors.Join(
-				err,
-				fmt.Errorf("webhooks: mark delivery failed: %w", failErr),
-			)
-		}
-		return core.InboundResult{}, err
+		return core.InboundResult{}, p.failDelivery(ctx, delivery, err)
 	}
 
-	retryableServerFailure := result.StatusCode >= http.StatusInternalServerError &&
-		(!result.Accepted || !p.AllowAcceptedServerErrors)
-	if !result.Accepted || retryableServerFailure {
-		retryErr := fmt.Errorf("webhooks: delivery handler returned retryable status %d", result.StatusCode)
-		nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
-		if failErr := p.Ledger.Fail(ctx, delivery.ClaimID, retryErr, nextAttemptAt, p.maxAttempts()); failErr != nil {
-			return result, errors.Join(
-				retryErr,
-				fmt.Errorf("webhooks: mark delivery failed: %w", failErr),
-			)
-		}
-		if !result.Accepted || retryableServerFailure {
-			return result, retryErr
-		}
+	if retryErr := p.retryableResultError(result); retryErr != nil {
+		return result, p.failDelivery(ctx, delivery, retryErr)
 	}
 
 	if err := p.Ledger.Complete(ctx, delivery.ClaimID); err != nil {
@@ -222,6 +178,73 @@ func (p *Processor) Process(ctx context.Context, req core.InboundRequest) (core.
 	result.Metadata["provider_id"] = providerID
 	result.Metadata["delivery_id"] = deliveryID
 	return result, nil
+}
+
+func (p *Processor) validate() error {
+	if p == nil {
+		return fmt.Errorf("webhooks: processor requires handler and ledger")
+	}
+	if p.Handler == nil || p.Ledger == nil {
+		return fmt.Errorf("webhooks: processor requires handler and ledger")
+	}
+	return nil
+}
+
+func dedupedDeliveryResult(providerID string, delivery DeliveryRecord) core.InboundResult {
+	return core.InboundResult{
+		Accepted:   true,
+		StatusCode: http.StatusOK,
+		Metadata: map[string]any{
+			"provider_id": providerID,
+			"delivery_id": delivery.DeliveryID,
+			"status":      delivery.Status,
+			"deduped":     true,
+		},
+	}
+}
+
+func (p *Processor) applyBurstPolicy(
+	ctx context.Context,
+	req core.InboundRequest,
+	delivery DeliveryRecord,
+	providerID string,
+	deliveryID string,
+) (core.InboundResult, bool, error) {
+	if p.Burst == nil {
+		return core.InboundResult{}, false, nil
+	}
+	decision, err := p.Burst.Allow(ctx, req)
+	if err != nil {
+		return core.InboundResult{}, false, err
+	}
+	if decision.Allow {
+		return core.InboundResult{}, false, nil
+	}
+	if err := p.Ledger.Complete(ctx, delivery.ClaimID); err != nil {
+		return core.InboundResult{}, false, err
+	}
+	metadata := ensureMetadata(decision.Metadata)
+	metadata["provider_id"] = providerID
+	metadata["delivery_id"] = deliveryID
+	metadata["deduped"] = true
+	return core.InboundResult{Accepted: true, StatusCode: http.StatusOK, Metadata: metadata}, true, nil
+}
+
+func (p *Processor) failDelivery(ctx context.Context, delivery DeliveryRecord, failure error) error {
+	nextAttemptAt := p.now().Add(p.retryPolicy().NextDelay(delivery.Attempts))
+	if err := p.Ledger.Fail(ctx, delivery.ClaimID, failure, nextAttemptAt, p.maxAttempts()); err != nil {
+		return errors.Join(failure, fmt.Errorf("webhooks: mark delivery failed: %w", err))
+	}
+	return failure
+}
+
+func (p *Processor) retryableResultError(result core.InboundResult) error {
+	retryableServerFailure := result.StatusCode >= http.StatusInternalServerError &&
+		(!result.Accepted || !p.AllowAcceptedServerErrors)
+	if result.Accepted && !retryableServerFailure {
+		return nil
+	}
+	return fmt.Errorf("webhooks: delivery handler returned retryable status %d", result.StatusCode)
 }
 
 func DefaultDeliveryIDExtractor(req core.InboundRequest) (string, error) {

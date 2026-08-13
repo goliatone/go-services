@@ -83,8 +83,8 @@ func TestRuntimeCompatibility_InboundCommandInteractionDispatchThroughWrappers(t
 	}
 	defer capabilitySub.Unsubscribe()
 
-	if err := adapter.Initialize(); err != nil {
-		t.Fatalf("initialize adapter: %v", err)
+	if testErr := adapter.Initialize(); testErr != nil {
+		t.Fatalf("initialize adapter: %v", testErr)
 	}
 
 	dispatcher := inbound.NewDispatcher(nil, inbound.NewInMemoryClaimStore())
@@ -112,11 +112,11 @@ func TestRuntimeCompatibility_InboundCommandInteractionDispatchThroughWrappers(t
 			})
 		},
 	}
-	if err := dispatcher.Register(commandHandler); err != nil {
-		t.Fatalf("register command inbound handler: %v", err)
+	if testErr := dispatcher.Register(commandHandler); testErr != nil {
+		t.Fatalf("register command inbound handler: %v", testErr)
 	}
-	if err := dispatcher.Register(interactionHandler); err != nil {
-		t.Fatalf("register interaction inbound handler: %v", err)
+	if testErr := dispatcher.Register(interactionHandler); testErr != nil {
+		t.Fatalf("register interaction inbound handler: %v", testErr)
 	}
 
 	commandResult, err := dispatcher.Dispatch(context.Background(), core.InboundRequest{

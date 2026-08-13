@@ -167,7 +167,7 @@ func TestServiceEnsureCredentialFresh(t *testing.T) {
 	}
 
 	credentialStore := newMemoryCredentialStore()
-	if err := saveTestActiveCredential(ctx, credentialStore, connection.ID, ActiveCredential{
+	if testErr := saveTestActiveCredential(ctx, credentialStore, connection.ID, ActiveCredential{
 		ConnectionID:    connection.ID,
 		TokenType:       "bearer",
 		AccessToken:     "access-1",
@@ -176,8 +176,8 @@ func TestServiceEnsureCredentialFresh(t *testing.T) {
 		GrantedScopes:   []string{"repo:read"},
 		Refreshable:     true,
 		ExpiresAt:       ptrTime(now.Add(1 * time.Minute)),
-	}); err != nil {
-		t.Fatalf("seed credential: %v", err)
+	}); testErr != nil {
+		t.Fatalf("seed credential: %v", testErr)
 	}
 
 	svc, err := NewService(

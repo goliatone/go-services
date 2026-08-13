@@ -161,48 +161,65 @@ func (p *GoNotificationsProjector) Handle(ctx context.Context, event LifecycleEv
 	}
 
 	for _, recipient := range recipients {
-		recipientKey := formatRecipientKey(recipient)
-		if recipientKey == "" {
-			continue
-		}
-		idempotencyKey := buildDispatchID(projectorName, definitionCode, event, recipientKey)
-		seen, err := p.Ledger.Seen(ctx, idempotencyKey)
-		if err != nil {
+		if err := p.projectRecipient(ctx, event, definitionCode, projectorName, recipient); err != nil {
 			return err
-		}
-		if seen {
-			continue
-		}
-
-		sendErr := p.Sender.Send(ctx, NotificationSendRequest{
-			DefinitionCode: definitionCode,
-			Recipients:     []Recipient{recipient},
-			Event:          event,
-			Metadata:       copyMap(event.Metadata),
-		})
-		record := NotificationDispatchRecord{
-			EventID:        strings.TrimSpace(event.ID),
-			Projector:      projectorName,
-			DefinitionCode: definitionCode,
-			RecipientKey:   recipientKey,
-			IdempotencyKey: idempotencyKey,
-			Status:         "sent",
-			Error:          "",
-			Metadata:       copyMap(event.Metadata),
-		}
-		if sendErr != nil {
-			record.Status = "failed"
-			record.Error = sendErr.Error()
-		}
-		if err := p.Ledger.Record(ctx, record); err != nil {
-			return err
-		}
-		if sendErr != nil {
-			return sendErr
 		}
 	}
 
 	return nil
+}
+
+func (p *GoNotificationsProjector) projectRecipient(
+	ctx context.Context,
+	event LifecycleEvent,
+	definitionCode string,
+	projectorName string,
+	recipient Recipient,
+) error {
+	recipientKey := formatRecipientKey(recipient)
+	if recipientKey == "" {
+		return nil
+	}
+	idempotencyKey := buildDispatchID(projectorName, definitionCode, event, recipientKey)
+	seen, err := p.Ledger.Seen(ctx, idempotencyKey)
+	if err != nil || seen {
+		return err
+	}
+	sendErr := p.Sender.Send(ctx, NotificationSendRequest{
+		DefinitionCode: definitionCode,
+		Recipients:     []Recipient{recipient},
+		Event:          event,
+		Metadata:       copyMap(event.Metadata),
+	})
+	record := notificationDispatchRecord(event, projectorName, definitionCode, recipientKey, idempotencyKey, sendErr)
+	if err := p.Ledger.Record(ctx, record); err != nil {
+		return err
+	}
+	return sendErr
+}
+
+func notificationDispatchRecord(
+	event LifecycleEvent,
+	projectorName string,
+	definitionCode string,
+	recipientKey string,
+	idempotencyKey string,
+	sendErr error,
+) NotificationDispatchRecord {
+	record := NotificationDispatchRecord{
+		EventID:        strings.TrimSpace(event.ID),
+		Projector:      projectorName,
+		DefinitionCode: definitionCode,
+		RecipientKey:   recipientKey,
+		IdempotencyKey: idempotencyKey,
+		Status:         "sent",
+		Metadata:       copyMap(event.Metadata),
+	}
+	if sendErr != nil {
+		record.Status = "failed"
+		record.Error = sendErr.Error()
+	}
+	return record
 }
 
 func activityActor(event LifecycleEvent) string {

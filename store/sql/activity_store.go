@@ -35,12 +35,21 @@ func (s *ActivityStore) Record(ctx context.Context, entry core.ServiceActivityEn
 	if s == nil || s.repo == nil {
 		return fmt.Errorf("sqlstore: activity store is not configured")
 	}
+	record, err := activityRecord(entry)
+	if err != nil {
+		return err
+	}
+	_, err = s.repo.Create(ctx, record)
+	return err
+}
+
+func activityRecord(entry core.ServiceActivityEntry) (*activityEntryRecord, error) {
 	metadata := copyAnyMap(entry.Metadata)
 	providerID := metadataString(metadata, "provider_id")
 	scopeType := metadataString(metadata, "scope_type")
 	scopeID := metadataString(metadata, "scope_id")
 	if providerID == "" || scopeType == "" || scopeID == "" {
-		return fmt.Errorf("sqlstore: activity metadata requires provider_id, scope_type, and scope_id")
+		return nil, fmt.Errorf("sqlstore: activity metadata requires provider_id, scope_type, and scope_id")
 	}
 
 	objectType, objectID := parseObject(entry.Object)
@@ -72,6 +81,12 @@ func (s *ActivityStore) Record(ctx context.Context, entry core.ServiceActivityEn
 		Metadata:   metadata,
 		CreatedAt:  createdAt,
 	}
+	applyActivityRecordDefaults(record)
+	applyActivityRecordReferences(record, metadata)
+	return record, nil
+}
+
+func applyActivityRecordDefaults(record *activityEntryRecord) {
 	if record.Channel == "" {
 		record.Channel = core.DefaultLifecycleChannel
 	}
@@ -82,7 +97,7 @@ func (s *ActivityStore) Record(ctx context.Context, entry core.ServiceActivityEn
 		record.ObjectType = "event"
 	}
 	if record.ObjectID == "" {
-		record.ObjectID = id
+		record.ObjectID = record.ID
 	}
 	if record.Actor == "" {
 		record.Actor = "system"
@@ -90,6 +105,9 @@ func (s *ActivityStore) Record(ctx context.Context, entry core.ServiceActivityEn
 	if record.Status == "" {
 		record.Status = string(core.ServiceActivityStatusOK)
 	}
+}
+
+func applyActivityRecordReferences(record *activityEntryRecord, metadata map[string]any) {
 	if value := metadataString(metadata, "connection_id"); value != "" {
 		record.ConnectionID = &value
 	}
@@ -102,9 +120,6 @@ func (s *ActivityStore) Record(ctx context.Context, entry core.ServiceActivityEn
 	if value := metadataString(metadata, "sync_job_id"); value != "" {
 		record.SyncJobID = &value
 	}
-
-	_, err := s.repo.Create(ctx, record)
-	return err
 }
 
 func (s *ActivityStore) List(ctx context.Context, filter core.ServicesActivityFilter) (core.ServicesActivityPage, error) {
@@ -121,6 +136,32 @@ func (s *ActivityStore) List(ctx context.Context, filter core.ServicesActivityFi
 	}
 	offset := (page - 1) * perPage
 
+	selectors := activitySelectors(filter, perPage, offset)
+
+	records, total, err := s.repo.List(ctx, selectors...)
+	if err != nil {
+		return core.ServicesActivityPage{}, err
+	}
+	items := make([]core.ServiceActivityEntry, 0, len(records))
+	for _, record := range records {
+		items = append(items, activityRecordToDomain(record))
+	}
+	hasNext := offset+len(items) < total
+	nextOffset := ""
+	if hasNext {
+		nextOffset = strconv.Itoa(offset + len(items))
+	}
+	return core.ServicesActivityPage{
+		Items:      items,
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		HasNext:    hasNext,
+		NextCursor: nextOffset,
+	}, nil
+}
+
+func activitySelectors(filter core.ServicesActivityFilter, perPage, offset int) []repository.SelectCriteria {
 	selectors := []repository.SelectCriteria{
 		repository.OrderBy("created_at DESC"),
 		repository.SelectPaginate(perPage, offset),
@@ -156,32 +197,12 @@ func (s *ActivityStore) List(ctx context.Context, filter core.ServicesActivityFi
 		}
 		if len(connectionIDs) > 0 {
 			selectors = append(selectors, repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery {
-				return q.Where("?TableAlias.connection_id IN (?)", bun.In(connectionIDs))
+				return q.Where("?TableAlias.connection_id IN (?)", bun.List(connectionIDs))
 			}))
 		}
 	}
 
-	records, total, err := s.repo.List(ctx, selectors...)
-	if err != nil {
-		return core.ServicesActivityPage{}, err
-	}
-	items := make([]core.ServiceActivityEntry, 0, len(records))
-	for _, record := range records {
-		items = append(items, activityRecordToDomain(record))
-	}
-	hasNext := offset+len(items) < total
-	nextOffset := ""
-	if hasNext {
-		nextOffset = strconv.Itoa(offset + len(items))
-	}
-	return core.ServicesActivityPage{
-		Items:      items,
-		Page:       page,
-		PerPage:    perPage,
-		Total:      total,
-		HasNext:    hasNext,
-		NextCursor: nextOffset,
-	}, nil
+	return selectors
 }
 
 func (s *ActivityStore) Prune(ctx context.Context, policy core.ActivityRetentionPolicy) (int, error) {

@@ -77,169 +77,18 @@ func (s *Service) ExecuteProviderOperation(
 	var lastStatus int
 	for attempt := 1; attempt <= retry.MaxAttempts; attempt++ {
 		result.Attempts = attempt
-		transportRequest := cloneTransportRequest(resolved.transportRequest)
-
-		if resolved.rateLimitEnabled {
-			beforeErr := s.rateLimitPolicy.BeforeCall(ctx, resolved.rateLimitKey)
-			if beforeErr != nil {
-				lastErr = s.wrapProviderOperationError(
-					resolved,
-					attempt,
-					retry.MaxAttempts,
-					0,
-					beforeErr,
-					true,
-				)
-				shouldRetry, delay := s.shouldRetryProviderOperation(
-					ctx,
-					resolved.provider,
-					retry,
-					attempt,
-					beforeErr,
-					ProviderResponseMeta{},
-				)
-				if !shouldRetry {
-					return result, lastErr
-				}
-				result.Retried = true
-				if sleepErr := sleepProviderRetry(ctx, retry.Sleep, delay); sleepErr != nil {
-					return result, sleepErr
-				}
-				continue
-			}
+		outcome := s.executeProviderOperationAttempt(ctx, req.Normalize, resolved, retry, attempt)
+		if outcome.normalized {
+			result.Response = outcome.response
+			result.Meta = outcome.meta
+			lastStatus = outcome.meta.StatusCode
 		}
-
-		var signingMetadata map[string]any
-		if resolved.signer != nil && resolved.credential != nil {
-			signed, metadata, signErr := signProviderTransportRequest(
-				ctx,
-				resolved.signer,
-				transportRequest,
-				*resolved.credential,
-			)
-			if signErr != nil {
-				return result, s.wrapProviderOperationError(
-					resolved,
-					attempt,
-					retry.MaxAttempts,
-					0,
-					signErr,
-					false,
-				)
-			}
-			transportRequest = signed
-			signingMetadata = metadata
-		}
-
-		response, callErr := resolved.adapter.Do(ctx, transportRequest)
-		if callErr != nil {
-			lastErr = s.wrapProviderOperationError(
-				resolved,
-				attempt,
-				retry.MaxAttempts,
-				0,
-				callErr,
-				true,
-			)
-			shouldRetry, delay := s.shouldRetryProviderOperation(
-				ctx,
-				resolved.provider,
-				retry,
-				attempt,
-				callErr,
-				ProviderResponseMeta{},
-			)
-			if !shouldRetry {
-				return result, lastErr
-			}
-			result.Retried = true
-			if sleepErr := sleepProviderRetry(ctx, retry.Sleep, delay); sleepErr != nil {
-				return result, sleepErr
-			}
-			continue
-		}
-
-		meta, normalizeErr := normalizeProviderOperationResponse(ctx, req.Normalize, response)
-		if normalizeErr != nil {
-			return result, s.wrapProviderOperationError(
-				resolved,
-				attempt,
-				retry.MaxAttempts,
-				response.StatusCode,
-				normalizeErr,
-				false,
-			)
-		}
-		meta.Metadata = mergeProviderOperationMetadata(meta.Metadata, signingMetadata)
-		if skewHint, ok := computeSigningClockSkewHint(signingMetadata, response.Headers); ok {
-			meta.Metadata["clock_skew_hint_seconds"] = skewHint
-		}
-
-		result.Response = response
-		result.Meta = meta
-		lastStatus = meta.StatusCode
-
-		if resolved.rateLimitEnabled {
-			afterErr := s.rateLimitPolicy.AfterCall(ctx, resolved.rateLimitKey, meta)
-			if afterErr != nil {
-				lastErr = s.wrapProviderOperationError(
-					resolved,
-					attempt,
-					retry.MaxAttempts,
-					meta.StatusCode,
-					afterErr,
-					true,
-				)
-				shouldRetry, delay := s.shouldRetryProviderOperation(
-					ctx,
-					resolved.provider,
-					retry,
-					attempt,
-					afterErr,
-					meta,
-				)
-				if !shouldRetry {
-					return result, lastErr
-				}
-				result.Retried = true
-				if sleepErr := sleepProviderRetry(ctx, retry.Sleep, delay); sleepErr != nil {
-					return result, sleepErr
-				}
-				continue
-			}
-		}
-
-		shouldRetry, delay := s.shouldRetryProviderOperation(
-			ctx,
-			resolved.provider,
-			retry,
-			attempt,
-			nil,
-			meta,
-		)
-		if !shouldRetry {
-			if meta.StatusCode >= http.StatusBadRequest {
-				return result, s.wrapProviderOperationError(
-					resolved,
-					attempt,
-					retry.MaxAttempts,
-					meta.StatusCode,
-					fmt.Errorf("provider operation returned status %d", meta.StatusCode),
-					false,
-				)
-			}
-			return result, nil
+		if !outcome.retry {
+			return result, outcome.err
 		}
 		result.Retried = true
-		lastErr = s.wrapProviderOperationError(
-			resolved,
-			attempt,
-			retry.MaxAttempts,
-			meta.StatusCode,
-			fmt.Errorf("provider operation status %d marked retryable", meta.StatusCode),
-			true,
-		)
-		if sleepErr := sleepProviderRetry(ctx, retry.Sleep, delay); sleepErr != nil {
+		lastErr = outcome.err
+		if sleepErr := sleepProviderRetry(ctx, retry.Sleep, outcome.delay); sleepErr != nil {
 			return result, sleepErr
 		}
 	}
@@ -255,6 +104,138 @@ func (s *Service) ExecuteProviderOperation(
 		fmt.Errorf("provider operation exceeded retry attempts"),
 		true,
 	)
+}
+
+type providerOperationAttemptOutcome struct {
+	response   TransportResponse
+	meta       ProviderResponseMeta
+	err        error
+	delay      time.Duration
+	normalized bool
+	retry      bool
+}
+
+func (s *Service) executeProviderOperationAttempt(
+	ctx context.Context,
+	normalize ProviderResponseNormalizer,
+	resolved resolvedProviderOperationRequest,
+	retry ProviderOperationRetryPolicy,
+	attempt int,
+) providerOperationAttemptOutcome {
+	if err := s.beforeProviderOperationCall(ctx, resolved); err != nil {
+		return s.providerOperationFailure(ctx, resolved, retry, attempt, err, ProviderResponseMeta{})
+	}
+	request, signingMetadata, err := prepareProviderOperationRequest(ctx, resolved)
+	if err != nil {
+		return providerOperationAttemptOutcome{err: s.wrapProviderOperationError(
+			resolved, attempt, retry.MaxAttempts, 0, err, false,
+		)}
+	}
+	response, err := resolved.adapter.Do(ctx, request)
+	if err != nil {
+		return s.providerOperationFailure(ctx, resolved, retry, attempt, err, ProviderResponseMeta{})
+	}
+	meta, err := normalizeProviderOperationResponse(ctx, normalize, response)
+	if err != nil {
+		return providerOperationAttemptOutcome{err: s.wrapProviderOperationError(
+			resolved, attempt, retry.MaxAttempts, response.StatusCode, err, false,
+		)}
+	}
+	meta.Metadata = mergeProviderOperationMetadata(meta.Metadata, signingMetadata)
+	if skewHint, ok := computeSigningClockSkewHint(signingMetadata, response.Headers); ok {
+		meta.Metadata["clock_skew_hint_seconds"] = skewHint
+	}
+	if err := s.afterProviderOperationCall(ctx, resolved, meta); err != nil {
+		outcome := s.providerOperationFailure(ctx, resolved, retry, attempt, err, meta)
+		outcome.response, outcome.meta, outcome.normalized = response, meta, true
+		return outcome
+	}
+	return s.providerOperationResponseOutcome(ctx, resolved, retry, attempt, response, meta)
+}
+
+func (s *Service) beforeProviderOperationCall(ctx context.Context, resolved resolvedProviderOperationRequest) error {
+	if !resolved.rateLimitEnabled {
+		return nil
+	}
+	return s.rateLimitPolicy.BeforeCall(ctx, resolved.rateLimitKey)
+}
+
+func (s *Service) afterProviderOperationCall(
+	ctx context.Context,
+	resolved resolvedProviderOperationRequest,
+	meta ProviderResponseMeta,
+) error {
+	if !resolved.rateLimitEnabled {
+		return nil
+	}
+	return s.rateLimitPolicy.AfterCall(ctx, resolved.rateLimitKey, meta)
+}
+
+func prepareProviderOperationRequest(
+	ctx context.Context,
+	resolved resolvedProviderOperationRequest,
+) (TransportRequest, map[string]any, error) {
+	request := cloneTransportRequest(resolved.transportRequest)
+	if resolved.signer == nil || resolved.credential == nil {
+		return request, nil, nil
+	}
+	return signProviderTransportRequest(ctx, resolved.signer, request, *resolved.credential)
+}
+
+func (s *Service) providerOperationFailure(
+	ctx context.Context,
+	resolved resolvedProviderOperationRequest,
+	retry ProviderOperationRetryPolicy,
+	attempt int,
+	failure error,
+	meta ProviderResponseMeta,
+) providerOperationAttemptOutcome {
+	shouldRetry, delay := s.shouldRetryProviderOperation(
+		ctx, resolved.provider, retry, attempt, failure, meta,
+	)
+	return providerOperationAttemptOutcome{
+		err: s.wrapProviderOperationError(
+			resolved, attempt, retry.MaxAttempts, meta.StatusCode, failure, true,
+		),
+		delay: delay,
+		retry: shouldRetry,
+	}
+}
+
+func (s *Service) providerOperationResponseOutcome(
+	ctx context.Context,
+	resolved resolvedProviderOperationRequest,
+	retry ProviderOperationRetryPolicy,
+	attempt int,
+	response TransportResponse,
+	meta ProviderResponseMeta,
+) providerOperationAttemptOutcome {
+	shouldRetry, delay := s.shouldRetryProviderOperation(ctx, resolved.provider, retry, attempt, nil, meta)
+	outcome := providerOperationAttemptOutcome{response: response, meta: meta, normalized: true}
+	if shouldRetry {
+		outcome.retry = true
+		outcome.delay = delay
+		outcome.err = s.wrapProviderOperationError(
+			resolved,
+			attempt,
+			retry.MaxAttempts,
+			meta.StatusCode,
+			fmt.Errorf("provider operation status %d marked retryable", meta.StatusCode),
+			true,
+		)
+		return outcome
+	}
+	if meta.StatusCode >= http.StatusBadRequest {
+		outcome.err = s.wrapProviderOperationError(
+			resolved,
+			attempt,
+			retry.MaxAttempts,
+			meta.StatusCode,
+			fmt.Errorf("provider operation returned status %d", meta.StatusCode),
+			false,
+		)
+	}
+	return outcome
 }
 
 type resolvedProviderOperationRequest struct {
@@ -276,85 +257,138 @@ func (s *Service) resolveProviderOperationRequest(
 	ctx context.Context,
 	req ProviderOperationRequest,
 ) (resolvedProviderOperationRequest, error) {
-	providerID := strings.TrimSpace(req.ProviderID)
-	connectionID := strings.TrimSpace(req.ConnectionID)
-
-	var connection Connection
-	if connectionID != "" && s.connectionStore != nil {
-		loaded, err := s.connectionStore.Get(ctx, connectionID)
-		if err != nil {
-			return resolvedProviderOperationRequest{}, s.mapError(err)
-		}
-		connection = loaded
-		if providerID == "" {
-			providerID = strings.TrimSpace(connection.ProviderID)
-		}
-		if !strings.EqualFold(providerID, connection.ProviderID) {
-			return resolvedProviderOperationRequest{}, s.mapError(
-				fmt.Errorf(
-					"core: provider mismatch for connection %q: got %q want %q",
-					connectionID,
-					providerID,
-					connection.ProviderID,
-				),
-			)
-		}
-	}
-	if providerID == "" {
-		return resolvedProviderOperationRequest{}, s.mapError(fmt.Errorf("core: provider id is required"))
-	}
-
-	provider, err := s.resolveProvider(providerID)
+	identity, err := s.resolveProviderOperationIdentity(ctx, req)
 	if err != nil {
 		return resolvedProviderOperationRequest{}, err
 	}
-
-	strategy := s.resolveAuthStrategy(provider)
-	authStrategy := AuthKind("")
-	if strategy != nil {
-		authStrategy = normalizeAuthKind(strategy.Type())
-	}
-
 	adapter, transportKind, err := s.resolveProviderOperationAdapter(req)
 	if err != nil {
 		return resolvedProviderOperationRequest{}, s.mapError(err)
 	}
-
-	transportRequest := cloneTransportRequest(req.TransportRequest)
-	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
-	if idempotencyKey == "" {
-		idempotencyKey = strings.TrimSpace(transportRequest.Idempotency)
-	}
-	if idempotencyKey == "" {
-		idempotencyKey = generateIdempotencyKey(providerID, connectionID, req.Operation, transportRequest)
-	}
-	transportRequest.Idempotency = idempotencyKey
-	transportRequest.Headers = copyStringMap(transportRequest.Headers)
-	if _, exists := transportRequest.Headers["Idempotency-Key"]; !exists {
-		transportRequest.Headers["Idempotency-Key"] = idempotencyKey
-	}
-
-	credential, err := s.resolveProviderOperationCredential(ctx, req, connectionID)
+	transportRequest, idempotencyKey := prepareIdempotentTransportRequest(
+		req, identity.providerID, identity.connectionID,
+	)
+	credential, err := s.resolveProviderOperationCredential(ctx, req, identity.connectionID)
 	if err != nil {
 		return resolvedProviderOperationRequest{}, s.mapError(err)
 	}
-	signer := s.resolveSignerForCredential(provider, credential)
+	operation := resolveProviderOperationName(req.Operation, transportRequest.Method, transportKind)
+	rateLimitKey, rateLimitEnabled := s.resolveProviderOperationRateLimit(req, identity, operation)
 
-	operation := strings.TrimSpace(req.Operation)
-	if operation == "" {
-		method := strings.TrimSpace(strings.ToUpper(transportRequest.Method))
-		if method == "" {
-			method = http.MethodGet
-		}
-		operation = normalizeOperation(method + "_" + transportKind)
+	return resolvedProviderOperationRequest{
+		provider:         identity.provider,
+		adapter:          adapter,
+		signer:           s.resolveSignerForCredential(identity.provider, credential),
+		credential:       credential,
+		connectionID:     identity.connectionID,
+		operation:        operation,
+		transportKind:    transportKind,
+		authStrategy:     resolveProviderOperationAuthStrategy(s.resolveAuthStrategy(identity.provider)),
+		transportRequest: transportRequest,
+		idempotencyKey:   idempotencyKey,
+		rateLimitKey:     rateLimitKey,
+		rateLimitEnabled: rateLimitEnabled,
+	}, nil
+}
+
+type providerOperationIdentity struct {
+	providerID   string
+	connectionID string
+	connection   Connection
+	provider     Provider
+}
+
+func (s *Service) resolveProviderOperationIdentity(
+	ctx context.Context,
+	req ProviderOperationRequest,
+) (providerOperationIdentity, error) {
+	identity := providerOperationIdentity{
+		providerID:   strings.TrimSpace(req.ProviderID),
+		connectionID: strings.TrimSpace(req.ConnectionID),
 	}
+	if identity.connectionID != "" && s.connectionStore != nil {
+		connection, err := s.connectionStore.Get(ctx, identity.connectionID)
+		if err != nil {
+			return providerOperationIdentity{}, s.mapError(err)
+		}
+		identity.connection = connection
+		if identity.providerID == "" {
+			identity.providerID = strings.TrimSpace(connection.ProviderID)
+		}
+		if !strings.EqualFold(identity.providerID, connection.ProviderID) {
+			return providerOperationIdentity{}, s.mapError(fmt.Errorf(
+				"core: provider mismatch for connection %q: got %q want %q",
+				identity.connectionID,
+				identity.providerID,
+				connection.ProviderID,
+			))
+		}
+	}
+	if identity.providerID == "" {
+		return providerOperationIdentity{}, s.mapError(fmt.Errorf("core: provider id is required"))
+	}
+	provider, err := s.resolveProvider(identity.providerID)
+	if err != nil {
+		return providerOperationIdentity{}, err
+	}
+	identity.provider = provider
+	return identity, nil
+}
 
+func resolveProviderOperationAuthStrategy(strategy AuthStrategy) AuthKind {
+	if strategy == nil {
+		return ""
+	}
+	return normalizeAuthKind(strategy.Type())
+}
+
+func prepareIdempotentTransportRequest(
+	req ProviderOperationRequest,
+	providerID string,
+	connectionID string,
+) (TransportRequest, string) {
+	request := cloneTransportRequest(req.TransportRequest)
+	key := strings.TrimSpace(req.IdempotencyKey)
+	if key == "" {
+		key = strings.TrimSpace(request.Idempotency)
+	}
+	if key == "" {
+		key = generateIdempotencyKey(providerID, connectionID, req.Operation, request)
+	}
+	request.Idempotency = key
+	request.Headers = copyStringMap(request.Headers)
+	if _, exists := request.Headers["Idempotency-Key"]; !exists {
+		request.Headers["Idempotency-Key"] = key
+	}
+	return request, key
+}
+
+func resolveProviderOperationName(operation, method, transportKind string) string {
+	operation = strings.TrimSpace(operation)
+	if operation != "" {
+		return operation
+	}
+	method = strings.TrimSpace(strings.ToUpper(method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	return normalizeOperation(method + "_" + transportKind)
+}
+
+func (s *Service) resolveProviderOperationRateLimit(
+	req ProviderOperationRequest,
+	identity providerOperationIdentity,
+	operation string,
+) (RateLimitKey, bool) {
 	scope := ScopeRef{
 		Type: strings.TrimSpace(strings.ToLower(req.Scope.Type)),
 		ID:   strings.TrimSpace(req.Scope.ID),
 	}
-	if scope.Type == "" && scope.ID == "" && connection.ID != "" {
-		scope = ScopeRef{Type: connection.ScopeType, ID: connection.ScopeID}
+	if scope.Type == "" && scope.ID == "" && identity.connection.ID != "" {
+		scope = ScopeRef{Type: identity.connection.ScopeType, ID: identity.connection.ScopeID}
+	}
+	if s.rateLimitPolicy == nil || scope.Type == "" || scope.ID == "" || scope.Validate() != nil {
+		return RateLimitKey{}, false
 	}
 	bucketKey := strings.TrimSpace(strings.ToLower(req.BucketKey))
 	if bucketKey == "" {
@@ -363,35 +397,12 @@ func (s *Service) resolveProviderOperationRequest(
 	if bucketKey == "" {
 		bucketKey = "default"
 	}
-
-	rateLimitEnabled := false
-	rateLimitKey := RateLimitKey{}
-	if s.rateLimitPolicy != nil && scope.Type != "" && scope.ID != "" {
-		if err := scope.Validate(); err == nil {
-			rateLimitEnabled = true
-			rateLimitKey = RateLimitKey{
-				ProviderID: providerID,
-				ScopeType:  scope.Type,
-				ScopeID:    scope.ID,
-				BucketKey:  bucketKey,
-			}
-		}
-	}
-
-	return resolvedProviderOperationRequest{
-		provider:         provider,
-		adapter:          adapter,
-		signer:           signer,
-		credential:       credential,
-		connectionID:     connectionID,
-		operation:        operation,
-		transportKind:    transportKind,
-		authStrategy:     authStrategy,
-		transportRequest: transportRequest,
-		idempotencyKey:   idempotencyKey,
-		rateLimitKey:     rateLimitKey,
-		rateLimitEnabled: rateLimitEnabled,
-	}, nil
+	return RateLimitKey{
+		ProviderID: identity.providerID,
+		ScopeType:  scope.Type,
+		ScopeID:    scope.ID,
+		BucketKey:  bucketKey,
+	}, true
 }
 
 func (s *Service) resolveProviderOperationAdapter(
@@ -644,8 +655,8 @@ func signProviderTransportRequest(
 	if err != nil {
 		return TransportRequest{}, nil, err
 	}
-	if err := signer.Sign(ctx, httpRequest, credential); err != nil {
-		return TransportRequest{}, nil, err
+	if signErr := signer.Sign(ctx, httpRequest, credential); signErr != nil {
+		return TransportRequest{}, nil, signErr
 	}
 	signed, err := httpToTransportRequest(httpRequest, request)
 	if err != nil {

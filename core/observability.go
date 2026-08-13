@@ -157,16 +157,7 @@ func enrichErrorFields(fields map[string]any, err error) {
 		fields["error_location"] = loc.String()
 	}
 
-	requestID := strings.TrimSpace(richErr.RequestID)
-	if requestID == "" {
-		requestID = firstNonEmptyString(fields, "request_id", "trace_id")
-		if requestID == "" && len(richErr.Metadata) > 0 {
-			requestID = firstNonEmptyAny(richErr.Metadata, "request_id", "trace_id")
-		}
-		if requestID != "" {
-			richErr.WithRequestID(requestID)
-		}
-	}
+	requestID := errorRequestID(fields, richErr)
 	if requestID != "" {
 		fields["request_id"] = requestID
 	}
@@ -175,13 +166,30 @@ func enrichErrorFields(fields map[string]any, err error) {
 		fields["error_validation_errors"] = validationErrors
 	}
 
-	if len(richErr.Metadata) > 0 {
-		fields["error_metadata"] = RedactSensitiveMap(richErr.Metadata)
-		if _, ok := fields["trace_id"]; !ok {
-			if traceID := firstNonEmptyAny(richErr.Metadata, "trace_id"); traceID != "" {
-				fields["trace_id"] = traceID
-			}
-		}
+	enrichErrorMetadata(fields, richErr.Metadata)
+}
+
+func errorRequestID(fields map[string]any, richErr *goerrors.Error) string {
+	requestID := strings.TrimSpace(richErr.RequestID)
+	if requestID == "" {
+		requestID = firstNonEmptyString(fields, "request_id", "trace_id")
+	}
+	if requestID == "" {
+		requestID = firstNonEmptyAny(richErr.Metadata, "request_id", "trace_id")
+	}
+	return requestID
+}
+
+func enrichErrorMetadata(fields map[string]any, metadata map[string]any) {
+	if len(metadata) == 0 {
+		return
+	}
+	fields["error_metadata"] = RedactSensitiveMap(metadata)
+	if _, ok := fields["trace_id"]; ok {
+		return
+	}
+	if traceID := firstNonEmptyAny(metadata, "trace_id"); traceID != "" {
+		fields["trace_id"] = traceID
 	}
 }
 

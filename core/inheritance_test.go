@@ -19,14 +19,14 @@ func TestInvokeCapability_StrictIsolationByDefault(t *testing.T) {
 	}
 
 	registry := NewProviderRegistry()
-	if err := registry.Register(testProvider{
+	if testErr := registry.Register(testProvider{
 		id: "github",
 		capabilities: []CapabilityDescriptor{{
 			Name:           "repo.read",
 			DeniedBehavior: CapabilityDeniedBehaviorBlock,
 		}},
-	}); err != nil {
-		t.Fatalf("register provider: %v", err)
+	}); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},
@@ -118,14 +118,14 @@ func TestInvokeCapability_StrictIsolationFailsClosedWhenScopeIsAmbiguous(t *test
 	}
 
 	registry := NewProviderRegistry()
-	if err := registry.Register(testProvider{
+	if testErr := registry.Register(testProvider{
 		id: "github",
 		capabilities: []CapabilityDescriptor{{
 			Name:           "repo.read",
 			DeniedBehavior: CapabilityDeniedBehaviorBlock,
 		}},
-	}); err != nil {
-		t.Fatalf("register provider: %v", err)
+	}); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},
@@ -175,14 +175,14 @@ func TestInvokeCapability_UsesExplicitConnectionIDWhenScopeIsAmbiguous(t *testin
 	}
 
 	registry := NewProviderRegistry()
-	if err := registry.Register(testProvider{
+	if testErr := registry.Register(testProvider{
 		id: "github",
 		capabilities: []CapabilityDescriptor{{
 			Name:           "repo.read",
 			DeniedBehavior: CapabilityDeniedBehaviorBlock,
 		}},
-	}); err != nil {
-		t.Fatalf("register provider: %v", err)
+	}); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},

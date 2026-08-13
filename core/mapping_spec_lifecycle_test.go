@@ -267,23 +267,23 @@ func TestMappingSpecLifecycleUpdateDraftRejectsPublishedVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create first draft: %v", err)
 	}
-	if _, err := svc.MarkValidated(
+	if _, testErr := svc.MarkValidated(
 		context.Background(),
 		"hubspot",
 		ScopeRef{Type: "org", ID: "org_123"},
 		"spec_contacts",
 		1,
-	); err != nil {
-		t.Fatalf("mark validated: %v", err)
+	); testErr != nil {
+		t.Fatalf("mark validated: %v", testErr)
 	}
-	if _, err := svc.Publish(
+	if _, testErr := svc.Publish(
 		context.Background(),
 		"hubspot",
 		ScopeRef{Type: "org", ID: "org_123"},
 		"spec_contacts",
 		1,
-	); err != nil {
-		t.Fatalf("publish: %v", err)
+	); testErr != nil {
+		t.Fatalf("publish: %v", testErr)
 	}
 
 	_, err = svc.UpdateDraft(context.Background(), MappingSpec{
@@ -365,15 +365,15 @@ func TestMappingSpecLifecycleMarkValidatedFailsClosedOnScopeMismatch(t *testing.
 		t.Fatalf("new mapping spec lifecycle: %v", err)
 	}
 
-	if _, err := svc.CreateDraft(context.Background(), MappingSpec{
+	if _, testErr := svc.CreateDraft(context.Background(), MappingSpec{
 		SpecID:       "spec_contacts",
 		ProviderID:   "hubspot",
 		Scope:        ScopeRef{Type: "org", ID: "org_123"},
 		Name:         "contacts",
 		SourceObject: "contacts",
 		TargetModel:  "crm_contacts",
-	}); err != nil {
-		t.Fatalf("create draft: %v", err)
+	}); testErr != nil {
+		t.Fatalf("create draft: %v", testErr)
 	}
 
 	_, err = svc.MarkValidated(

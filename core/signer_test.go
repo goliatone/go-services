@@ -22,13 +22,13 @@ func TestSignRequest_UsesDefaultBearerSigner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt seed credential: %v", err)
 	}
-	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
+	if _, testErr := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
 		ConnectionID:     "conn_1",
 		EncryptedPayload: encryptedToken,
 		TokenType:        "bearer",
 		Status:           CredentialStatusActive,
-	}); err != nil {
-		t.Fatalf("seed credential: %v", err)
+	}); testErr != nil {
+		t.Fatalf("seed credential: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},
@@ -114,9 +114,7 @@ func TestSignRequest_RejectsProviderMismatchForConnection(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	err = svc.SignRequest(ctx, "slack", connection.ID, req, &ActiveCredential{AccessToken: "token"})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider mismatch") {
-		t.Fatalf("expected provider mismatch error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "provider mismatch")
 }
 
 func TestAPIKeySigner_SetsHeaderAndQuery(t *testing.T) {
@@ -166,8 +164,8 @@ func TestHMACSigner_SetsSignatureHeadersAndPreservesBody(t *testing.T) {
 			return time.Unix(1739443200, 0).UTC()
 		},
 	}
-	if err := signer.Sign(context.Background(), req, ActiveCredential{AccessToken: "secret"}); err != nil {
-		t.Fatalf("sign: %v", err)
+	if testErr := signer.Sign(context.Background(), req, ActiveCredential{AccessToken: "secret"}); testErr != nil {
+		t.Fatalf("sign: %v", testErr)
 	}
 	if req.Header.Get("X-Timestamp") == "" {
 		t.Fatalf("expected timestamp header")

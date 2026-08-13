@@ -20,8 +20,8 @@ func TestProviderOperationRuntime_UsesMandatorySigV4SignerWithHostAwareRegion(t 
 	}
 
 	registry := core.NewProviderRegistry()
-	if err := registry.Register(provider); err != nil {
-		t.Fatalf("register provider: %v", err)
+	if testErr := registry.Register(provider); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	adapter := &amazonRecordingAdapter{response: core.TransportResponse{StatusCode: 200}}

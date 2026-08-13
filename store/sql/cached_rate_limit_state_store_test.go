@@ -102,21 +102,21 @@ func TestCachedRateLimitStateStore_Upsert_InvalidatesCachedKey(t *testing.T) {
 	}
 
 	key := core.RateLimitKey{ProviderID: "github", ScopeType: "org", ScopeID: "org_cache_2", BucketKey: "api"}
-	if _, err := store.Get(context.Background(), key); err != nil {
-		t.Fatalf("prime cache with get: %v", err)
+	if _, testErr := store.Get(context.Background(), key); testErr != nil {
+		t.Fatalf("prime cache with get: %v", testErr)
 	}
 	if base.getCalls != 1 {
 		t.Fatalf("expected one base read after cache prime, got %d", base.getCalls)
 	}
 
-	if err := store.Upsert(context.Background(), ratelimit.State{
+	if testErr := store.Upsert(context.Background(), ratelimit.State{
 		Key:       key,
 		Limit:     5000,
 		Remaining: 4500,
 		UpdatedAt: time.Now().UTC(),
 		Metadata:  map[string]any{"updated": true},
-	}); err != nil {
-		t.Fatalf("upsert through cached store: %v", err)
+	}); testErr != nil {
+		t.Fatalf("upsert through cached store: %v", testErr)
 	}
 	if base.upsertCalls != 1 {
 		t.Fatalf("expected base upsert call count=1, got %d", base.upsertCalls)
@@ -167,11 +167,11 @@ func TestCachedRateLimitStateStore_KeyNormalizationUsesSingleCacheEntry(t *testi
 		BucketKey:  "api",
 	}
 
-	if _, err := store.Get(context.Background(), first); err != nil {
-		t.Fatalf("first normalized get: %v", err)
+	if _, testErr := store.Get(context.Background(), first); testErr != nil {
+		t.Fatalf("first normalized get: %v", testErr)
 	}
-	if _, err := store.Get(context.Background(), second); err != nil {
-		t.Fatalf("second normalized get: %v", err)
+	if _, testErr := store.Get(context.Background(), second); testErr != nil {
+		t.Fatalf("second normalized get: %v", testErr)
 	}
 	if base.getCalls != 1 {
 		t.Fatalf("expected normalized keys to share cache entry, base get calls=%d", base.getCalls)

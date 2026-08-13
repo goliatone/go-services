@@ -72,82 +72,41 @@ func TestSyncPlannerServicePlanSyncRunDeterministicOutput(t *testing.T) {
 	}
 }
 
-func TestSyncPlannerServicePlanSyncRunFromCheckpointValidation(t *testing.T) {
-	checkpointStore := newInMemorySyncCheckpointStore()
-	other, err := checkpointStore.Save(context.Background(), SyncCheckpoint{
-		ProviderID:    "hubspot",
-		Scope:         ScopeRef{Type: "org", ID: "org_123"},
-		ConnectionID:  "conn_1",
-		SyncBindingID: "sync_binding_other",
-		Direction:     SyncDirectionImport,
-		Cursor:        "cursor_other",
-		Sequence:      1,
-	})
-	if err != nil {
-		t.Fatalf("save checkpoint: %v", err)
+func TestSyncPlannerServicePlanSyncRunRejectsMismatchedCheckpoint(t *testing.T) {
+	tests := []struct {
+		name              string
+		checkpointScope   ScopeRef
+		checkpointBinding string
+	}{
+		{name: "binding", checkpointScope: ScopeRef{Type: "org", ID: "org_123"}, checkpointBinding: "sync_binding_other"},
+		{name: "scope", checkpointScope: ScopeRef{Type: "org", ID: "org_999"}, checkpointBinding: "sync_binding_1"},
 	}
-
-	planner, err := NewSyncPlannerService(checkpointStore)
-	if err != nil {
-		t.Fatalf("new sync planner service: %v", err)
-	}
-
-	_, err = planner.PlanSyncRun(context.Background(), PlanSyncRunRequest{
-		Binding: SyncBinding{
-			ID:            "sync_binding_1",
-			ProviderID:    "hubspot",
-			Scope:         ScopeRef{Type: "org", ID: "org_123"},
-			ConnectionID:  "conn_1",
-			MappingSpecID: "spec_1",
-			SourceObject:  "contacts",
-			TargetModel:   "crm_contacts",
-			Direction:     SyncDirectionImport,
-			Status:        SyncBindingStatusActive,
-		},
-		Mode:             SyncRunModeApply,
-		FromCheckpointID: other.ID,
-	})
-	if err == nil {
-		t.Fatalf("expected planning to fail when from-checkpoint binding differs")
-	}
-}
-
-func TestSyncPlannerServicePlanSyncRunFailsClosedOnCheckpointScopeMismatch(t *testing.T) {
-	checkpointStore := newInMemorySyncCheckpointStore()
-	other, err := checkpointStore.Save(context.Background(), SyncCheckpoint{
-		ProviderID:    "hubspot",
-		Scope:         ScopeRef{Type: "org", ID: "org_999"},
-		ConnectionID:  "conn_1",
-		SyncBindingID: "sync_binding_1",
-		Direction:     SyncDirectionImport,
-		Cursor:        "cursor_other_scope",
-		Sequence:      1,
-	})
-	if err != nil {
-		t.Fatalf("save checkpoint: %v", err)
-	}
-
-	planner, err := NewSyncPlannerService(checkpointStore)
-	if err != nil {
-		t.Fatalf("new sync planner service: %v", err)
-	}
-
-	_, err = planner.PlanSyncRun(context.Background(), PlanSyncRunRequest{
-		Binding: SyncBinding{
-			ID:            "sync_binding_1",
-			ProviderID:    "hubspot",
-			Scope:         ScopeRef{Type: "org", ID: "org_123"},
-			ConnectionID:  "conn_1",
-			MappingSpecID: "spec_1",
-			SourceObject:  "contacts",
-			TargetModel:   "crm_contacts",
-			Direction:     SyncDirectionImport,
-			Status:        SyncBindingStatusActive,
-		},
-		Mode:             SyncRunModeApply,
-		FromCheckpointID: other.ID,
-	})
-	if err == nil {
-		t.Fatalf("expected planning to fail when from-checkpoint scope differs")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			checkpointStore := newInMemorySyncCheckpointStore()
+			other, testErr := checkpointStore.Save(context.Background(), SyncCheckpoint{
+				ProviderID: "hubspot", Scope: tc.checkpointScope, ConnectionID: "conn_1",
+				SyncBindingID: tc.checkpointBinding, Direction: SyncDirectionImport,
+				Cursor: "cursor_other", Sequence: 1,
+			})
+			if testErr != nil {
+				t.Fatalf("save checkpoint: %v", testErr)
+			}
+			planner, testErr := NewSyncPlannerService(checkpointStore)
+			if testErr != nil {
+				t.Fatalf("new sync planner service: %v", testErr)
+			}
+			_, testErr = planner.PlanSyncRun(context.Background(), PlanSyncRunRequest{
+				Binding: SyncBinding{
+					ID: "sync_binding_1", ProviderID: "hubspot", Scope: ScopeRef{Type: "org", ID: "org_123"},
+					ConnectionID: "conn_1", MappingSpecID: "spec_1", SourceObject: "contacts",
+					TargetModel: "crm_contacts", Direction: SyncDirectionImport, Status: SyncBindingStatusActive,
+				},
+				Mode: SyncRunModeApply, FromCheckpointID: other.ID,
+			})
+			if testErr == nil {
+				t.Fatalf("expected planning to reject mismatched checkpoint")
+			}
+		})
 	}
 }

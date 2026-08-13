@@ -59,9 +59,7 @@ func TestConnectAndCompleteCallback_ConsumesOAuthState(t *testing.T) {
 		State:       connectResp.State,
 		RedirectURI: "https://app.example/callback",
 	})
-	if err == nil || !strings.Contains(err.Error(), "oauth state not found") {
-		t.Fatalf("expected consumed state error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorOAuthStateInvalid, "oauth state not found")
 }
 
 func TestConnect_ResolvesCallbackURLWhenRedirectURIMissing(t *testing.T) {
@@ -176,9 +174,7 @@ func TestConnect_ReturnsErrorWhenCallbackURLResolverFails(t *testing.T) {
 		ProviderID: "github",
 		Scope:      ScopeRef{Type: "user", ID: "u_resolver_err"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "resolve boom") {
-		t.Fatalf("expected callback resolver error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorInternal, "resolve boom")
 }
 
 func TestStartReconsent_ResolvesCallbackURLWhenRedirectURIMissing(t *testing.T) {
@@ -287,9 +283,7 @@ func TestCompleteCallback_RejectsMismatchedStateContextBeforeProviderCall(t *tes
 		State:       connectResp.State,
 		RedirectURI: "https://app.example/callback",
 	})
-	if err == nil || !strings.Contains(err.Error(), "state scope mismatch") {
-		t.Fatalf("expected scope mismatch error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorOAuthStateInvalid, "state scope mismatch")
 	if provider.completeCalls != 0 {
 		t.Fatalf("expected provider callback not to be called on state mismatch")
 	}
@@ -344,9 +338,7 @@ func TestCompleteCallback_RequiresSecretProviderForCredentialPersistence(t *test
 		State:       connectResp.State,
 		RedirectURI: "https://app.example/callback",
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "secret provider is required") {
-		t.Fatalf("expected secret provider enforcement error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "secret provider is required")
 }
 
 func TestCompleteCallback_UsesStateContextWhenCallbackOmitsRedirectAndMetadata(t *testing.T) {
@@ -439,9 +431,7 @@ func TestCompleteCallback_RedirectValidationCannotBeRelaxedByMetadata(t *testing
 		Code:       "code",
 		State:      connectResp.State,
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect uri is required") {
-		t.Fatalf("expected strict redirect validation error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "redirect uri is required")
 
 	connectResp, err = svc.Connect(ctx, ConnectRequest{
 		ProviderID:  "github",
@@ -461,9 +451,7 @@ func TestCompleteCallback_RedirectValidationCannotBeRelaxedByMetadata(t *testing
 			"require_callback_redirect": false,
 		},
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect uri is required") {
-		t.Fatalf("expected metadata to be unable to relax redirect validation, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "redirect uri is required")
 }
 
 func TestCompleteCallback_RedirectValidationCanBeHardenedPerRequest(t *testing.T) {
@@ -505,9 +493,7 @@ func TestCompleteCallback_RedirectValidationCanBeHardenedPerRequest(t *testing.T
 			"strict_redirect_validation": true,
 		},
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect uri is required") {
-		t.Fatalf("expected metadata to harden redirect validation, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "redirect uri is required")
 }
 
 func TestCompleteCallback_CreatesDistinctConnectionsPerExternalAccount(t *testing.T) {

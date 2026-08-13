@@ -41,19 +41,37 @@ func (s *Service) InvokeCapabilityOperation(
 		return result, nil
 	}
 
-	provider, err := s.resolveProvider(req.ProviderID)
+	opRequest, err := s.resolveCapabilityOperationRequest(ctx, req, decision)
 	if err != nil {
 		return CapabilityOperationResult{}, err
 	}
+	operation, err := s.ExecuteProviderOperation(ctx, opRequest)
+	if err != nil {
+		return CapabilityOperationResult{}, err
+	}
+
+	result.Executed = true
+	result.Operation = operation
+	return result, nil
+}
+
+func (s *Service) resolveCapabilityOperationRequest(
+	ctx context.Context,
+	req InvokeCapabilityOperationRequest,
+	decision CapabilityResult,
+) (ProviderOperationRequest, error) {
+	provider, err := s.resolveProvider(req.ProviderID)
+	if err != nil {
+		return ProviderOperationRequest{}, err
+	}
 	resolver, ok := provider.(CapabilityOperationResolver)
 	if !ok {
-		return CapabilityOperationResult{}, s.mapError(fmt.Errorf(
+		return ProviderOperationRequest{}, s.mapError(fmt.Errorf(
 			"core: provider %q does not support capability operation runtime",
 			req.ProviderID,
 		))
 	}
-
-	opRequest, resolveErr := resolver.ResolveCapabilityOperation(ctx, CapabilityOperationResolveRequest{
+	opRequest, err := resolver.ResolveCapabilityOperation(ctx, CapabilityOperationResolveRequest{
 		ProviderID:      req.ProviderID,
 		Scope:           req.Scope,
 		Capability:      req.Capability,
@@ -66,10 +84,17 @@ func (s *Service) InvokeCapabilityOperation(
 		TransportConfig: copyAnyMap(req.TransportConfig),
 		Metadata:        copyAnyMap(req.Metadata),
 	})
-	if resolveErr != nil {
-		return CapabilityOperationResult{}, s.mapError(resolveErr)
+	if err != nil {
+		return ProviderOperationRequest{}, s.mapError(err)
 	}
+	return normalizeCapabilityOperationRequest(opRequest, req, decision), nil
+}
 
+func normalizeCapabilityOperationRequest(
+	opRequest ProviderOperationRequest,
+	req InvokeCapabilityOperationRequest,
+	decision CapabilityResult,
+) ProviderOperationRequest {
 	opRequest.ProviderID = firstNonEmptyTrimmed(opRequest.ProviderID, req.ProviderID)
 	opRequest.ConnectionID = firstNonEmptyTrimmed(opRequest.ConnectionID, decision.Connection.ID, req.ConnectionID)
 	if strings.TrimSpace(opRequest.Scope.Type) == "" && strings.TrimSpace(opRequest.Scope.ID) == "" {
@@ -91,15 +116,7 @@ func (s *Service) InvokeCapabilityOperation(
 	if isZeroProviderRetryPolicy(opRequest.Retry) {
 		opRequest.Retry = req.Retry
 	}
-
-	operation, execErr := s.ExecuteProviderOperation(ctx, opRequest)
-	if execErr != nil {
-		return CapabilityOperationResult{}, execErr
-	}
-
-	result.Executed = true
-	result.Operation = operation
-	return result, nil
+	return opRequest
 }
 
 func firstNonEmptyTrimmed(values ...string) string {

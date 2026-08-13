@@ -38,6 +38,17 @@ func (s *SubscriptionStore) Upsert(ctx context.Context, in core.UpsertSubscripti
 	if s == nil || s.db == nil || s.repo == nil {
 		return core.Subscription{}, fmt.Errorf("sqlstore: subscription store is not configured")
 	}
+	in = normalizeSubscriptionInput(in)
+	if err := validateSubscriptionInput(in); err != nil {
+		return core.Subscription{}, err
+	}
+	now := time.Now().UTC()
+	return runInTxResult(ctx, s.db, func(ctx context.Context, tx bun.Tx) (core.Subscription, error) {
+		return s.upsertSubscriptionTx(ctx, tx, in, now)
+	})
+}
+
+func normalizeSubscriptionInput(in core.UpsertSubscriptionInput) core.UpsertSubscriptionInput {
 	in.ConnectionID = strings.TrimSpace(in.ConnectionID)
 	in.ProviderID = strings.TrimSpace(in.ProviderID)
 	in.ResourceType = strings.TrimSpace(in.ResourceType)
@@ -46,72 +57,68 @@ func (s *SubscriptionStore) Upsert(ctx context.Context, in core.UpsertSubscripti
 	in.CallbackURL = strings.TrimSpace(in.CallbackURL)
 	in.RemoteSubscriptionID = strings.TrimSpace(in.RemoteSubscriptionID)
 	in.VerificationTokenRef = strings.TrimSpace(in.VerificationTokenRef)
-	if in.ConnectionID == "" || in.ProviderID == "" {
-		return core.Subscription{}, fmt.Errorf("sqlstore: connection id and provider id are required")
-	}
-	if in.ResourceType == "" || in.ResourceID == "" {
-		return core.Subscription{}, fmt.Errorf("sqlstore: resource type and resource id are required")
-	}
-	if in.ChannelID == "" {
-		return core.Subscription{}, fmt.Errorf("sqlstore: channel id is required")
-	}
-	if in.CallbackURL == "" {
-		return core.Subscription{}, fmt.Errorf("sqlstore: callback url is required")
-	}
 	if strings.TrimSpace(string(in.Status)) == "" {
 		in.Status = core.SubscriptionStatusActive
 	}
-	now := time.Now().UTC()
+	return in
+}
 
-	var out core.Subscription
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		existing, err := s.findByProviderChannelTx(ctx, tx, in.ProviderID, in.ChannelID)
-		if err != nil {
-			return err
-		}
-		if existing == nil {
-			record := newSubscriptionRecord(in, now)
-			record.ID = uuid.NewString()
-			if _, createErr := tx.NewInsert().Model(record).Exec(ctx); createErr != nil {
-				return createErr
-			}
-			out = record.toDomain()
-			return nil
-		}
+func validateSubscriptionInput(in core.UpsertSubscriptionInput) error {
+	if in.ConnectionID == "" || in.ProviderID == "" {
+		return fmt.Errorf("sqlstore: connection id and provider id are required")
+	}
+	if in.ResourceType == "" || in.ResourceID == "" {
+		return fmt.Errorf("sqlstore: resource type and resource id are required")
+	}
+	if in.ChannelID == "" {
+		return fmt.Errorf("sqlstore: channel id is required")
+	}
+	if in.CallbackURL == "" {
+		return fmt.Errorf("sqlstore: callback url is required")
+	}
+	return nil
+}
 
-		existing.ConnectionID = in.ConnectionID
-		existing.ProviderID = in.ProviderID
-		existing.ResourceType = in.ResourceType
-		existing.ResourceID = in.ResourceID
-		existing.ChannelID = in.ChannelID
-		existing.RemoteSubscriptionID = in.RemoteSubscriptionID
-		existing.CallbackURL = in.CallbackURL
-		existing.VerificationTokenRef = in.VerificationTokenRef
-		existing.Status = string(in.Status)
-		existing.Metadata = copyAnyMap(in.Metadata)
-		existing.UpdatedAt = now
-		existing.DeletedAt = nil
-		if in.ExpiresAt == nil {
-			existing.ExpiresAt = nil
-		} else {
-			value := *in.ExpiresAt
-			existing.ExpiresAt = &value
-		}
-
-		if _, updateErr := tx.NewUpdate().
-			Model(existing).
-			Where("id = ?", existing.ID).
-			Exec(ctx); updateErr != nil {
-			return updateErr
-		}
-		out = existing.toDomain()
-		return nil
-	})
+func (s *SubscriptionStore) upsertSubscriptionTx(
+	ctx context.Context,
+	tx bun.Tx,
+	in core.UpsertSubscriptionInput,
+	now time.Time,
+) (core.Subscription, error) {
+	existing, err := s.findByProviderChannelTx(ctx, tx, in.ProviderID, in.ChannelID)
 	if err != nil {
 		return core.Subscription{}, err
 	}
+	if existing == nil {
+		record := newSubscriptionRecord(in, now)
+		record.ID = uuid.NewString()
+		_, err = tx.NewInsert().Model(record).Exec(ctx)
+		return record.toDomain(), err
+	}
+	updateSubscriptionRecord(existing, in, now)
+	_, err = tx.NewUpdate().Model(existing).Where("id = ?", existing.ID).Exec(ctx)
+	return existing.toDomain(), err
+}
 
-	return out, nil
+func updateSubscriptionRecord(existing *subscriptionRecord, in core.UpsertSubscriptionInput, now time.Time) {
+	existing.ConnectionID = in.ConnectionID
+	existing.ProviderID = in.ProviderID
+	existing.ResourceType = in.ResourceType
+	existing.ResourceID = in.ResourceID
+	existing.ChannelID = in.ChannelID
+	existing.RemoteSubscriptionID = in.RemoteSubscriptionID
+	existing.CallbackURL = in.CallbackURL
+	existing.VerificationTokenRef = in.VerificationTokenRef
+	existing.Status = string(in.Status)
+	existing.Metadata = copyAnyMap(in.Metadata)
+	existing.UpdatedAt = now
+	existing.DeletedAt = nil
+	if in.ExpiresAt == nil {
+		existing.ExpiresAt = nil
+	} else {
+		value := *in.ExpiresAt
+		existing.ExpiresAt = &value
+	}
 }
 
 func (s *SubscriptionStore) Get(ctx context.Context, id string) (core.Subscription, error) {

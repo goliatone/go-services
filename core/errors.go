@@ -43,32 +43,42 @@ func serviceErrorMapper(err error) *goerrors.Error {
 	if err == nil {
 		return nil
 	}
+	if mapped, ok := mapStructuredServiceError(err); ok {
+		return mapped
+	}
+	if mapped := mapServiceErrorMessage(err); mapped != nil {
+		return mapped
+	}
+	return ensureServiceErrorEnvelope(goerrors.MapToError(err, goerrors.DefaultErrorMappers()))
+}
 
+func mapStructuredServiceError(err error) (*goerrors.Error, bool) {
 	var richErr *goerrors.Error
 	if goerrors.As(err, &richErr) {
-		return ensureServiceErrorEnvelope(richErr)
+		return ensureServiceErrorEnvelope(richErr), true
 	}
-
 	var convertible serviceErrorConvertible
 	if errors.As(err, &convertible) {
 		mapped := convertible.ToServiceError()
 		if mapped != nil {
-			return ensureServiceErrorEnvelope(mapped)
+			return ensureServiceErrorEnvelope(mapped), true
 		}
 	}
-
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case errors.Is(err, ErrSyncJobNotFound):
-		return newServiceErrorFromSource(err, goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound)
+		return newServiceErrorFromSource(err, goerrors.CategoryNotFound, ServiceErrorSyncJobNotFound), true
 	case errors.Is(err, ErrSyncCursorConflict):
-		return newServiceErrorFromSource(err, goerrors.CategoryConflict, ServiceErrorSyncCursorConflict)
+		return newServiceErrorFromSource(err, goerrors.CategoryConflict, ServiceErrorSyncCursorConflict), true
 	case errors.Is(err, ErrInvalidSyncJobMode), errors.Is(err, ErrInvalidSyncJobScope):
-		return newServiceErrorFromSource(err, goerrors.CategoryBadInput, ServiceErrorBadInput)
+		return newServiceErrorFromSource(err, goerrors.CategoryBadInput, ServiceErrorBadInput), true
 	case errors.Is(err, ErrEmbeddedAuthUnsupported):
-		return newServiceErrorFromSource(err, goerrors.CategoryOperation, ServiceErrorEmbeddedAuthUnsupported)
+		return newServiceErrorFromSource(err, goerrors.CategoryOperation, ServiceErrorEmbeddedAuthUnsupported), true
 	}
+	return nil, false
+}
 
+func mapServiceErrorMessage(err error) *goerrors.Error {
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case strings.Contains(msg, "provider") && strings.Contains(msg, "not registered"):
 		return newServiceError(err.Error(), goerrors.CategoryNotFound, ServiceErrorProviderNotFound)
@@ -82,12 +92,11 @@ func serviceErrorMapper(err error) *goerrors.Error {
 		return newServiceError(err.Error(), goerrors.CategoryConflict, ServiceErrorRefreshLocked)
 	case strings.Contains(msg, "throttl"), strings.Contains(msg, "rate limit"):
 		return newServiceError(err.Error(), goerrors.CategoryRateLimit, ServiceErrorRateLimited)
-	case strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "mismatch"):
+	case strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "mismatch"), strings.Contains(msg, "must be"):
 		return newServiceError(err.Error(), goerrors.CategoryBadInput, ServiceErrorBadInput)
+	default:
+		return nil
 	}
-
-	mapped := goerrors.MapToError(err, goerrors.DefaultErrorMappers())
-	return ensureServiceErrorEnvelope(mapped)
 }
 
 func newServiceError(message string, category goerrors.Category, textCode string) *goerrors.Error {
@@ -114,7 +123,8 @@ func ensureServiceErrorEnvelope(err *goerrors.Error) *goerrors.Error {
 	if err.Code == 0 {
 		err.Code = serviceHTTPStatus(err.Category)
 	}
-	if strings.TrimSpace(err.TextCode) == "" {
+	if strings.TrimSpace(err.TextCode) == "" ||
+		(err.Category == goerrors.CategoryInternal && err.TextCode == "INTERNAL_ERROR") {
 		err.TextCode = defaultServiceTextCode(err.Category)
 	}
 	if err.Category == goerrors.CategoryInternal && strings.TrimSpace(err.Message) == "" {

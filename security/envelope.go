@@ -57,6 +57,99 @@ func encodeEnvelope(env envelope) ([]byte, error) {
 	return append([]byte(envelopePrefix), data...), nil
 }
 
+func encryptManagedEnvelope(
+	plaintext []byte,
+	backend string,
+	keyID string,
+	version int,
+	algorithm string,
+	metadata map[string]string,
+	rotationAllowed bool,
+	encrypt func([]byte) ([]byte, error),
+) ([]byte, error) {
+	if len(plaintext) == 0 {
+		return nil, fmt.Errorf("security: plaintext is required")
+	}
+	if !rotationAllowed {
+		return nil, fmt.Errorf(
+			"security: %s key %q version %d is outside the configured rotation window",
+			backend,
+			keyID,
+			version,
+		)
+	}
+	ciphertext, err := encrypt(append([]byte(nil), plaintext...))
+	if err != nil {
+		return nil, fmt.Errorf("security: %s encrypt: %w", backend, err)
+	}
+	if len(ciphertext) == 0 {
+		return nil, fmt.Errorf("security: %s encrypt returned empty ciphertext", backend)
+	}
+	return encodeEnvelope(envelope{
+		KeyID:      keyID,
+		Version:    version,
+		Algorithm:  algorithm,
+		Ciphertext: encodeCiphertextPayload(ciphertext),
+		Metadata:   copyStringMap(metadata),
+	})
+}
+
+type managedEnvelopeKey struct {
+	keyID           string
+	version         int
+	configured      bool
+	rotationAllowed bool
+}
+
+func decryptManagedEnvelope(
+	ciphertext []byte,
+	backend string,
+	algorithm string,
+	allowAny bool,
+	resolveKey func(envelope) (managedEnvelopeKey, error),
+	decrypt func(managedEnvelopeKey, []byte, map[string]string) ([]byte, error),
+) ([]byte, error) {
+	env, _, err := decodeEnvelope(ciphertext, envelopeDecodeOptions{DefaultAlgorithm: algorithm})
+	if err != nil {
+		return nil, err
+	}
+	if env.Algorithm != algorithm {
+		return nil, fmt.Errorf("security: unsupported envelope algorithm %q", env.Algorithm)
+	}
+	key, err := resolveKey(env)
+	if err != nil {
+		return nil, err
+	}
+	if !allowAny && !key.configured {
+		return nil, fmt.Errorf(
+			"security: %s decrypt key %q version %d is not configured",
+			backend,
+			key.keyID,
+			key.version,
+		)
+	}
+	if !key.rotationAllowed {
+		return nil, fmt.Errorf(
+			"security: %s key %q version %d is outside the configured rotation window",
+			backend,
+			key.keyID,
+			key.version,
+		)
+	}
+	payload, err := decodeCiphertextPayload(env.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	plaintext, err := decrypt(key, payload, copyStringMap(env.Metadata))
+	if err != nil {
+		return nil, fmt.Errorf("security: %s decrypt: %w", backend, err)
+	}
+	if len(plaintext) == 0 {
+		return nil, fmt.Errorf("security: %s decrypt returned empty plaintext", backend)
+	}
+	return plaintext, nil
+}
+
 func decodeEnvelope(ciphertext []byte, options envelopeDecodeOptions) (envelope, bool, error) {
 	if len(ciphertext) == 0 {
 		return envelope{}, false, fmt.Errorf("security: ciphertext is required")

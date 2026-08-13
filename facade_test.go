@@ -37,11 +37,11 @@ func TestFacade_CommandAndQueryDelegation(t *testing.T) {
 		t.Fatalf("new facade: %v", err)
 	}
 
-	if err := facade.Commands().Revoke.Execute(context.Background(), servicescommand.RevokeMessage{
+	if testErr := facade.Commands().Revoke.Execute(context.Background(), servicescommand.RevokeMessage{
 		ConnectionID: "conn_1",
 		Reason:       "manual",
-	}); err != nil {
-		t.Fatalf("execute revoke command: %v", err)
+	}); testErr != nil {
+		t.Fatalf("execute revoke command: %v", testErr)
 	}
 	if svc.lastRevokeConnectionID != "conn_1" || svc.lastRevokeReason != "manual" {
 		t.Fatalf("unexpected revoke delegation payload")
@@ -69,12 +69,12 @@ func TestFacade_CommandAndQueryDelegation(t *testing.T) {
 		t.Fatalf("unexpected activity page result: %#v", page)
 	}
 
-	if err := facade.Commands().UpdateInstallation.Execute(context.Background(), servicescommand.UpdateInstallationStatusMessage{
+	if testErr := facade.Commands().UpdateInstallation.Execute(context.Background(), servicescommand.UpdateInstallationStatusMessage{
 		InstallationID: "inst_1",
 		Status:         core.InstallationStatusSuspended,
 		Reason:         "policy",
-	}); err != nil {
-		t.Fatalf("execute update installation command: %v", err)
+	}); testErr != nil {
+		t.Fatalf("execute update installation command: %v", testErr)
 	}
 	if svc.lastInstallationID != "inst_1" || svc.lastInstallationStatus != core.InstallationStatusSuspended {
 		t.Fatalf("unexpected installation status delegation payload")
@@ -90,15 +90,15 @@ func TestFacade_CommandAndQueryDelegation(t *testing.T) {
 		t.Fatalf("unexpected installation query result: %#v", installation)
 	}
 
-	if err := facade.Commands().CreateSyncJob.Execute(context.Background(), servicescommand.CreateSyncJobMessage{
+	if testErr := facade.Commands().CreateSyncJob.Execute(context.Background(), servicescommand.CreateSyncJobMessage{
 		Request: core.CreateSyncJobRequest{
 			ProviderID: "github",
 			ScopeType:  "org",
 			ScopeID:    "org_1",
 			Mode:       core.SyncJobModeFull,
 		},
-	}); err != nil {
-		t.Fatalf("execute create sync job command: %v", err)
+	}); testErr != nil {
+		t.Fatalf("execute create sync job command: %v", testErr)
 	}
 
 	job, err := facade.Queries().GetSyncJob.Query(context.Background(), servicesquery.GetSyncJobMessage{

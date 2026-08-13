@@ -129,3 +129,48 @@ func TestProvider_ResolveCapabilityOperation_UsesProtocolKinds(t *testing.T) {
 		t.Fatalf("expected degraded compensation transport kind soap, got %q", compDegraded.TransportKind)
 	}
 }
+
+func TestProvider_ResolveCapabilityOperation_ContractMatrix(t *testing.T) {
+	providerRaw, err := New(Config{
+		Issuer: "svc@example.test", Audience: "https://api.workday.test/token",
+		SigningKey: "secret-signing-key", SigningAlgorithm: "HS256",
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	provider := providerRaw.(*Provider)
+	tests := []struct {
+		name       string
+		capability string
+		mode       core.CapabilityDeniedBehavior
+		kind       string
+		method     string
+	}{
+		{name: "employees", capability: "hr.employees.read", kind: "soap", method: "POST"},
+		{name: "compensation", capability: "hr.compensation.read", kind: "soap", method: "POST"},
+		{name: "compensation degraded", capability: "hr.compensation.read", mode: core.CapabilityDeniedBehaviorDegrade, kind: "soap", method: "POST"},
+		{name: "report", capability: "hr.reports.export", kind: "file", method: "POST"},
+		{name: "report degraded", capability: "hr.reports.export", mode: core.CapabilityDeniedBehaviorDegrade, kind: "stream", method: "GET"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := core.CapabilityResult{Allowed: true, Mode: tc.mode}
+			if tc.mode == core.CapabilityDeniedBehaviorDegrade {
+				decision.Metadata = map[string]any{"missing_grants": []string{"optional"}}
+			}
+			operation, testErr := provider.ResolveCapabilityOperation(context.Background(), core.CapabilityOperationResolveRequest{
+				ProviderID: "workday",
+				Scope:      core.ScopeRef{Type: "org", ID: "org_1"},
+				Connection: core.Connection{ID: "conn_1"},
+				Capability: tc.capability,
+				Decision:   decision,
+			})
+			if testErr != nil {
+				t.Fatalf("resolve operation: %v", testErr)
+			}
+			if operation.TransportKind != tc.kind || operation.TransportRequest.Method != tc.method {
+				t.Fatalf("got transport %q %q, want %q %q", operation.TransportKind, operation.TransportRequest.Method, tc.kind, tc.method)
+			}
+		})
+	}
+}

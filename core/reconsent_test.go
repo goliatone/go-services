@@ -25,13 +25,13 @@ func TestStartReconsent_TransitionsConnectionAndReturnsAuthResponse(t *testing.T
 	}
 
 	grantStore := newMemoryGrantStore()
-	if err := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
+	if testErr := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
 		ConnectionID: connection.ID,
 		Version:      1,
 		Requested:    []string{"repo:read"},
 		Granted:      []string{"repo:read"},
-	}); err != nil {
-		t.Fatalf("save snapshot: %v", err)
+	}); testErr != nil {
+		t.Fatalf("save snapshot: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},
@@ -81,8 +81,8 @@ func TestCompleteReconsent_RecoversExistingConnectionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create connection: %v", err)
 	}
-	if err := connectionStore.UpdateStatus(ctx, connection.ID, ConnectionStatusNeedsReconsent, "missing grants"); err != nil {
-		t.Fatalf("update connection status: %v", err)
+	if testErr := connectionStore.UpdateStatus(ctx, connection.ID, ConnectionStatusNeedsReconsent, "missing grants"); testErr != nil {
+		t.Fatalf("update connection status: %v", testErr)
 	}
 
 	credentialStore := newMemoryCredentialStore()

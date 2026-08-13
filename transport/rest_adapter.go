@@ -57,67 +57,11 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 		ctx = context.Background()
 	}
 
-	method := strings.TrimSpace(strings.ToUpper(req.Method))
-	if method == "" {
-		method = http.MethodGet
-	}
-	parsedURL, err := url.Parse(strings.TrimSpace(req.URL))
+	httpReq, cancel, err := a.buildRequest(ctx, req)
 	if err != nil {
-		return core.TransportResponse{}, transportWrapError(
-			err,
-			goerrors.CategoryBadInput,
-			"transport: invalid request url",
-			http.StatusBadRequest,
-			map[string]any{"adapter": KindREST, "url": strings.TrimSpace(req.URL)},
-		)
-	}
-	if parsedURL.String() == "" {
-		return core.TransportResponse{}, transportError(
-			"transport: request url is required",
-			goerrors.CategoryBadInput,
-			http.StatusBadRequest,
-			map[string]any{"adapter": KindREST},
-		)
-	}
-
-	query := parsedURL.Query()
-	for key, value := range req.Query {
-		if strings.TrimSpace(key) == "" {
-			continue
-		}
-		query.Set(strings.TrimSpace(key), strings.TrimSpace(value))
-	}
-	parsedURL.RawQuery = query.Encode()
-
-	requestCtx := ctx
-	cancel := func() {}
-	if req.Timeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+		return core.TransportResponse{}, err
 	}
 	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(requestCtx, method, parsedURL.String(), bytes.NewReader(req.Body))
-	if err != nil {
-		return core.TransportResponse{}, transportWrapError(
-			err,
-			goerrors.CategoryBadInput,
-			"transport: create http request",
-			http.StatusBadRequest,
-			map[string]any{"adapter": KindREST, "method": method, "url": parsedURL.String()},
-		)
-	}
-	for key, value := range a.DefaultHeaders {
-		if strings.TrimSpace(key) == "" {
-			continue
-		}
-		httpReq.Header.Set(strings.TrimSpace(key), strings.TrimSpace(value))
-	}
-	for key, value := range req.Headers {
-		if strings.TrimSpace(key) == "" {
-			continue
-		}
-		httpReq.Header.Set(strings.TrimSpace(key), strings.TrimSpace(value))
-	}
 
 	startedAt := time.Now().UTC()
 	httpRes, err := a.Client.Do(httpReq)
@@ -127,33 +71,14 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 			goerrors.CategoryExternal,
 			"transport: execute http request",
 			http.StatusBadGateway,
-			map[string]any{"adapter": KindREST, "method": method, "url": parsedURL.String()},
+			map[string]any{"adapter": KindREST, "method": httpReq.Method, "url": httpReq.URL.String()},
 		)
 	}
-	defer httpRes.Body.Close()
+	defer func() { _ = httpRes.Body.Close() }()
 
-	maxBodyBytes := resolveResponseBodyLimit(req.MaxResponseBodyBytes, a.MaxResponseBodyBytes)
-	body, err := io.ReadAll(io.LimitReader(httpRes.Body, maxBodyBytes+1))
+	body, err := readBoundedResponseBody(httpRes, resolveResponseBodyLimit(req.MaxResponseBodyBytes, a.MaxResponseBodyBytes))
 	if err != nil {
-		return core.TransportResponse{}, transportWrapError(
-			err,
-			goerrors.CategoryExternal,
-			"transport: read response body",
-			http.StatusBadGateway,
-			map[string]any{"adapter": KindREST, "status_code": httpRes.StatusCode},
-		)
-	}
-	if int64(len(body)) > maxBodyBytes {
-		return core.TransportResponse{}, transportError(
-			fmt.Sprintf("transport: response body exceeds limit of %d bytes", maxBodyBytes),
-			goerrors.CategoryExternal,
-			http.StatusBadGateway,
-			map[string]any{
-				"adapter":          KindREST,
-				"status_code":      httpRes.StatusCode,
-				"response_limit_b": maxBodyBytes,
-			},
-		)
+		return core.TransportResponse{}, err
 	}
 
 	return core.TransportResponse{
@@ -165,6 +90,86 @@ func (a *RESTAdapter) Do(ctx context.Context, req core.TransportRequest) (core.T
 			"kind":        KindREST,
 		},
 	}, nil
+}
+
+func (a *RESTAdapter) buildRequest(
+	ctx context.Context,
+	req core.TransportRequest,
+) (*http.Request, context.CancelFunc, error) {
+	method := strings.TrimSpace(strings.ToUpper(req.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	parsedURL, err := url.Parse(strings.TrimSpace(req.URL))
+	if err != nil {
+		return nil, nil, transportWrapError(
+			err, goerrors.CategoryBadInput, "transport: invalid request url", http.StatusBadRequest,
+			map[string]any{"adapter": KindREST, "url": strings.TrimSpace(req.URL)},
+		)
+	}
+	if parsedURL.String() == "" {
+		return nil, nil, transportError(
+			"transport: request url is required", goerrors.CategoryBadInput, http.StatusBadRequest,
+			map[string]any{"adapter": KindREST},
+		)
+	}
+	applyQuery(parsedURL, req.Query)
+	requestCtx, cancel := requestContext(ctx, req.Timeout)
+	httpReq, err := http.NewRequestWithContext(requestCtx, method, parsedURL.String(), bytes.NewReader(req.Body))
+	if err != nil {
+		cancel()
+		return nil, nil, transportWrapError(
+			err, goerrors.CategoryBadInput, "transport: create http request", http.StatusBadRequest,
+			map[string]any{"adapter": KindREST, "method": method, "url": parsedURL.String()},
+		)
+	}
+	applyHeaders(httpReq.Header, a.DefaultHeaders)
+	applyHeaders(httpReq.Header, req.Headers)
+	return httpReq, cancel, nil
+}
+
+func applyQuery(parsedURL *url.URL, values map[string]string) {
+	query := parsedURL.Query()
+	for key, value := range values {
+		if strings.TrimSpace(key) != "" {
+			query.Set(strings.TrimSpace(key), strings.TrimSpace(value))
+		}
+	}
+	parsedURL.RawQuery = query.Encode()
+}
+
+func requestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return ctx, func() {}
+}
+
+func applyHeaders(header http.Header, values map[string]string) {
+	for key, value := range values {
+		if strings.TrimSpace(key) != "" {
+			header.Set(strings.TrimSpace(key), strings.TrimSpace(value))
+		}
+	}
+}
+
+func readBoundedResponseBody(response *http.Response, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return nil, transportWrapError(
+			err, goerrors.CategoryExternal, "transport: read response body", http.StatusBadGateway,
+			map[string]any{"adapter": KindREST, "status_code": response.StatusCode},
+		)
+	}
+	if int64(len(body)) > limit {
+		return nil, transportError(
+			fmt.Sprintf("transport: response body exceeds limit of %d bytes", limit),
+			goerrors.CategoryExternal,
+			http.StatusBadGateway,
+			map[string]any{"adapter": KindREST, "status_code": response.StatusCode, "response_limit_b": limit},
+		)
+	}
+	return body, nil
 }
 
 func flattenHeaders(headers http.Header) map[string]string {

@@ -145,42 +145,42 @@ func Register(ctx context.Context, registerFn RegisterFunc, opts ...Option) (Reg
 		opt(&reg)
 	}
 
-	if len(reg.ValidationTargets) == 0 {
-		return reg, fmt.Errorf("migrations: validation targets are required")
+	reg.SourceLabel = strings.TrimSpace(reg.SourceLabel)
+	reg.ValidationTargets = dedupe(reg.ValidationTargets)
+	if err := validateRegistration(reg, registerFn); err != nil {
+		return reg, err
 	}
-	if strings.TrimSpace(reg.SourceLabel) == "" {
-		return reg, fmt.Errorf("migrations: source label is required")
+	return registerFilesystems(ctx, registerFn, reg)
+}
+
+func validateRegistration(reg Registration, registerFn RegisterFunc) error {
+	if len(reg.ValidationTargets) == 0 {
+		return fmt.Errorf("migrations: validation targets are required")
+	}
+	if reg.SourceLabel == "" {
+		return fmt.Errorf("migrations: source label is required")
 	}
 	if len(reg.Filesystems) == 0 {
-		return reg, fmt.Errorf("migrations: filesystems are required")
+		return fmt.Errorf("migrations: filesystems are required")
 	}
 	if registerFn == nil {
-		return reg, fmt.Errorf("migrations: register function is required")
+		return fmt.Errorf("migrations: register function is required")
 	}
-
-	reg.SourceLabel = strings.TrimSpace(reg.SourceLabel)
-	targets := dedupe(reg.ValidationTargets)
-	if len(targets) == 0 {
-		return reg, fmt.Errorf("migrations: validation targets are required")
-	}
-	reg.ValidationTargets = targets
-
 	availableDialects := make(map[string]struct{}, len(reg.Filesystems))
 	for _, fsys := range reg.Filesystems {
 		availableDialects[fsys.Dialect] = struct{}{}
 	}
-	for _, target := range targets {
-		if _, exists := availableDialects[target]; exists {
-			continue
+	for _, target := range reg.ValidationTargets {
+		if _, exists := availableDialects[target]; !exists {
+			return fmt.Errorf("migrations: validation target %q does not have a registered filesystem", target)
 		}
-		return reg, fmt.Errorf(
-			"migrations: validation target %q does not have a registered filesystem",
-			target,
-		)
 	}
+	return nil
+}
 
+func registerFilesystems(ctx context.Context, registerFn RegisterFunc, reg Registration) (Registration, error) {
 	for _, fsys := range reg.Filesystems {
-		if !slices.Contains(targets, fsys.Dialect) {
+		if !slices.Contains(reg.ValidationTargets, fsys.Dialect) {
 			continue
 		}
 		if fsys.FS == nil {

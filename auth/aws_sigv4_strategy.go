@@ -67,18 +67,9 @@ func (s *OAuth2SigV4Strategy) Complete(ctx context.Context, req core.AuthComplet
 	if err != nil {
 		return core.AuthCompleteResponse{}, err
 	}
-	complete.Credential.Metadata = applySigV4ProfileMetadata(
-		cloneMetadata(complete.Credential.Metadata),
-		s.profile,
-		req.Metadata,
-	)
-	if err := validateSigV4ProfileMetadata(complete.Credential.Metadata); err != nil {
+	if err := s.decorateCredential(&complete.Credential, &complete.Metadata, req.Metadata); err != nil {
 		return core.AuthCompleteResponse{}, err
 	}
-	complete.Credential.Metadata["auth_kind"] = core.AuthKindAWSSigV4
-	complete.Metadata = cloneMetadata(complete.Metadata)
-	complete.Metadata["auth_kind"] = core.AuthKindAWSSigV4
-	complete.Metadata["signing_profile"] = core.AuthKindAWSSigV4
 	return complete, nil
 }
 
@@ -90,19 +81,26 @@ func (s *OAuth2SigV4Strategy) Refresh(ctx context.Context, cred core.ActiveCrede
 	if err != nil {
 		return core.RefreshResult{}, err
 	}
-	refreshed.Credential.Metadata = applySigV4ProfileMetadata(
-		cloneMetadata(refreshed.Credential.Metadata),
-		s.profile,
-		cred.Metadata,
-	)
-	if err := validateSigV4ProfileMetadata(refreshed.Credential.Metadata); err != nil {
+	if err := s.decorateCredential(&refreshed.Credential, &refreshed.Metadata, cred.Metadata); err != nil {
 		return core.RefreshResult{}, err
 	}
-	refreshed.Credential.Metadata["auth_kind"] = core.AuthKindAWSSigV4
-	refreshed.Metadata = cloneMetadata(refreshed.Metadata)
-	refreshed.Metadata["auth_kind"] = core.AuthKindAWSSigV4
-	refreshed.Metadata["signing_profile"] = core.AuthKindAWSSigV4
 	return refreshed, nil
+}
+
+func (s *OAuth2SigV4Strategy) decorateCredential(
+	credential *core.ActiveCredential,
+	responseMetadata *map[string]any,
+	runtimeMetadata map[string]any,
+) error {
+	credential.Metadata = applySigV4ProfileMetadata(cloneMetadata(credential.Metadata), s.profile, runtimeMetadata)
+	if err := validateSigV4ProfileMetadata(credential.Metadata); err != nil {
+		return err
+	}
+	credential.Metadata["auth_kind"] = core.AuthKindAWSSigV4
+	*responseMetadata = cloneMetadata(*responseMetadata)
+	(*responseMetadata)["auth_kind"] = core.AuthKindAWSSigV4
+	(*responseMetadata)["signing_profile"] = core.AuthKindAWSSigV4
+	return nil
 }
 
 func applySigV4ProfileMetadata(

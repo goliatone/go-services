@@ -8,8 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -107,9 +107,13 @@ func TestServiceAccountJWTStrategy_GoogleServiceAccountJSONExchangesAssertion(t 
 	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
 	privateKeyPEM := generateTestRSAPrivateKeyPEM(t)
 	var observedAssertion string
-	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tokenEndpointURL := "https://oauth2.googleapis.com/token"
+	tokenClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST token exchange, got %s", r.Method)
+		}
+		if r.URL.String() != tokenEndpointURL {
+			t.Fatalf("unexpected token endpoint %q", r.URL.String())
 		}
 		if got := r.Header.Get("Content-Type"); !strings.Contains(got, "application/x-www-form-urlencoded") {
 			t.Fatalf("expected form content type, got %q", got)
@@ -124,16 +128,21 @@ func TestServiceAccountJWTStrategy_GoogleServiceAccountJSONExchangesAssertion(t 
 		if strings.TrimSpace(observedAssertion) == "" {
 			t.Fatalf("expected signed assertion")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"oauth-access-token","token_type":"Bearer","expires_in":3600,"scope":"https://www.googleapis.com/auth/drive.readonly"}`))
-	}))
-	defer tokenEndpoint.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"access_token":"oauth-access-token","token_type":"Bearer","expires_in":3600,"scope":"https://www.googleapis.com/auth/drive.readonly"}`,
+			)),
+			Request: r,
+		}, nil
+	})}
 
 	serviceAccountJSON, err := json.Marshal(map[string]string{
 		"client_email":   "svc@example.iam.gserviceaccount.com",
 		"private_key":    privateKeyPEM,
 		"private_key_id": "kid-1",
-		"token_uri":      tokenEndpoint.URL,
+		"token_uri":      tokenEndpointURL,
 		"project_id":     "project-1",
 	})
 	if err != nil {
@@ -144,7 +153,7 @@ func TestServiceAccountJWTStrategy_GoogleServiceAccountJSONExchangesAssertion(t 
 		Now: func() time.Time {
 			return now
 		},
-		HTTPClient: tokenEndpoint.Client(),
+		HTTPClient: tokenClient,
 	})
 
 	complete, err := strategy.Complete(context.Background(), core.AuthCompleteRequest{
@@ -191,6 +200,28 @@ func TestServiceAccountJWTStrategy_GoogleServiceAccountJSONExchangesAssertion(t 
 	if refreshed.Credential.AccessToken != "oauth-access-token" {
 		t.Fatalf("expected refreshed OAuth access token from endpoint, got %q", refreshed.Credential.AccessToken)
 	}
+}
+
+func TestGoogleServiceAccountTokenRequestRejectsUnsafeEndpoints(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://oauth2.googleapis.com/token",
+		"https://localhost/token",
+		"https://127.0.0.1/token",
+		"https://10.0.0.1/token",
+		"https://user@example.com/token",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			if _, testErr := googleServiceAccountTokenRequest(context.Background(), endpoint, "assertion"); testErr == nil {
+				t.Fatalf("expected unsafe endpoint %q to be rejected", endpoint)
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
 }
 
 func TestServiceAccountJWTStrategy_CompleteRequiresConfig(t *testing.T) {

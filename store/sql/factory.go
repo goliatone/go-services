@@ -186,6 +186,16 @@ func (f *RepositoryFactory) ActivityStore() *ActivityStore {
 }
 
 func (f *RepositoryFactory) initStores() error {
+	if err := f.initConnectionStores(); err != nil {
+		return err
+	}
+	if err := f.initLifecycleStores(); err != nil {
+		return err
+	}
+	return f.initOperationalStores()
+}
+
+func (f *RepositoryFactory) initConnectionStores() error {
 	connectionRepo := repository.NewRepository[*connectionRecord](f.db, connectionHandlers())
 	if validator, ok := connectionRepo.(repository.Validator); ok {
 		if err := validator.Validate(); err != nil {
@@ -208,6 +218,10 @@ func (f *RepositoryFactory) initStores() error {
 		db:   f.db,
 		repo: credentialRepo,
 	}
+	return nil
+}
+
+func (f *RepositoryFactory) initLifecycleStores() error {
 	subscriptionStore, err := NewSubscriptionStore(f.db)
 	if err != nil {
 		return err
@@ -223,6 +237,10 @@ func (f *RepositoryFactory) initStores() error {
 		return err
 	}
 	f.installationStore = installationStore
+	return nil
+}
+
+func (f *RepositoryFactory) initOperationalStores() error {
 	rateLimitStateStore, err := NewRateLimitStateStore(f.db)
 	if err != nil {
 		return err

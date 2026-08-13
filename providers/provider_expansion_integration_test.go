@@ -211,8 +211,8 @@ func TestProviderExpansion_GrantEnforcementIntegration(t *testing.T) {
 			}
 
 			registry := core.NewProviderRegistry()
-			if err := registry.Register(provider); err != nil {
-				t.Fatalf("register provider: %v", err)
+			if testErr := registry.Register(provider); testErr != nil {
+				t.Fatalf("register provider: %v", testErr)
 			}
 
 			connection := core.Connection{

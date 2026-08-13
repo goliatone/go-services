@@ -120,28 +120,7 @@ func (s *SyncPlannerService) resolvePlanCheckpoint(
 ) (SyncCheckpoint, bool, error) {
 	fromCheckpointID := strings.TrimSpace(req.FromCheckpointID)
 	if fromCheckpointID != "" {
-		checkpoint, found, err := s.checkpointStore.GetByID(
-			ctx,
-			binding.ProviderID,
-			binding.Scope,
-			fromCheckpointID,
-		)
-		if err != nil {
-			return SyncCheckpoint{}, false, err
-		}
-		if !found {
-			return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint %q not found", fromCheckpointID)
-		}
-		if !checkpointMatchesBinding(checkpoint, binding) {
-			return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint scope/provider mismatch")
-		}
-		if checkpoint.SyncBindingID != binding.ID {
-			return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint binding id does not match plan binding id")
-		}
-		if checkpoint.Direction != direction {
-			return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint direction does not match plan direction")
-		}
-		return checkpoint, true, nil
+		return s.resolvePlanCheckpointByID(ctx, binding, direction, fromCheckpointID)
 	}
 
 	checkpoint, found, err := s.checkpointStore.GetLatest(
@@ -158,6 +137,31 @@ func (s *SyncPlannerService) resolvePlanCheckpoint(
 		return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint scope/provider mismatch")
 	}
 	return checkpoint, found, nil
+}
+
+func (s *SyncPlannerService) resolvePlanCheckpointByID(
+	ctx context.Context,
+	binding SyncBinding,
+	direction SyncDirection,
+	checkpointID string,
+) (SyncCheckpoint, bool, error) {
+	checkpoint, found, err := s.checkpointStore.GetByID(ctx, binding.ProviderID, binding.Scope, checkpointID)
+	if err != nil {
+		return SyncCheckpoint{}, false, err
+	}
+	if !found {
+		return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint %q not found", checkpointID)
+	}
+	if !checkpointMatchesBinding(checkpoint, binding) {
+		return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint scope/provider mismatch")
+	}
+	if checkpoint.SyncBindingID != binding.ID {
+		return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint binding id does not match plan binding id")
+	}
+	if checkpoint.Direction != direction {
+		return SyncCheckpoint{}, false, fmt.Errorf("core: checkpoint direction does not match plan direction")
+	}
+	return checkpoint, true, nil
 }
 
 func buildSyncRunPlanHash(plan SyncRunPlan) (string, error) {

@@ -208,6 +208,7 @@ func (p *Provider) NormalizeGrantedPermissions(_ context.Context, raw []string) 
 	return normalizeCanonicalGrants(raw), nil
 }
 
+//nolint:funlen // Declarative capability-to-wire contracts stay inline for auditability; TestProvider_ResolveCapabilityOperation_ContractMatrix covers every variant.
 func (p *Provider) ResolveCapabilityOperation(
 	_ context.Context,
 	req core.CapabilityOperationResolveRequest,

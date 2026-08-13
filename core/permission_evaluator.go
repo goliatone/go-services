@@ -29,25 +29,17 @@ func (e *GrantPermissionEvaluator) EvaluateCapability(
 	if e == nil {
 		return PermissionDecision{Allowed: true, Capability: capability}, nil
 	}
-	if strings.TrimSpace(connectionID) == "" {
-		return PermissionDecision{}, fmt.Errorf("core: connection id is required")
-	}
-	if strings.TrimSpace(capability) == "" {
-		return PermissionDecision{}, fmt.Errorf("core: capability is required")
+	if err := validateCapabilityEvaluation(connectionID, capability); err != nil {
+		return PermissionDecision{}, err
 	}
 	if e.ConnectionStore == nil || e.Registry == nil {
 		return PermissionDecision{Allowed: true, Capability: capability}, nil
 	}
 
-	connection, err := e.ConnectionStore.Get(ctx, connectionID)
+	descriptor, found, err := e.resolveCapabilityDescriptor(ctx, connectionID, capability)
 	if err != nil {
 		return PermissionDecision{}, err
 	}
-	provider, ok := e.Registry.Get(connection.ProviderID)
-	if !ok {
-		return PermissionDecision{}, fmt.Errorf("core: provider %q not found for capability evaluation", connection.ProviderID)
-	}
-	descriptor, found := findCapabilityDescriptor(provider.Capabilities(), capability)
 	if !found {
 		return PermissionDecision{
 			Allowed:    false,
@@ -57,18 +49,61 @@ func (e *GrantPermissionEvaluator) EvaluateCapability(
 		}, nil
 	}
 
-	granted := map[string]struct{}{}
-	if e.GrantStore != nil {
-		snapshot, found, snapshotErr := e.GrantStore.GetLatestSnapshot(ctx, connectionID)
-		if snapshotErr != nil {
-			return PermissionDecision{}, snapshotErr
-		}
-		if found {
-			for _, grant := range normalizeGrants(snapshot.Granted) {
-				granted[grant] = struct{}{}
-			}
-		}
+	granted, err := e.grantedCapabilities(ctx, connectionID)
+	if err != nil {
+		return PermissionDecision{}, err
 	}
+	return capabilityPermissionDecision(capability, descriptor, granted), nil
+}
+
+func validateCapabilityEvaluation(connectionID, capability string) error {
+	if strings.TrimSpace(connectionID) == "" {
+		return fmt.Errorf("core: connection id is required")
+	}
+	if strings.TrimSpace(capability) == "" {
+		return fmt.Errorf("core: capability is required")
+	}
+	return nil
+}
+
+func (e *GrantPermissionEvaluator) resolveCapabilityDescriptor(
+	ctx context.Context,
+	connectionID string,
+	capability string,
+) (CapabilityDescriptor, bool, error) {
+	connection, err := e.ConnectionStore.Get(ctx, connectionID)
+	if err != nil {
+		return CapabilityDescriptor{}, false, err
+	}
+	provider, ok := e.Registry.Get(connection.ProviderID)
+	if !ok {
+		return CapabilityDescriptor{}, false,
+			fmt.Errorf("core: provider %q not found for capability evaluation", connection.ProviderID)
+	}
+	descriptor, found := findCapabilityDescriptor(provider.Capabilities(), capability)
+	return descriptor, found, nil
+}
+
+func (e *GrantPermissionEvaluator) grantedCapabilities(ctx context.Context, connectionID string) (map[string]struct{}, error) {
+	granted := map[string]struct{}{}
+	if e.GrantStore == nil {
+		return granted, nil
+	}
+	snapshot, found, err := e.GrantStore.GetLatestSnapshot(ctx, connectionID)
+	if err != nil || !found {
+		return granted, err
+	}
+	for _, grant := range normalizeGrants(snapshot.Granted) {
+		granted[grant] = struct{}{}
+	}
+	return granted, nil
+}
+
+func capabilityPermissionDecision(
+	capability string,
+	descriptor CapabilityDescriptor,
+	granted map[string]struct{},
+) PermissionDecision {
 
 	missingRequired := missingGrants(descriptor.RequiredGrants, granted)
 	if len(missingRequired) > 0 {
@@ -78,7 +113,7 @@ func (e *GrantPermissionEvaluator) EvaluateCapability(
 			Reason:        "required grants are missing",
 			MissingGrants: missingRequired,
 			Mode:          CapabilityDeniedBehaviorBlock,
-		}, nil
+		}
 	}
 
 	missingOptional := missingGrants(descriptor.OptionalGrants, granted)
@@ -89,7 +124,7 @@ func (e *GrantPermissionEvaluator) EvaluateCapability(
 			Reason:        "optional grants missing; degrade behavior selected",
 			MissingGrants: missingOptional,
 			Mode:          CapabilityDeniedBehaviorDegrade,
-		}, nil
+		}
 	}
 
 	mode := descriptor.DeniedBehavior
@@ -100,7 +135,7 @@ func (e *GrantPermissionEvaluator) EvaluateCapability(
 		Allowed:    true,
 		Capability: capability,
 		Mode:       mode,
-	}, nil
+	}
 }
 
 func missingGrants(required []string, granted map[string]struct{}) []string {

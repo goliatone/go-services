@@ -39,9 +39,7 @@ func TestService_CreateSyncJob_ValidatesModeAndScope(t *testing.T) {
 		ConnectionID: connection.ID,
 		Mode:         SyncJobModeBootstrap,
 	})
-	if !strings.Contains(strings.ToLower(fmt.Sprint(err)), "invalid sync job mode") {
-		t.Fatalf("expected invalid mode error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "invalid sync job mode")
 
 	_, err = svc.CreateSyncJob(ctx, CreateSyncJobRequest{
 		ProviderID:   "github",
@@ -50,9 +48,7 @@ func TestService_CreateSyncJob_ValidatesModeAndScope(t *testing.T) {
 		ConnectionID: connection.ID,
 		Mode:         SyncJobModeFull,
 	})
-	if err == nil || !strings.Contains(strings.ToLower(fmt.Sprint(err)), "invalid sync job scope") {
-		t.Fatalf("expected invalid scope error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "invalid sync job scope")
 }
 
 func TestService_CreateSyncJob_IdempotencyReplayAndConnectionFallback(t *testing.T) {
@@ -207,23 +203,17 @@ func TestService_GetSyncJob_GuardsAndNotFound(t *testing.T) {
 		SyncJobID:  created.Job.ID,
 		ProviderID: "slack",
 	})
-	if err == nil || !strings.Contains(strings.ToLower(fmt.Sprint(err)), "sync job not found") {
-		t.Fatalf("expected provider guard miss to return sync job not found, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorSyncJobNotFound, "sync job not found")
 
 	_, err = svc.GetSyncJob(ctx, GetSyncJobRequest{SyncJobID: "missing"})
-	if err == nil || !strings.Contains(strings.ToLower(fmt.Sprint(err)), "sync job not found") {
-		t.Fatalf("expected missing job not found error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorSyncJobNotFound, "sync job not found")
 
 	_, err = svc.GetSyncJob(ctx, GetSyncJobRequest{
 		SyncJobID: created.Job.ID,
 		ScopeType: "org",
 		ScopeID:   "org_2",
 	})
-	if err == nil || !strings.Contains(strings.ToLower(fmt.Sprint(err)), "sync job not found") {
-		t.Fatalf("expected scope guard miss to return sync job not found, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorSyncJobNotFound, "sync job not found")
 }
 
 type memoryServiceSyncJobStore struct {

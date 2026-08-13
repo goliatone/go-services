@@ -300,72 +300,75 @@ func (s *OAuth2ClientCredentialsStrategy) fetchToken(
 	clientSecret string,
 	scopes []string,
 ) (clientCredentialsTokenPayload, error) {
-	if s == nil || s.httpClient == nil {
-		return clientCredentialsTokenPayload{}, fmt.Errorf("auth: oauth2 client credentials http client is not configured")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	tokenURL = strings.TrimSpace(tokenURL)
-	if tokenURL == "" {
-		return clientCredentialsTokenPayload{}, fmt.Errorf("auth: oauth2 client credentials token_url is required")
-	}
-
-	values := url.Values{}
-	values.Set("grant_type", "client_credentials")
-	if len(scopes) > 0 {
-		values.Set("scope", strings.Join(normalizeValues(scopes), " "))
-	}
-	values.Set("client_id", clientID)
-	if s.config.ClientSecretInBody {
-		values.Set("client_secret", clientSecret)
-	}
-
-	requestCtx := ctx
-	cancel := func() {}
-	if s.config.TokenRequestTimeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, s.config.TokenRequestTimeout)
-	}
-	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(
-		requestCtx,
-		http.MethodPost,
-		tokenURL,
-		strings.NewReader(values.Encode()),
-	)
+	httpReq, cancel, err := s.buildClientCredentialsRequest(ctx, tokenURL, clientID, clientSecret, scopes)
 	if err != nil {
 		return clientCredentialsTokenPayload{}, err
 	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Accept", "application/json")
-	if !s.config.ClientSecretInBody {
-		httpReq.SetBasicAuth(clientID, clientSecret)
-	}
-
+	defer cancel()
 	response, err := s.httpClient.Do(httpReq)
 	if err != nil {
 		return clientCredentialsTokenPayload{}, fmt.Errorf("auth: oauth2 client credentials token request failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
+	return decodeClientCredentialsResponse(response)
+}
 
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxClientCredentialsTokenResponseBodyBytes+1))
-	if readErr != nil {
-		return clientCredentialsTokenPayload{}, fmt.Errorf("auth: oauth2 client credentials read token response: %w", readErr)
+func (s *OAuth2ClientCredentialsStrategy) buildClientCredentialsRequest(
+	ctx context.Context,
+	tokenURL string,
+	clientID string,
+	clientSecret string,
+	scopes []string,
+) (*http.Request, context.CancelFunc, error) {
+	if s == nil || s.httpClient == nil {
+		return nil, func() {}, fmt.Errorf("auth: oauth2 client credentials http client is not configured")
+	}
+	tokenURL = strings.TrimSpace(tokenURL)
+	if tokenURL == "" {
+		return nil, func() {}, fmt.Errorf("auth: oauth2 client credentials token_url is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	values := url.Values{"grant_type": {"client_credentials"}, "client_id": {clientID}}
+	if len(scopes) > 0 {
+		values.Set("scope", strings.Join(normalizeValues(scopes), " "))
+	}
+	if s.config.ClientSecretInBody {
+		values.Set("client_secret", clientSecret)
+	}
+	requestCtx, cancel := context.WithCancel(ctx)
+	if s.config.TokenRequestTimeout > 0 {
+		requestCtx, cancel = context.WithTimeout(ctx, s.config.TokenRequestTimeout)
+	}
+	request, err := http.NewRequestWithContext(
+		requestCtx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		cancel()
+		return nil, func() {}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	if !s.config.ClientSecretInBody {
+		request.SetBasicAuth(clientID, clientSecret)
+	}
+	return request, cancel, nil
+}
+
+func decodeClientCredentialsResponse(response *http.Response) (clientCredentialsTokenPayload, error) {
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxClientCredentialsTokenResponseBodyBytes+1))
+	if err != nil {
+		return clientCredentialsTokenPayload{}, fmt.Errorf("auth: oauth2 client credentials read token response: %w", err)
 	}
 	if int64(len(body)) > maxClientCredentialsTokenResponseBodyBytes {
 		return clientCredentialsTokenPayload{}, fmt.Errorf(
-			"auth: oauth2 client credentials token response exceeds %d bytes",
-			maxClientCredentialsTokenResponseBodyBytes,
+			"auth: oauth2 client credentials token response exceeds %d bytes", maxClientCredentialsTokenResponseBodyBytes,
 		)
 	}
-
-	payload, parseErr := parseClientCredentialsTokenPayload(body, response.Header.Get("Content-Type"))
-	if parseErr != nil {
-		return clientCredentialsTokenPayload{}, fmt.Errorf(
-			"auth: oauth2 client credentials decode token response: %w",
-			parseErr,
-		)
+	payload, err := parseClientCredentialsTokenPayload(body, response.Header.Get("Content-Type"))
+	if err != nil {
+		return clientCredentialsTokenPayload{}, fmt.Errorf("auth: oauth2 client credentials decode token response: %w", err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return clientCredentialsTokenPayload{}, fmt.Errorf(

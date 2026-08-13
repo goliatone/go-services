@@ -18,7 +18,7 @@ func inboundError(
 		WithCode(code).
 		WithTextCode(textCode)
 	if len(metadata) > 0 {
-		err.WithMetadata(metadata)
+		err = err.WithMetadata(metadata)
 	}
 	return err
 }
@@ -38,7 +38,7 @@ func inboundWrapError(
 		WithCode(code).
 		WithTextCode(textCode)
 	if len(metadata) > 0 {
-		err.WithMetadata(metadata)
+		err = err.WithMetadata(metadata)
 	}
 	return err
 }

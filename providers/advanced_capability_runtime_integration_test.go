@@ -33,8 +33,8 @@ func TestAdvancedCapabilityRuntime_SalesforceGrantEnforcementAndTransportInterop
 	provider := providerRaw
 
 	registry := core.NewProviderRegistry()
-	if err := registry.Register(provider); err != nil {
-		t.Fatalf("register provider: %v", err)
+	if testErr := registry.Register(provider); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	connection := core.Connection{
@@ -136,8 +136,8 @@ func TestAdvancedCapabilityRuntime_WorkdayGrantEnforcementAndTransportInterop(t 
 	provider := providerRaw
 
 	registry := core.NewProviderRegistry()
-	if err := registry.Register(provider); err != nil {
-		t.Fatalf("register provider: %v", err)
+	if testErr := registry.Register(provider); testErr != nil {
+		t.Fatalf("register provider: %v", testErr)
 	}
 
 	connection := core.Connection{

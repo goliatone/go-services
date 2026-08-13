@@ -93,14 +93,51 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		opt(&builder)
 	}
 
-	provider, logger := glog.Resolve("services", builder.loggerProvider, builder.logger)
-	logger = glog.Ensure(logger)
-	if provider != nil {
-		if named := provider.GetLogger("services"); named != nil {
-			logger = glog.Ensure(named)
-		}
+	provider, logger := resolveServiceLogger(builder.loggerProvider, builder.logger)
+	applyServiceBuilderDefaults(&builder)
+
+	defaults := DefaultConfig()
+	loaded, err := builder.configProvider.Load(context.Background(), defaults)
+	if err != nil {
+		return nil, mapBuildError(builder.errorMapper, err)
+	}
+	finalConfig, err := builder.optionsResolver.Resolve(defaults, loaded, builder.runtimeConfig)
+	if err != nil {
+		return nil, mapBuildError(builder.errorMapper, err)
 	}
 
+	if err := hydrateServiceStores(&builder); err != nil {
+		return nil, mapBuildError(builder.errorMapper, err)
+	}
+	if builder.permissionEvaluator == nil {
+		builder.permissionEvaluator = NewGrantPermissionEvaluator(
+			builder.connectionStore,
+			builder.grantStore,
+			builder.registry,
+		)
+	}
+	hydrateRateLimitPolicy(&builder)
+
+	strict := &StrictIsolationPolicy{ConnectionStore: builder.connectionStore}
+	inheritancePolicy := builder.inheritancePolicy
+	if inheritancePolicy == nil {
+		inheritancePolicy = strict
+	}
+
+	return buildService(builder, finalConfig, provider, logger, strict, inheritancePolicy), nil
+}
+
+func resolveServiceLogger(configuredProvider LoggerProvider, configured Logger) (LoggerProvider, Logger) {
+	provider, logger := glog.Resolve("services", configuredProvider, configured)
+	if provider != nil {
+		if named := provider.GetLogger("services"); named != nil {
+			logger = named
+		}
+	}
+	return provider, glog.Ensure(logger)
+}
+
+func applyServiceBuilderDefaults(builder *serviceBuilder) {
 	if builder.errorFactory == nil {
 		builder.errorFactory = goerrors.New
 	}
@@ -137,85 +174,92 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 	if builder.credentialCodec == nil {
 		builder.credentialCodec = JSONCredentialCodec{}
 	}
+}
 
-	defaults := DefaultConfig()
-	loaded, err := builder.configProvider.Load(context.Background(), defaults)
-	if err != nil {
-		return nil, mapBuildError(builder.errorMapper, err)
+func hydrateServiceStores(builder *serviceBuilder) error {
+	if builder.repositoryFactory == nil {
+		return nil
 	}
-	finalConfig, err := builder.optionsResolver.Resolve(defaults, loaded, builder.runtimeConfig)
-	if err != nil {
-		return nil, mapBuildError(builder.errorMapper, err)
+	if err := hydrateConnectionAndCredentialStores(builder); err != nil {
+		return err
 	}
+	hydrateAuxiliaryServiceStores(builder)
+	return nil
+}
 
-	if (builder.connectionStore == nil || builder.credentialStore == nil) && builder.repositoryFactory != nil {
-		if storeFactory, ok := builder.repositoryFactory.(RepositoryStoreFactory); ok {
-			provider, buildErr := storeFactory.BuildStores(builder.persistenceClient)
-			if buildErr != nil {
-				return nil, mapBuildError(builder.errorMapper, buildErr)
-			}
-			if provider != nil {
-				if builder.connectionStore == nil {
-					builder.connectionStore = provider.ConnectionStore()
-				}
-				if builder.credentialStore == nil {
-					builder.credentialStore = provider.CredentialStore()
-				}
-			}
-		} else if provider, ok := builder.repositoryFactory.(StoreProvider); ok {
-			if builder.connectionStore == nil {
-				builder.connectionStore = provider.ConnectionStore()
-			}
-			if builder.credentialStore == nil {
-				builder.credentialStore = provider.CredentialStore()
-			}
-		}
+func hydrateConnectionAndCredentialStores(builder *serviceBuilder) error {
+	if builder.connectionStore != nil && builder.credentialStore != nil {
+		return nil
 	}
-	if builder.subscriptionStore == nil && builder.repositoryFactory != nil {
-		if provider, ok := builder.repositoryFactory.(interface{ SubscriptionStore() SubscriptionStore }); ok {
-			builder.subscriptionStore = provider.SubscriptionStore()
-		}
+	provider, err := resolveStoreProvider(builder)
+	if err != nil || provider == nil {
+		return err
 	}
-	if builder.syncCursorStore == nil && builder.repositoryFactory != nil {
-		if provider, ok := builder.repositoryFactory.(interface{ SyncCursorStore() SyncCursorStore }); ok {
-			builder.syncCursorStore = provider.SyncCursorStore()
-		}
+	if builder.connectionStore == nil {
+		builder.connectionStore = provider.ConnectionStore()
 	}
-	if builder.installationStore == nil && builder.repositoryFactory != nil {
-		if provider, ok := builder.repositoryFactory.(interface{ InstallationStore() InstallationStore }); ok {
-			builder.installationStore = provider.InstallationStore()
-		}
+	if builder.credentialStore == nil {
+		builder.credentialStore = provider.CredentialStore()
 	}
-	if builder.syncJobStore == nil && builder.repositoryFactory != nil {
-		if provider, ok := builder.repositoryFactory.(interface{ SyncJobStoreCore() SyncJobStore }); ok {
-			builder.syncJobStore = provider.SyncJobStoreCore()
-		} else if provider, ok := builder.repositoryFactory.(interface{ SyncJobStore() SyncJobStore }); ok {
-			builder.syncJobStore = provider.SyncJobStore()
-		}
-	}
-	if builder.permissionEvaluator == nil {
-		builder.permissionEvaluator = NewGrantPermissionEvaluator(
-			builder.connectionStore,
-			builder.grantStore,
-			builder.registry,
-		)
-	}
-	if builder.rateLimitPolicy == nil && builder.repositoryFactory != nil {
-		if provider, ok := builder.repositoryFactory.(interface{ RateLimitPolicy() RateLimitPolicy }); ok {
-			builder.rateLimitPolicy = provider.RateLimitPolicy()
-		}
-	}
+	return nil
+}
 
-	strict := &StrictIsolationPolicy{ConnectionStore: builder.connectionStore}
-	inheritancePolicy := builder.inheritancePolicy
-	if inheritancePolicy == nil {
-		inheritancePolicy = strict
+func resolveStoreProvider(builder *serviceBuilder) (StoreProvider, error) {
+	if factory, ok := builder.repositoryFactory.(RepositoryStoreFactory); ok {
+		return factory.BuildStores(builder.persistenceClient)
 	}
+	provider, _ := builder.repositoryFactory.(StoreProvider)
+	return provider, nil
+}
 
+func hydrateAuxiliaryServiceStores(builder *serviceBuilder) {
+	factory := builder.repositoryFactory
+	if provider, ok := factory.(interface{ SubscriptionStore() SubscriptionStore }); ok && builder.subscriptionStore == nil {
+		builder.subscriptionStore = provider.SubscriptionStore()
+	}
+	if provider, ok := factory.(interface{ SyncCursorStore() SyncCursorStore }); ok && builder.syncCursorStore == nil {
+		builder.syncCursorStore = provider.SyncCursorStore()
+	}
+	if provider, ok := factory.(interface{ InstallationStore() InstallationStore }); ok && builder.installationStore == nil {
+		builder.installationStore = provider.InstallationStore()
+	}
+	hydrateSyncJobStore(builder)
+}
+
+func hydrateSyncJobStore(builder *serviceBuilder) {
+	if builder.syncJobStore != nil {
+		return
+	}
+	if provider, ok := builder.repositoryFactory.(interface{ SyncJobStoreCore() SyncJobStore }); ok {
+		builder.syncJobStore = provider.SyncJobStoreCore()
+		return
+	}
+	if provider, ok := builder.repositoryFactory.(interface{ SyncJobStore() SyncJobStore }); ok {
+		builder.syncJobStore = provider.SyncJobStore()
+	}
+}
+
+func hydrateRateLimitPolicy(builder *serviceBuilder) {
+	if builder.rateLimitPolicy != nil || builder.repositoryFactory == nil {
+		return
+	}
+	if provider, ok := builder.repositoryFactory.(interface{ RateLimitPolicy() RateLimitPolicy }); ok {
+		builder.rateLimitPolicy = provider.RateLimitPolicy()
+	}
+}
+
+func buildService(
+	builder serviceBuilder,
+	config Config,
+	loggerProvider LoggerProvider,
+	logger Logger,
+	strict *StrictIsolationPolicy,
+	inheritancePolicy InheritancePolicy,
+) *Service {
 	return &Service{
-		config:                  finalConfig,
+		config:                  config,
 		logger:                  logger,
-		loggerProvider:          provider,
+		loggerProvider:          loggerProvider,
 		metricsRecorder:         builder.metricsRecorder,
 		errorFactory:            builder.errorFactory,
 		errorMapper:             builder.errorMapper,
@@ -243,7 +287,7 @@ func NewService(cfg Config, opts ...Option) (*Service, error) {
 		callbackURLResolver:     builder.callbackURLResolver,
 		strictPolicy:            strict,
 		inheritancePolicy:       inheritancePolicy,
-	}, nil
+	}
 }
 
 func Setup(cfg Config, opts ...Option) (*Service, error) {
@@ -546,27 +590,55 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		s.observeOperation(ctx, startedAt, "complete_callback", err, fields)
 	}()
 
-	if err = req.Scope.Validate(); err != nil {
-		err = s.mapError(err)
-		return CallbackCompletion{}, err
+	auth, err := s.completeCallbackAuth(ctx, req)
+	if err != nil {
+		return CallbackCompletion{}, s.mapError(err)
+	}
+	connection, wasNeedsReconsent, err := s.reconcileCallbackConnection(ctx, auth)
+	if err != nil {
+		return CallbackCompletion{}, s.mapError(err)
+	}
+	credential, err := s.storeCallbackCredential(ctx, connection.ID, auth.result.Credential)
+	if err != nil {
+		return CallbackCompletion{}, s.mapError(err)
+	}
+	if err := s.reconcileCallbackGrants(ctx, auth, connection.ID, wasNeedsReconsent); err != nil {
+		return CallbackCompletion{}, s.mapError(err)
+	}
+	completion = CallbackCompletion{Connection: connection, Credential: credential}
+	return completion, nil
+}
+
+type callbackAuthCompletion struct {
+	req               CompleteAuthRequest
+	provider          Provider
+	result            AuthCompleteResponse
+	providerID        string
+	scope             ScopeRef
+	externalAccountID string
+}
+
+func (s *Service) completeCallbackAuth(
+	ctx context.Context,
+	req CompleteAuthRequest,
+) (callbackAuthCompletion, error) {
+	if err := req.Scope.Validate(); err != nil {
+		return callbackAuthCompletion{}, err
 	}
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
-		return CallbackCompletion{}, err
+		return callbackAuthCompletion{}, err
 	}
 	strategy := s.resolveAuthStrategy(provider)
 	if strategy == nil {
-		err = s.mapError(fmt.Errorf("core: auth strategy is not configured"))
-		return CallbackCompletion{}, err
+		return callbackAuthCompletion{}, fmt.Errorf("core: auth strategy is not configured")
 	}
 	if strategyRequiresCallbackState(strategy) {
-		stateRecord, stateErr := s.consumeOAuthCallbackState(ctx, req)
+		state, stateErr := s.consumeOAuthCallbackState(ctx, req)
 		if stateErr != nil {
-			err = stateErr
-			err = s.mapError(err)
-			return CallbackCompletion{}, err
+			return callbackAuthCompletion{}, stateErr
 		}
-		req = applyOAuthStateContext(req, stateRecord)
+		req = applyOAuthStateContext(req, state)
 	}
 	result, err := strategy.Complete(ctx, AuthCompleteRequest{
 		Scope:       req.Scope,
@@ -576,149 +648,120 @@ func (s *Service) CompleteCallback(ctx context.Context, req CompleteAuthRequest)
 		Metadata:    copyAnyMap(req.Metadata),
 	})
 	if err != nil {
-		err = s.mapError(err)
-		return CallbackCompletion{}, err
-	}
-	providerID := strings.TrimSpace(provider.ID())
-	scope := ScopeRef{
-		Type: strings.TrimSpace(strings.ToLower(req.Scope.Type)),
-		ID:   strings.TrimSpace(req.Scope.ID),
+		return callbackAuthCompletion{}, err
 	}
 	externalAccountID := strings.TrimSpace(result.ExternalAccountID)
 	if externalAccountID == "" {
-		err = s.mapError(fmt.Errorf("core: external account id is required"))
-		return CallbackCompletion{}, err
+		return callbackAuthCompletion{}, fmt.Errorf("core: external account id is required")
 	}
-
-	connection := Connection{
-		ProviderID:        providerID,
-		ScopeType:         scope.Type,
-		ScopeID:           scope.ID,
-		ExternalAccountID: externalAccountID,
-		Status:            ConnectionStatusActive,
-	}
-	wasNeedsReconsent := false
-	if s.connectionStore != nil {
-		targetConnectionID := readStringMetadata(req.Metadata, "connection_id")
-		existing, found, findErr := s.findCallbackConnection(
-			ctx,
-			providerID,
-			scope,
-			externalAccountID,
-			targetConnectionID,
-		)
-		if findErr != nil {
-			err = s.mapError(findErr)
-			return CallbackCompletion{}, err
-		}
-		if found {
-			connection = existing
-			wasNeedsReconsent = existing.Status == ConnectionStatusNeedsReconsent
-			if updateErr := s.connectionStore.UpdateStatus(
-				ctx,
-				connection.ID,
-				ConnectionStatusActive,
-				"",
-			); updateErr != nil {
-				err = s.mapError(updateErr)
-				return CallbackCompletion{}, err
-			}
-			connection.Status = ConnectionStatusActive
-			connection.LastError = ""
-		} else {
-			connection, err = s.connectionStore.Create(ctx, CreateConnectionInput{
-				ProviderID:        providerID,
-				Scope:             scope,
-				ExternalAccountID: externalAccountID,
-				Status:            ConnectionStatusActive,
-			})
-			if err != nil {
-				err = s.mapError(err)
-				return CallbackCompletion{}, err
-			}
-		}
-	}
-
-	credential := Credential{
-		ConnectionID:    connection.ID,
-		TokenType:       result.Credential.TokenType,
-		RequestedScopes: append([]string(nil), result.Credential.RequestedScopes...),
-		GrantedScopes:   append([]string(nil), result.Credential.GrantedScopes...),
-		Status:          CredentialStatusActive,
-	}
-	if result.Credential.ExpiresAt != nil {
-		credential.ExpiresAt = *result.Credential.ExpiresAt
-	}
-	if result.Credential.RotatesAt != nil {
-		credential.RotatesAt = *result.Credential.RotatesAt
-	}
-
-	if s.credentialStore != nil {
-		encryptedPayload, keyID, keyVersion, payloadFormat, payloadVersion, encryptErr := s.encryptCredentialPayload(ctx, result.Credential)
-		if encryptErr != nil {
-			err = s.mapError(encryptErr)
-			return CallbackCompletion{}, err
-		}
-		credential, err = s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
-			ConnectionID:      connection.ID,
-			EncryptedPayload:  encryptedPayload,
-			PayloadFormat:     payloadFormat,
-			PayloadVersion:    payloadVersion,
-			TokenType:         result.Credential.TokenType,
-			RequestedScopes:   append([]string(nil), result.Credential.RequestedScopes...),
-			GrantedScopes:     append([]string(nil), result.Credential.GrantedScopes...),
-			ExpiresAt:         result.Credential.ExpiresAt,
-			Refreshable:       result.Credential.Refreshable,
-			RotatesAt:         result.Credential.RotatesAt,
-			Status:            CredentialStatusActive,
-			EncryptionKeyID:   keyID,
-			EncryptionVersion: keyVersion,
-		})
-		if err != nil {
-			err = s.mapError(err)
-			return CallbackCompletion{}, err
-		}
-	}
-
-	requestedGrants := append([]string(nil), result.RequestedGrants...)
-	if len(requestedGrants) == 0 {
-		requestedGrants = append([]string(nil), result.Credential.RequestedScopes...)
-	}
-	grantedGrants := append([]string(nil), result.GrantedGrants...)
-	if len(grantedGrants) == 0 {
-		grantedGrants = append([]string(nil), result.Credential.GrantedScopes...)
-	}
-
-	_, delta, grantErr := s.reconcileGrantSnapshot(
-		ctx,
-		provider,
-		connection.ID,
-		requestedGrants,
-		grantedGrants,
-		req.Metadata,
-	)
-	if grantErr != nil {
-		err = s.mapError(grantErr)
-		return CallbackCompletion{}, err
-	}
-	if wasNeedsReconsent && s.grantStore != nil {
-		_ = s.grantStore.AppendEvent(ctx, AppendGrantEventInput{
-			ConnectionID: connection.ID,
-			EventType:    GrantEventReconsentCompleted,
-			Added:        append([]string(nil), delta.Added...),
-			Removed:      append([]string(nil), delta.Removed...),
-			OccurredAt:   time.Now().UTC(),
-			Metadata:     copyAnyMap(req.Metadata),
-		})
-	}
-
-	completion = CallbackCompletion{Connection: connection, Credential: credential}
-	return completion, nil
+	return callbackAuthCompletion{
+		req:               req,
+		provider:          provider,
+		result:            result,
+		providerID:        strings.TrimSpace(provider.ID()),
+		scope:             ScopeRef{Type: strings.TrimSpace(strings.ToLower(req.Scope.Type)), ID: strings.TrimSpace(req.Scope.ID)},
+		externalAccountID: externalAccountID,
+	}, nil
 }
 
-func (s *Service) validateOAuthCallbackState(ctx context.Context, req CompleteAuthRequest) error {
-	_, err := s.consumeOAuthCallbackState(ctx, req)
-	return err
+func (s *Service) reconcileCallbackConnection(
+	ctx context.Context,
+	auth callbackAuthCompletion,
+) (Connection, bool, error) {
+	connection := Connection{
+		ProviderID:        auth.providerID,
+		ScopeType:         auth.scope.Type,
+		ScopeID:           auth.scope.ID,
+		ExternalAccountID: auth.externalAccountID,
+		Status:            ConnectionStatusActive,
+	}
+	if s.connectionStore == nil {
+		return connection, false, nil
+	}
+	existing, found, err := s.findCallbackConnection(
+		ctx,
+		auth.providerID,
+		auth.scope,
+		auth.externalAccountID,
+		readStringMetadata(auth.req.Metadata, "connection_id"),
+	)
+	if err != nil {
+		return Connection{}, false, err
+	}
+	if !found {
+		created, err := s.connectionStore.Create(ctx, CreateConnectionInput{
+			ProviderID:        auth.providerID,
+			Scope:             auth.scope,
+			ExternalAccountID: auth.externalAccountID,
+			Status:            ConnectionStatusActive,
+		})
+		return created, false, err
+	}
+	wasNeedsReconsent := existing.Status == ConnectionStatusNeedsReconsent
+	if err := s.connectionStore.UpdateStatus(ctx, existing.ID, ConnectionStatusActive, ""); err != nil {
+		return Connection{}, false, err
+	}
+	existing.Status = ConnectionStatusActive
+	existing.LastError = ""
+	return existing, wasNeedsReconsent, nil
+}
+
+func (s *Service) storeCallbackCredential(
+	ctx context.Context,
+	connectionID string,
+	active ActiveCredential,
+) (Credential, error) {
+	if s.credentialStore != nil {
+		return s.persistActiveCredential(ctx, connectionID, active)
+	}
+	credential := Credential{
+		ConnectionID:    connectionID,
+		TokenType:       active.TokenType,
+		RequestedScopes: append([]string(nil), active.RequestedScopes...),
+		GrantedScopes:   append([]string(nil), active.GrantedScopes...),
+		Status:          CredentialStatusActive,
+	}
+	if active.ExpiresAt != nil {
+		credential.ExpiresAt = *active.ExpiresAt
+	}
+	if active.RotatesAt != nil {
+		credential.RotatesAt = *active.RotatesAt
+	}
+	return credential, nil
+}
+
+func (s *Service) reconcileCallbackGrants(
+	ctx context.Context,
+	auth callbackAuthCompletion,
+	connectionID string,
+	wasNeedsReconsent bool,
+) error {
+	requested := append([]string(nil), auth.result.RequestedGrants...)
+	if len(requested) == 0 {
+		requested = append([]string(nil), auth.result.Credential.RequestedScopes...)
+	}
+	granted := append([]string(nil), auth.result.GrantedGrants...)
+	if len(granted) == 0 {
+		granted = append([]string(nil), auth.result.Credential.GrantedScopes...)
+	}
+	_, delta, err := s.reconcileGrantSnapshot(
+		ctx, auth.provider, connectionID, requested, granted, auth.req.Metadata,
+	)
+	if err != nil {
+		return err
+	}
+	if !wasNeedsReconsent || s.grantStore == nil {
+		return nil
+	}
+	_ = s.grantStore.AppendEvent(ctx, AppendGrantEventInput{
+		ConnectionID: connectionID,
+		EventType:    GrantEventReconsentCompleted,
+		Added:        append([]string(nil), delta.Added...),
+		Removed:      append([]string(nil), delta.Removed...),
+		OccurredAt:   time.Now().UTC(),
+		Metadata:     copyAnyMap(auth.req.Metadata),
+	})
+	return nil
 }
 
 func (s *Service) consumeOAuthCallbackState(ctx context.Context, req CompleteAuthRequest) (OAuthStateRecord, error) {
@@ -823,59 +866,21 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 		s.observeOperation(ctx, startedAt, "refresh", err, fields)
 	}()
 
-	connectionID := strings.TrimSpace(req.ConnectionID)
-	if connectionID == "" {
+	req.ConnectionID = strings.TrimSpace(req.ConnectionID)
+	if req.ConnectionID == "" {
 		err = s.mapError(fmt.Errorf("core: connection id is required"))
 		return RefreshResult{}, err
 	}
-	req.ConnectionID = connectionID
-
-	unlock := func() {}
-	if s.connectionLocker != nil && !isRefreshLockHeld(ctx, connectionID) {
-		lockHandle, lockErr := s.connectionLocker.Acquire(ctx, connectionID, defaultRefreshLockTTL)
-		if lockErr != nil {
-			err = s.mapError(lockErr)
-			return RefreshResult{}, err
-		}
-		ctx = context.WithValue(ctx, refreshLockContextKey{}, connectionID)
-		unlock = func() {
-			_ = lockHandle.Unlock(ctx)
-		}
+	ctx, unlock, err := s.acquireRefreshLock(ctx, req.ConnectionID)
+	if err != nil {
+		return RefreshResult{}, s.mapError(err)
 	}
 	defer unlock()
-
-	resolvedProviderID := strings.TrimSpace(req.ProviderID)
-	if s.connectionStore != nil {
-		connection, loadErr := s.connectionStore.Get(ctx, req.ConnectionID)
-		if loadErr != nil {
-			err = s.mapError(loadErr)
-			return RefreshResult{}, err
-		}
-		connectionProviderID := strings.TrimSpace(connection.ProviderID)
-		if connectionProviderID == "" {
-			err = s.mapError(fmt.Errorf("core: connection %q has no provider id", req.ConnectionID))
-			return RefreshResult{}, err
-		}
-		if resolvedProviderID == "" {
-			resolvedProviderID = connectionProviderID
-		} else if !strings.EqualFold(resolvedProviderID, connectionProviderID) {
-			err = s.mapError(
-				fmt.Errorf(
-					"core: provider mismatch for connection %q: got %q want %q",
-					req.ConnectionID,
-					resolvedProviderID,
-					connectionProviderID,
-				),
-			)
-			return RefreshResult{}, err
-		}
+	req.ProviderID, err = s.resolveRefreshProviderID(ctx, req.ConnectionID, req.ProviderID)
+	if err != nil {
+		return RefreshResult{}, s.mapError(err)
 	}
-	if resolvedProviderID == "" {
-		err = s.mapError(fmt.Errorf("core: provider id is required"))
-		return RefreshResult{}, err
-	}
-	req.ProviderID = resolvedProviderID
-	provider, err := s.resolveProvider(resolvedProviderID)
+	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -885,22 +890,9 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 		return RefreshResult{}, err
 	}
 
-	activeCred := ActiveCredential{}
-	if req.Credential != nil {
-		activeCred = *req.Credential
-	} else if s.credentialStore != nil {
-		stored, loadErr := s.credentialStore.GetActiveByConnection(ctx, req.ConnectionID)
-		if loadErr != nil {
-			err = s.mapError(loadErr)
-			return RefreshResult{}, err
-		}
-		activeCred, err = s.credentialToActive(ctx, stored)
-		if err != nil {
-			err = s.mapError(err)
-			return RefreshResult{}, err
-		}
-	} else {
-		err = s.mapError(fmt.Errorf("core: refresh requires credential input or credential store"))
+	activeCred, err := s.resolveRefreshCredential(ctx, req)
+	if err != nil {
+		err = s.mapError(err)
 		return RefreshResult{}, err
 	}
 
@@ -910,65 +902,109 @@ func (s *Service) Refresh(ctx context.Context, req RefreshRequest) (result Refre
 		return RefreshResult{}, err
 	}
 
-	shouldPersist := shouldPersistRefreshedCredential(activeCred, result.Credential)
-	if s.credentialStore != nil && shouldPersist {
-		encryptedPayload, keyID, keyVersion, payloadFormat, payloadVersion, encryptErr := s.encryptCredentialPayload(ctx, result.Credential)
-		if encryptErr != nil {
-			err = s.mapError(encryptErr)
-			return RefreshResult{}, err
-		}
-		_, saveErr := s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
-			ConnectionID:      req.ConnectionID,
-			EncryptedPayload:  encryptedPayload,
-			PayloadFormat:     payloadFormat,
-			PayloadVersion:    payloadVersion,
-			TokenType:         result.Credential.TokenType,
-			RequestedScopes:   append([]string(nil), result.Credential.RequestedScopes...),
-			GrantedScopes:     append([]string(nil), result.Credential.GrantedScopes...),
-			ExpiresAt:         result.Credential.ExpiresAt,
-			Refreshable:       result.Credential.Refreshable,
-			RotatesAt:         result.Credential.RotatesAt,
-			Status:            CredentialStatusActive,
-			EncryptionKeyID:   keyID,
-			EncryptionVersion: keyVersion,
-		})
-		if saveErr != nil {
-			err = s.mapError(saveErr)
-			return RefreshResult{}, err
-		}
+	if err = s.persistRefreshOutcome(ctx, req.ConnectionID, provider, activeCred, result); err != nil {
+		err = s.mapError(err)
+		return RefreshResult{}, err
 	}
 
+	return result, nil
+}
+
+func (s *Service) acquireRefreshLock(
+	ctx context.Context,
+	connectionID string,
+) (context.Context, func(), error) {
+	if s.connectionLocker == nil || isRefreshLockHeld(ctx, connectionID) {
+		return ctx, func() {}, nil
+	}
+	lockHandle, err := s.connectionLocker.Acquire(ctx, connectionID, defaultRefreshLockTTL)
+	if err != nil {
+		return ctx, nil, err
+	}
+	lockedContext := context.WithValue(ctx, refreshLockContextKey{}, connectionID)
+	return lockedContext, func() { _ = lockHandle.Unlock(lockedContext) }, nil
+}
+
+func (s *Service) resolveRefreshProviderID(ctx context.Context, connectionID, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if s.connectionStore == nil {
+		if requested == "" {
+			return "", fmt.Errorf("core: provider id is required")
+		}
+		return requested, nil
+	}
+	connection, err := s.connectionStore.Get(ctx, connectionID)
+	if err != nil {
+		return "", err
+	}
+	stored := strings.TrimSpace(connection.ProviderID)
+	if stored == "" {
+		return "", fmt.Errorf("core: connection %q has no provider id", connectionID)
+	}
+	if requested == "" {
+		return stored, nil
+	}
+	if !strings.EqualFold(requested, stored) {
+		return "", fmt.Errorf(
+			"core: provider mismatch for connection %q: got %q want %q",
+			connectionID,
+			requested,
+			stored,
+		)
+	}
+	return requested, nil
+}
+
+func (s *Service) resolveRefreshCredential(ctx context.Context, req RefreshRequest) (ActiveCredential, error) {
+	if req.Credential != nil {
+		return *req.Credential, nil
+	}
+	if s.credentialStore == nil {
+		return ActiveCredential{}, fmt.Errorf("core: refresh requires credential input or credential store")
+	}
+	stored, err := s.credentialStore.GetActiveByConnection(ctx, req.ConnectionID)
+	if err != nil {
+		return ActiveCredential{}, err
+	}
+	return s.credentialToActive(ctx, stored)
+}
+
+func (s *Service) persistRefreshOutcome(
+	ctx context.Context,
+	connectionID string,
+	provider Provider,
+	previous ActiveCredential,
+	result RefreshResult,
+) error {
+	if s.credentialStore != nil && shouldPersistRefreshedCredential(previous, result.Credential) {
+		if _, err := s.persistActiveCredential(ctx, connectionID, result.Credential); err != nil {
+			return err
+		}
+	}
 	if s.connectionStore != nil {
-		if updateErr := s.connectionStore.UpdateStatus(ctx, req.ConnectionID, ConnectionStatusActive, ""); updateErr != nil {
-			err = s.mapError(updateErr)
-			return RefreshResult{}, err
+		if err := s.connectionStore.UpdateStatus(ctx, connectionID, ConnectionStatusActive, ""); err != nil {
+			return err
 		}
 	}
-
-	snapshot, _, grantErr := s.reconcileGrantSnapshot(
+	snapshot, _, err := s.reconcileGrantSnapshot(
 		ctx,
 		provider,
-		req.ConnectionID,
+		connectionID,
 		result.Credential.RequestedScopes,
 		resolveRefreshGrantedGrants(result),
 		result.Metadata,
 	)
-	if grantErr != nil {
-		err = s.mapError(grantErr)
-		return RefreshResult{}, err
+	if err != nil {
+		return err
 	}
-	if len(missingRequiredProviderGrants(provider.Capabilities(), snapshot.Granted)) > 0 {
-		if transitionErr := s.transitionConnectionToNeedsReconsent(
-			ctx,
-			req.ConnectionID,
-			"required grants missing after refresh",
-		); transitionErr != nil {
-			err = s.mapError(transitionErr)
-			return RefreshResult{}, err
-		}
+	if len(missingRequiredProviderGrants(provider.Capabilities(), snapshot.Granted)) == 0 {
+		return nil
 	}
-
-	return result, nil
+	return s.transitionConnectionToNeedsReconsent(
+		ctx,
+		connectionID,
+		"required grants missing after refresh",
+	)
 }
 
 func (s *Service) Revoke(ctx context.Context, connectionID string, reason string) (err error) {
@@ -1033,46 +1069,9 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 		return CapabilityResult{}, err
 	}
 
-	resolution := ConnectionResolution{}
-	requestedConnectionID := strings.TrimSpace(req.ConnectionID)
-	if requestedConnectionID != "" {
-		if s.connectionStore == nil {
-			err = s.mapError(fmt.Errorf("core: connection store unavailable"))
-			return CapabilityResult{}, err
-		}
-		connection, loadErr := s.connectionStore.Get(ctx, requestedConnectionID)
-		if loadErr != nil {
-			err = s.mapError(loadErr)
-			return CapabilityResult{}, err
-		}
-		if !strings.EqualFold(strings.TrimSpace(connection.ProviderID), strings.TrimSpace(req.ProviderID)) {
-			err = s.mapError(fmt.Errorf("core: provider mismatch for connection %q", requestedConnectionID))
-			return CapabilityResult{}, err
-		}
-		if strings.TrimSpace(req.Scope.Type) != "" || strings.TrimSpace(req.Scope.ID) != "" {
-			if !strings.EqualFold(strings.TrimSpace(connection.ScopeType), strings.TrimSpace(req.Scope.Type)) ||
-				strings.TrimSpace(connection.ScopeID) != strings.TrimSpace(req.Scope.ID) {
-				err = s.mapError(fmt.Errorf("core: scope mismatch for connection %q", requestedConnectionID))
-				return CapabilityResult{}, err
-			}
-		}
-		if connection.Status != ConnectionStatusActive {
-			resolution = ConnectionResolution{
-				Outcome: ConnectionResolutionNotFound,
-				Reason:  "connection is not active",
-			}
-		} else {
-			resolution = ConnectionResolution{
-				Outcome:    ConnectionResolutionDirect,
-				Connection: connection,
-			}
-		}
-	} else {
-		resolution, err = s.resolveConnection(ctx, req.ProviderID, req.Scope)
-		if err != nil {
-			err = s.mapError(err)
-			return CapabilityResult{}, err
-		}
+	resolution, err := s.resolveCapabilityConnection(ctx, req)
+	if err != nil {
+		return CapabilityResult{}, s.mapError(err)
 	}
 	if resolution.Outcome == ConnectionResolutionNotFound || resolution.Outcome == ConnectionResolutionAmbiguous {
 		result = CapabilityResult{
@@ -1083,20 +1082,9 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 		return result, nil
 	}
 
-	decision := PermissionDecision{
-		Allowed:    true,
-		Capability: req.Capability,
-		Mode:       descriptor.DeniedBehavior,
-	}
-	if s.permissionEvaluator != nil {
-		decision, err = s.permissionEvaluator.EvaluateCapability(ctx, resolution.Connection.ID, req.Capability)
-		if err != nil {
-			err = s.mapError(err)
-			return CapabilityResult{}, err
-		}
-		if decision.Mode == "" {
-			decision.Mode = descriptor.DeniedBehavior
-		}
+	decision, err := s.evaluateCapabilityPermission(ctx, resolution.Connection.ID, req.Capability, descriptor)
+	if err != nil {
+		return CapabilityResult{}, s.mapError(err)
 	}
 
 	metadata := map[string]any{
@@ -1114,6 +1102,64 @@ func (s *Service) InvokeCapability(ctx context.Context, req InvokeCapabilityRequ
 		Metadata:   metadata,
 	}
 	return result, nil
+}
+
+func (s *Service) resolveCapabilityConnection(
+	ctx context.Context,
+	req InvokeCapabilityRequest,
+) (ConnectionResolution, error) {
+	connectionID := strings.TrimSpace(req.ConnectionID)
+	if connectionID == "" {
+		return s.resolveConnection(ctx, req.ProviderID, req.Scope)
+	}
+	if s.connectionStore == nil {
+		return ConnectionResolution{}, fmt.Errorf("core: connection store unavailable")
+	}
+	connection, err := s.connectionStore.Get(ctx, connectionID)
+	if err != nil {
+		return ConnectionResolution{}, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(connection.ProviderID), strings.TrimSpace(req.ProviderID)) {
+		return ConnectionResolution{}, fmt.Errorf("core: provider mismatch for connection %q", connectionID)
+	}
+	if err := validateRequestedConnectionScope(connection, req.Scope); err != nil {
+		return ConnectionResolution{}, err
+	}
+	if connection.Status != ConnectionStatusActive {
+		return ConnectionResolution{Outcome: ConnectionResolutionNotFound, Reason: "connection is not active"}, nil
+	}
+	return ConnectionResolution{Outcome: ConnectionResolutionDirect, Connection: connection}, nil
+}
+
+func validateRequestedConnectionScope(connection Connection, requested ScopeRef) error {
+	if strings.TrimSpace(requested.Type) == "" && strings.TrimSpace(requested.ID) == "" {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(connection.ScopeType), strings.TrimSpace(requested.Type)) ||
+		strings.TrimSpace(connection.ScopeID) != strings.TrimSpace(requested.ID) {
+		return fmt.Errorf("core: scope mismatch for connection %q", connection.ID)
+	}
+	return nil
+}
+
+func (s *Service) evaluateCapabilityPermission(
+	ctx context.Context,
+	connectionID string,
+	capability string,
+	descriptor CapabilityDescriptor,
+) (PermissionDecision, error) {
+	decision := PermissionDecision{Allowed: true, Capability: capability, Mode: descriptor.DeniedBehavior}
+	if s.permissionEvaluator == nil {
+		return decision, nil
+	}
+	evaluated, err := s.permissionEvaluator.EvaluateCapability(ctx, connectionID, capability)
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	if evaluated.Mode == "" {
+		evaluated.Mode = descriptor.DeniedBehavior
+	}
+	return evaluated, nil
 }
 
 func (s *Service) resolveConnection(ctx context.Context, providerID string, requested ScopeRef) (ConnectionResolution, error) {
@@ -1216,23 +1262,32 @@ func (s *Service) credentialToActive(ctx context.Context, credential Credential)
 		ConnectionID: credential.ConnectionID,
 	}
 	if len(credential.EncryptedPayload) > 0 {
-		if s == nil || s.secretProvider == nil {
-			return ActiveCredential{}, fmt.Errorf("core: secret provider is required to decrypt credential payloads")
-		}
-		decrypted, err := s.secretProvider.Decrypt(ctx, credential.EncryptedPayload)
+		decoded, err := s.decodeCredentialPayload(ctx, credential)
 		if err != nil {
-			return ActiveCredential{}, fmt.Errorf("core: decrypt credential payload: %w", err)
-		}
-		codec, codecErr := s.codecForCredential(credential)
-		if codecErr != nil {
-			return ActiveCredential{}, codecErr
-		}
-		decoded, decodeErr := codec.Decode(decrypted)
-		if decodeErr != nil {
-			return ActiveCredential{}, decodeErr
+			return ActiveCredential{}, err
 		}
 		active = decoded
 	}
+	applyCredentialFallbacks(&active, credential)
+	return active, nil
+}
+
+func (s *Service) decodeCredentialPayload(ctx context.Context, credential Credential) (ActiveCredential, error) {
+	if s == nil || s.secretProvider == nil {
+		return ActiveCredential{}, fmt.Errorf("core: secret provider is required to decrypt credential payloads")
+	}
+	decrypted, err := s.secretProvider.Decrypt(ctx, credential.EncryptedPayload)
+	if err != nil {
+		return ActiveCredential{}, fmt.Errorf("core: decrypt credential payload: %w", err)
+	}
+	codec, err := s.codecForCredential(credential)
+	if err != nil {
+		return ActiveCredential{}, err
+	}
+	return codec.Decode(decrypted)
+}
+
+func applyCredentialFallbacks(active *ActiveCredential, credential Credential) {
 	if strings.TrimSpace(active.ConnectionID) == "" {
 		active.ConnectionID = credential.ConnectionID
 	}
@@ -1256,7 +1311,6 @@ func (s *Service) credentialToActive(ctx context.Context, credential Credential)
 		rotates := credential.RotatesAt
 		active.RotatesAt = &rotates
 	}
-	return active, nil
 }
 
 func resolveRefreshGrantedGrants(result RefreshResult) []string {
@@ -1327,6 +1381,32 @@ func sameTimePointer(left, right *time.Time) bool {
 
 type secretProviderMetadata interface {
 	Metadata() (string, int)
+}
+
+func (s *Service) persistActiveCredential(
+	ctx context.Context,
+	connectionID string,
+	credential ActiveCredential,
+) (Credential, error) {
+	encryptedPayload, keyID, keyVersion, payloadFormat, payloadVersion, err := s.encryptCredentialPayload(ctx, credential)
+	if err != nil {
+		return Credential{}, err
+	}
+	return s.credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
+		ConnectionID:      connectionID,
+		EncryptedPayload:  encryptedPayload,
+		PayloadFormat:     payloadFormat,
+		PayloadVersion:    payloadVersion,
+		TokenType:         credential.TokenType,
+		RequestedScopes:   append([]string(nil), credential.RequestedScopes...),
+		GrantedScopes:     append([]string(nil), credential.GrantedScopes...),
+		ExpiresAt:         credential.ExpiresAt,
+		Refreshable:       credential.Refreshable,
+		RotatesAt:         credential.RotatesAt,
+		Status:            CredentialStatusActive,
+		EncryptionKeyID:   keyID,
+		EncryptionVersion: keyVersion,
+	})
 }
 
 func (s *Service) encryptCredentialPayload(

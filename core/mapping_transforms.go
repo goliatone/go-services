@@ -3,11 +3,13 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
 
+//nolint:gocyclo // Closed transform dispatch stays exhaustive beside its policies; TestApplyMappingTransformMatrix covers every operation.
 func applyMappingTransform(transform string, value any) (any, error) {
 	switch normalizeTransform(transform) {
 	case "identity":
@@ -61,6 +63,7 @@ func applyMappingTransform(transform string, value any) (any, error) {
 	}
 }
 
+//nolint:funlen,gocyclo // Closed Go-type conversion matrix keeps overflow policy visible; TestToIntValueConversionMatrix covers every branch.
 func toIntValue(value any) (int64, error) {
 	switch typed := value.(type) {
 	case int:
@@ -74,6 +77,9 @@ func toIntValue(value any) (int64, error) {
 	case int64:
 		return typed, nil
 	case uint:
+		if uint64(typed) > math.MaxInt64 {
+			return 0, fmt.Errorf("core: uint value %d overflows int64", typed)
+		}
 		return int64(typed), nil
 	case uint8:
 		return int64(typed), nil
@@ -82,6 +88,9 @@ func toIntValue(value any) (int64, error) {
 	case uint32:
 		return int64(typed), nil
 	case uint64:
+		if typed > math.MaxInt64 {
+			return 0, fmt.Errorf("core: uint64 value %d overflows int64", typed)
+		}
 		return int64(typed), nil
 	case float32:
 		return int64(typed), nil
@@ -117,6 +126,7 @@ func toIntValue(value any) (int64, error) {
 	}
 }
 
+//nolint:gocyclo // Closed Go-type conversion matrix is audited by TestToFloatValueConversionMatrix.
 func toFloatValue(value any) (float64, error) {
 	switch typed := value.(type) {
 	case int:
@@ -169,6 +179,7 @@ func toFloatValue(value any) (float64, error) {
 	}
 }
 
+//nolint:gocyclo // Closed Go-type conversion matrix is audited by TestToBoolValueConversionMatrix.
 func toBoolValue(value any) (bool, error) {
 	switch typed := value.(type) {
 	case bool:

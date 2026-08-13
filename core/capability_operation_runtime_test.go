@@ -56,14 +56,14 @@ func TestInvokeCapabilityOperation_ExecutesResolvedOperation(t *testing.T) {
 		t.Fatalf("create connection: %v", err)
 	}
 	grantStore := newMemoryGrantStore()
-	if err := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
+	if testErr := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
 		ConnectionID: connection.ID,
 		Version:      1,
 		Requested:    []string{"reports.read"},
 		Granted:      []string{"reports.read"},
 		CapturedAt:   time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("save grant snapshot: %v", err)
+	}); testErr != nil {
+		t.Fatalf("save grant snapshot: %v", testErr)
 	}
 
 	svc, err := NewService(
@@ -129,14 +129,14 @@ func TestInvokeCapabilityOperation_ReturnsBlockedDecisionWithoutExecution(t *tes
 		t.Fatalf("create connection: %v", err)
 	}
 	grantStore := newMemoryGrantStore()
-	if err := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
+	if testErr := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
 		ConnectionID: connection.ID,
 		Version:      1,
 		Requested:    []string{"reports.read"},
 		Granted:      []string{},
 		CapturedAt:   time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("save grant snapshot: %v", err)
+	}); testErr != nil {
+		t.Fatalf("save grant snapshot: %v", testErr)
 	}
 
 	svc, err := NewService(
@@ -202,9 +202,7 @@ func TestInvokeCapabilityOperation_RequiresCapabilityOperationResolver(t *testin
 	if err == nil {
 		t.Fatalf("expected resolver requirement error")
 	}
-	if !strings.Contains(err.Error(), "does not support capability operation runtime") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorInternal, "does not support capability operation runtime")
 }
 
 type capabilityResolverProvider struct {

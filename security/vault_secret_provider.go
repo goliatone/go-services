@@ -142,75 +142,50 @@ func (p *VaultSecretProvider) Encrypt(ctx context.Context, plaintext []byte) ([]
 	if p == nil {
 		return nil, fmt.Errorf("security: secret provider is nil")
 	}
-	if len(plaintext) == 0 {
-		return nil, fmt.Errorf("security: plaintext is required")
-	}
-	if !p.rotationWindowAllows(p.active) {
-		return nil, fmt.Errorf("security: vault key %q version %d is outside the configured rotation window", p.active.Path, p.active.Version)
-	}
-
-	response, err := p.client.Encrypt(ctx, VaultEncryptRequest{
-		KeyPath:    p.active.Path,
-		KeyVersion: p.active.Version,
-		Plaintext:  append([]byte(nil), plaintext...),
-		Metadata:   copyStringMap(p.metadata),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("security: vault encrypt: %w", err)
-	}
-	if len(response.Ciphertext) == 0 {
-		return nil, fmt.Errorf("security: vault encrypt returned empty ciphertext")
-	}
-	return encodeEnvelope(envelope{
-		KeyID:      p.active.Path,
-		Version:    p.active.Version,
-		Algorithm:  envelopeAlgorithmVault,
-		Ciphertext: encodeCiphertextPayload(response.Ciphertext),
-		Metadata:   copyStringMap(p.metadata),
-	})
+	return encryptManagedEnvelope(
+		plaintext,
+		"vault",
+		p.active.Path,
+		p.active.Version,
+		envelopeAlgorithmVault,
+		p.metadata,
+		p.rotationWindowAllows(p.active),
+		func(payload []byte) ([]byte, error) {
+			response, err := p.client.Encrypt(ctx, VaultEncryptRequest{
+				KeyPath: p.active.Path, KeyVersion: p.active.Version, Plaintext: payload, Metadata: copyStringMap(p.metadata),
+			})
+			return response.Ciphertext, err
+		},
+	)
 }
 
+//nolint:dupl // Shared policy is in decryptManagedEnvelope; typed Vault request/error handling cannot share the KMS client API. TestVaultSecretProvider_EncryptDecryptRoundTrip covers this adapter.
 func (p *VaultSecretProvider) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
 	if p == nil {
 		return nil, fmt.Errorf("security: secret provider is nil")
 	}
-	env, _, err := decodeEnvelope(ciphertext, envelopeDecodeOptions{DefaultAlgorithm: envelopeAlgorithmVault})
-	if err != nil {
-		return nil, err
-	}
-	if env.Algorithm != envelopeAlgorithmVault {
-		return nil, fmt.Errorf("security: unsupported envelope algorithm %q", env.Algorithm)
-	}
-	ref, err := newVaultKeyRef(env.KeyID, env.Version)
-	if err != nil {
-		return nil, err
-	}
-	if !p.allowAnyDecrypt {
-		if _, ok := p.decryptAllowed[ref.id()]; !ok {
-			return nil, fmt.Errorf("security: vault decrypt key %q version %d is not configured", ref.Path, ref.Version)
-		}
-	}
-	if !p.rotationWindowAllows(ref) {
-		return nil, fmt.Errorf("security: vault key %q version %d is outside the configured rotation window", ref.Path, ref.Version)
-	}
-
-	payload, err := decodeCiphertextPayload(env.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	response, err := p.client.Decrypt(ctx, VaultDecryptRequest{
-		KeyPath:    ref.Path,
-		KeyVersion: ref.Version,
-		Ciphertext: payload,
-		Metadata:   copyStringMap(env.Metadata),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("security: vault decrypt: %w", err)
-	}
-	if len(response.Plaintext) == 0 {
-		return nil, fmt.Errorf("security: vault decrypt returned empty plaintext")
-	}
-	return response.Plaintext, nil
+	return decryptManagedEnvelope(
+		ciphertext,
+		"vault",
+		envelopeAlgorithmVault,
+		p.allowAnyDecrypt,
+		func(env envelope) (managedEnvelopeKey, error) {
+			ref, err := newVaultKeyRef(env.KeyID, env.Version)
+			if err != nil {
+				return managedEnvelopeKey{}, err
+			}
+			_, configured := p.decryptAllowed[ref.id()]
+			return managedEnvelopeKey{
+				keyID: ref.Path, version: ref.Version, configured: configured, rotationAllowed: p.rotationWindowAllows(ref),
+			}, nil
+		},
+		func(key managedEnvelopeKey, payload []byte, metadata map[string]string) ([]byte, error) {
+			response, err := p.client.Decrypt(ctx, VaultDecryptRequest{
+				KeyPath: key.keyID, KeyVersion: key.version, Ciphertext: payload, Metadata: metadata,
+			})
+			return response.Plaintext, err
+		},
+	)
 }
 
 func (p *VaultSecretProvider) KeyID() string {

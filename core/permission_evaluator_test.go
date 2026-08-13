@@ -33,13 +33,13 @@ func TestInvokeCapability_BlocksWhenRequiredGrantMissing(t *testing.T) {
 	}
 
 	grantStore := newMemoryGrantStore()
-	if err := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
+	if testErr := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
 		ConnectionID: connection.ID,
 		Version:      1,
 		Requested:    []string{"repo:write"},
 		Granted:      []string{"repo:read"},
-	}); err != nil {
-		t.Fatalf("save snapshot: %v", err)
+	}); testErr != nil {
+		t.Fatalf("save snapshot: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},
@@ -95,13 +95,13 @@ func TestInvokeCapability_DegradesWhenOptionalGrantMissing(t *testing.T) {
 	}
 
 	grantStore := newMemoryGrantStore()
-	if err := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
+	if testErr := grantStore.SaveSnapshot(ctx, SaveGrantSnapshotInput{
 		ConnectionID: connection.ID,
 		Version:      1,
 		Requested:    []string{"repo:read", "repo:write"},
 		Granted:      []string{"repo:read"},
-	}); err != nil {
-		t.Fatalf("save snapshot: %v", err)
+	}); testErr != nil {
+		t.Fatalf("save snapshot: %v", testErr)
 	}
 
 	svc, err := NewService(Config{},

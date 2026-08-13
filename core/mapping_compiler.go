@@ -43,31 +43,7 @@ func (c *MappingCompiler) CompileMappingSpec(
 	}
 
 	spec := normalizeMappingSpec(req.Spec)
-	var issues []MappingValidationIssue
-
-	if err := req.Schema.Validate(); err != nil {
-		issues = append(issues, mappingIssue("invalid_schema", err.Error(), "", "", "", MappingValidationIssueError))
-	}
-	if err := spec.Validate(); err != nil {
-		issues = append(issues, mappingIssue("invalid_spec", err.Error(), "", "", "", MappingValidationIssueError))
-	}
-	schemaReference := deriveExternalSchemaReference(req.Schema)
-	if schemaReference != "" && strings.TrimSpace(spec.SchemaRef) != "" {
-		if normalizePath(schemaReference) != normalizePath(spec.SchemaRef) {
-			issues = append(issues, mappingIssue(
-				"schema_drift_detected",
-				fmt.Sprintf(
-					"core: mapping spec schema_ref %q differs from active schema %q",
-					spec.SchemaRef,
-					schemaReference,
-				),
-				"",
-				"",
-				"",
-				MappingValidationIssueWarning,
-			))
-		}
-	}
+	issues := validateMappingInputs(req.Schema, spec)
 
 	sourceObject, sourceObjectFound := findExternalObject(req.Schema, spec.SourceObject)
 	if !sourceObjectFound {
@@ -87,115 +63,9 @@ func (c *MappingCompiler) CompileMappingSpec(
 		}, issues, nil
 	}
 
-	fieldByPath, requiredFields := buildSourceFieldIndexes(sourceObject)
-	mappedRequiredFields := make(map[string]struct{})
-	targetPathToRuleID := make(map[string]string)
-	compiledRules := make([]CompiledMappingRule, 0, len(spec.Rules))
-
-	for _, rule := range spec.Rules {
-		rule = normalizeMappingRule(rule)
-		sourcePath := normalizePath(rule.SourcePath)
-		targetPath := normalizePath(rule.TargetPath)
-
-		sourceField, sourceFound := fieldByPath[sourcePath]
-		if !sourceFound {
-			issues = append(issues, mappingIssue(
-				"source_field_not_found",
-				fmt.Sprintf("core: source field %q not found in object %q", rule.SourcePath, sourceObject.Name),
-				rule.ID,
-				rule.SourcePath,
-				rule.TargetPath,
-				MappingValidationIssueError,
-			))
-		} else if sourceField.Required {
-			mappedRequiredFields[sourcePath] = struct{}{}
-		}
-
-		transform := normalizeTransform(rule.Transform)
-		transformSupported := isSupportedMappingTransform(transform)
-		if !transformSupported {
-			issues = append(issues, mappingIssue(
-				"transform_unknown",
-				fmt.Sprintf("core: unsupported transform %q", rule.Transform),
-				rule.ID,
-				rule.SourcePath,
-				rule.TargetPath,
-				MappingValidationIssueError,
-			))
-		}
-
-		targetType := resolveTargetType(rule)
-		sourceType := canonicalFieldType(sourceField.Type)
-		if transformSupported &&
-			sourceFound &&
-			targetType != "" &&
-			!isMappingTypeCompatible(sourceType, targetType, transform) {
-			issues = append(issues, mappingIssue(
-				"type_incompatible",
-				fmt.Sprintf(
-					"core: source type %q is not compatible with target type %q using transform %q",
-					sourceType,
-					targetType,
-					transform,
-				),
-				rule.ID,
-				rule.SourcePath,
-				rule.TargetPath,
-				MappingValidationIssueError,
-			))
-		}
-
-		if existingRuleID, duplicate := targetPathToRuleID[targetPath]; duplicate {
-			issues = append(issues, mappingIssue(
-				"target_path_duplicate",
-				fmt.Sprintf("core: duplicate target path %q for rules %q and %q", rule.TargetPath, existingRuleID, rule.ID),
-				rule.ID,
-				rule.SourcePath,
-				rule.TargetPath,
-				MappingValidationIssueError,
-			))
-		} else if targetPath != "" {
-			targetPathToRuleID[targetPath] = rule.ID
-		}
-
-		compiledRules = append(compiledRules, CompiledMappingRule{
-			Rule:       rule,
-			SourceType: sourceType,
-			TargetType: targetType,
-			Transform:  transform,
-		})
-	}
-
-	requiredPaths := make([]string, 0, len(requiredFields))
-	for path := range requiredFields {
-		requiredPaths = append(requiredPaths, path)
-	}
-	sort.Strings(requiredPaths)
-	for _, path := range requiredPaths {
-		if _, ok := mappedRequiredFields[path]; ok {
-			continue
-		}
-		issues = append(issues, mappingIssue(
-			"required_field_unmapped",
-			fmt.Sprintf("core: required source field %q is not mapped", requiredFields[path].Path),
-			"",
-			requiredFields[path].Path,
-			"",
-			MappingValidationIssueError,
-		))
-	}
-
-	sort.SliceStable(compiledRules, func(i, j int) bool {
-		left := compiledRules[i]
-		right := compiledRules[j]
-		if left.Rule.TargetPath != right.Rule.TargetPath {
-			return left.Rule.TargetPath < right.Rule.TargetPath
-		}
-		if left.Rule.SourcePath != right.Rule.SourcePath {
-			return left.Rule.SourcePath < right.Rule.SourcePath
-		}
-		return left.Rule.ID < right.Rule.ID
-	})
+	compiledRules, ruleIssues := compileMappingRules(spec.Rules, sourceObject)
+	issues = append(issues, ruleIssues...)
+	sortCompiledMappingRules(compiledRules)
 
 	compiled := CompiledMappingSpec{
 		SpecID:       spec.SpecID,
@@ -212,6 +82,131 @@ func (c *MappingCompiler) CompileMappingSpec(
 
 	sortMappingValidationIssues(issues)
 	return compiled, issues, nil
+}
+
+func validateMappingInputs(schema ExternalSchema, spec MappingSpec) []MappingValidationIssue {
+	issues := make([]MappingValidationIssue, 0, 3)
+	if err := schema.Validate(); err != nil {
+		issues = append(issues, mappingIssue("invalid_schema", err.Error(), "", "", "", MappingValidationIssueError))
+	}
+	if err := spec.Validate(); err != nil {
+		issues = append(issues, mappingIssue("invalid_spec", err.Error(), "", "", "", MappingValidationIssueError))
+	}
+	schemaReference := deriveExternalSchemaReference(schema)
+	if schemaReference != "" && strings.TrimSpace(spec.SchemaRef) != "" &&
+		normalizePath(schemaReference) != normalizePath(spec.SchemaRef) {
+		issues = append(issues, mappingIssue(
+			"schema_drift_detected",
+			fmt.Sprintf("core: mapping spec schema_ref %q differs from active schema %q", spec.SchemaRef, schemaReference),
+			"", "", "", MappingValidationIssueWarning,
+		))
+	}
+	return issues
+}
+
+type mappingRuleCompiler struct {
+	object         ExternalObjectSchema
+	fields         map[string]ExternalField
+	required       map[string]ExternalField
+	mappedRequired map[string]struct{}
+	targetRules    map[string]string
+}
+
+func compileMappingRules(
+	rules []MappingRule,
+	object ExternalObjectSchema,
+) ([]CompiledMappingRule, []MappingValidationIssue) {
+	fields, required := buildSourceFieldIndexes(object)
+	compiler := mappingRuleCompiler{
+		object: object, fields: fields, required: required,
+		mappedRequired: map[string]struct{}{}, targetRules: map[string]string{},
+	}
+	compiled := make([]CompiledMappingRule, 0, len(rules))
+	var issues []MappingValidationIssue
+	for _, rule := range rules {
+		compiledRule, ruleIssues := compiler.compileRule(rule)
+		compiled = append(compiled, compiledRule)
+		issues = append(issues, ruleIssues...)
+	}
+	issues = append(issues, compiler.unmappedRequiredIssues()...)
+	return compiled, issues
+}
+
+func (c *mappingRuleCompiler) compileRule(rule MappingRule) (CompiledMappingRule, []MappingValidationIssue) {
+	rule = normalizeMappingRule(rule)
+	sourcePath := normalizePath(rule.SourcePath)
+	targetPath := normalizePath(rule.TargetPath)
+	sourceField, sourceFound := c.fields[sourcePath]
+	var issues []MappingValidationIssue
+	if !sourceFound {
+		issues = append(issues, mappingIssue(
+			"source_field_not_found",
+			fmt.Sprintf("core: source field %q not found in object %q", rule.SourcePath, c.object.Name),
+			rule.ID, rule.SourcePath, rule.TargetPath, MappingValidationIssueError,
+		))
+	} else if sourceField.Required {
+		c.mappedRequired[sourcePath] = struct{}{}
+	}
+	transform := normalizeTransform(rule.Transform)
+	transformSupported := isSupportedMappingTransform(transform)
+	if !transformSupported {
+		issues = append(issues, mappingIssue(
+			"transform_unknown", fmt.Sprintf("core: unsupported transform %q", rule.Transform),
+			rule.ID, rule.SourcePath, rule.TargetPath, MappingValidationIssueError,
+		))
+	}
+	targetType := resolveTargetType(rule)
+	sourceType := canonicalFieldType(sourceField.Type)
+	if transformSupported && sourceFound && targetType != "" && !isMappingTypeCompatible(sourceType, targetType, transform) {
+		issues = append(issues, mappingIssue(
+			"type_incompatible",
+			fmt.Sprintf("core: source type %q is not compatible with target type %q using transform %q", sourceType, targetType, transform),
+			rule.ID, rule.SourcePath, rule.TargetPath, MappingValidationIssueError,
+		))
+	}
+	if existingRuleID, duplicate := c.targetRules[targetPath]; duplicate {
+		issues = append(issues, mappingIssue(
+			"target_path_duplicate",
+			fmt.Sprintf("core: duplicate target path %q for rules %q and %q", rule.TargetPath, existingRuleID, rule.ID),
+			rule.ID, rule.SourcePath, rule.TargetPath, MappingValidationIssueError,
+		))
+	} else if targetPath != "" {
+		c.targetRules[targetPath] = rule.ID
+	}
+	return CompiledMappingRule{Rule: rule, SourceType: sourceType, TargetType: targetType, Transform: transform}, issues
+}
+
+func (c *mappingRuleCompiler) unmappedRequiredIssues() []MappingValidationIssue {
+	paths := make([]string, 0, len(c.required))
+	for path := range c.required {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	var issues []MappingValidationIssue
+	for _, path := range paths {
+		if _, mapped := c.mappedRequired[path]; mapped {
+			continue
+		}
+		field := c.required[path]
+		issues = append(issues, mappingIssue(
+			"required_field_unmapped", fmt.Sprintf("core: required source field %q is not mapped", field.Path),
+			"", field.Path, "", MappingValidationIssueError,
+		))
+	}
+	return issues
+}
+
+func sortCompiledMappingRules(rules []CompiledMappingRule) {
+	sort.SliceStable(rules, func(i, j int) bool {
+		left, right := rules[i], rules[j]
+		if left.Rule.TargetPath != right.Rule.TargetPath {
+			return left.Rule.TargetPath < right.Rule.TargetPath
+		}
+		if left.Rule.SourcePath != right.Rule.SourcePath {
+			return left.Rule.SourcePath < right.Rule.SourcePath
+		}
+		return left.Rule.ID < right.Rule.ID
+	})
 }
 
 func containsMappingErrors(issues []MappingValidationIssue) bool {
@@ -386,6 +381,7 @@ func isSupportedMappingTransform(transform string) bool {
 	}
 }
 
+//nolint:gocyclo // Closed type/transform matrix is easier to audit inline; TestMappingTypeCompatibilityMatrix covers every transform.
 func isMappingTypeCompatible(sourceType, targetType, transform string) bool {
 	targetType = canonicalFieldType(targetType)
 	sourceType = canonicalFieldType(sourceType)

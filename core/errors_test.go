@@ -27,6 +27,48 @@ func (e testConvertibleError) ToServiceError() *goerrors.Error {
 		WithTextCode(ServiceErrorRateLimited)
 }
 
+func errorChainContainsMessage(err error, expected string) bool {
+	if err == nil {
+		return false
+	}
+
+	expected = strings.ToLower(expected)
+	if rich, ok := err.(*goerrors.Error); ok && strings.Contains(strings.ToLower(rich.Message), expected) {
+		return true
+	}
+
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, source := range wrapped.Unwrap() {
+			if errorChainContainsMessage(source, expected) {
+				return true
+			}
+		}
+		return false
+	case interface{ Unwrap() error }:
+		return errorChainContainsMessage(wrapped.Unwrap(), expected)
+	default:
+		return strings.Contains(strings.ToLower(err.Error()), expected)
+	}
+}
+
+func requireServiceError(t *testing.T, err error, textCode, diagnostic string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected service error %q", textCode)
+	}
+	var richErr *goerrors.Error
+	if !goerrors.As(err, &richErr) {
+		t.Fatalf("expected structured service error, got %T: %v", err, err)
+	}
+	if richErr.TextCode != textCode {
+		t.Fatalf("expected service error text code %q, got %q", textCode, richErr.TextCode)
+	}
+	if !errorChainContainsMessage(err, diagnostic) {
+		t.Fatalf("expected diagnostic %q in error chain, got %v", diagnostic, err)
+	}
+}
+
 func TestServiceErrorMapper_AssignsStableCodes(t *testing.T) {
 	mapped := serviceErrorMapper(stderrors.New("core: oauth callback state mismatch"))
 	if mapped.TextCode != ServiceErrorOAuthStateInvalid {
@@ -159,9 +201,7 @@ func TestRefresh_RejectsProviderConnectionMismatch(t *testing.T) {
 			Refreshable: true,
 		},
 	})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider mismatch") {
-		t.Fatalf("expected provider mismatch error, got %v", err)
-	}
+	requireServiceError(t, err, ServiceErrorBadInput, "provider mismatch")
 }
 
 func TestServiceErrorMapper_UsesTypedServiceConversion(t *testing.T) {

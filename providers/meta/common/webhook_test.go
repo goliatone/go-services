@@ -94,8 +94,8 @@ func TestNormalizeWebhookEvent_EnforcesProviderSpecificObjectRules(t *testing.T)
 			"X-Meta-Delivery-Id": "delivery_facebook_1",
 		},
 	}
-	if _, err := NormalizeWebhookEvent("meta_facebook", facebookReq); err != nil {
-		t.Fatalf("normalize facebook webhook: %v", err)
+	if _, testErr := NormalizeWebhookEvent("meta_facebook", facebookReq); testErr != nil {
+		t.Fatalf("normalize facebook webhook: %v", testErr)
 	}
 
 	_, err = NormalizeWebhookEvent("meta_instagram", facebookReq)

@@ -63,20 +63,11 @@ func (s *MappingSpecLifecycle) CreateDraft(ctx context.Context, spec MappingSpec
 	spec.PublishedAt = nil
 
 	if spec.Version == 0 {
-		latest, found, err := s.store.GetLatest(ctx, spec.ProviderID, spec.Scope, spec.SpecID)
+		version, err := s.nextMappingSpecVersion(ctx, spec)
 		if err != nil {
 			return MappingSpec{}, err
 		}
-		if found {
-			if latest.Status != MappingSpecStatusPublished {
-				return MappingSpec{}, fmt.Errorf(
-					"core: latest mapping spec version must be published before creating a new draft",
-				)
-			}
-			spec.Version = latest.Version + 1
-		} else {
-			spec.Version = 1
-		}
+		spec.Version = version
 	}
 
 	if existing, found, err := s.store.GetVersion(ctx, spec.ProviderID, spec.Scope, spec.SpecID, spec.Version); err != nil {
@@ -96,8 +87,8 @@ func (s *MappingSpecLifecycle) CreateDraft(ctx context.Context, spec MappingSpec
 		)
 	}
 
-	if err := spec.Validate(); err != nil {
-		return MappingSpec{}, err
+	if validationErr := spec.Validate(); validationErr != nil {
+		return MappingSpec{}, validationErr
 	}
 	saved, err := s.store.CreateDraft(ctx, spec)
 	if err != nil {
@@ -107,6 +98,20 @@ func (s *MappingSpecLifecycle) CreateDraft(ctx context.Context, spec MappingSpec
 		return MappingSpec{}, publishErr
 	}
 	return saved, nil
+}
+
+func (s *MappingSpecLifecycle) nextMappingSpecVersion(ctx context.Context, spec MappingSpec) (int, error) {
+	latest, found, err := s.store.GetLatest(ctx, spec.ProviderID, spec.Scope, spec.SpecID)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 1, nil
+	}
+	if latest.Status != MappingSpecStatusPublished {
+		return 0, fmt.Errorf("core: latest mapping spec version must be published before creating a new draft")
+	}
+	return latest.Version + 1, nil
 }
 
 func (s *MappingSpecLifecycle) UpdateDraft(ctx context.Context, spec MappingSpec) (MappingSpec, error) {
@@ -139,8 +144,8 @@ func (s *MappingSpecLifecycle) UpdateDraft(ctx context.Context, spec MappingSpec
 
 	spec.Status = MappingSpecStatusDraft
 	spec.PublishedAt = nil
-	if err := spec.Validate(); err != nil {
-		return MappingSpec{}, err
+	if validationErr := spec.Validate(); validationErr != nil {
+		return MappingSpec{}, validationErr
 	}
 	updated, err := s.store.UpdateDraft(ctx, spec)
 	if err != nil {

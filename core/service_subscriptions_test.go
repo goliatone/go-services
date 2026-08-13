@@ -83,11 +83,11 @@ func TestService_SubscriptionLifecycle_PersistsState(t *testing.T) {
 		t.Fatalf("expected renewed metadata to persist")
 	}
 
-	if err := svc.CancelSubscription(ctx, CancelSubscriptionRequest{
+	if testErr := svc.CancelSubscription(ctx, CancelSubscriptionRequest{
 		SubscriptionID: renewed.ID,
 		Reason:         "user disconnect",
-	}); err != nil {
-		t.Fatalf("cancel subscription: %v", err)
+	}); testErr != nil {
+		t.Fatalf("cancel subscription: %v", testErr)
 	}
 
 	stored, err := subscriptionStore.Get(ctx, renewed.ID)
@@ -150,9 +150,9 @@ func TestService_RenewSubscriptionMarksErroredOnProviderFailure(t *testing.T) {
 		t.Fatalf("seed subscription: %v", err)
 	}
 
-	if _, err := svc.RenewSubscription(ctx, RenewSubscriptionRequest{
+	if _, testErr := svc.RenewSubscription(ctx, RenewSubscriptionRequest{
 		SubscriptionID: subscription.ID,
-	}); err == nil {
+	}); testErr == nil {
 		t.Fatalf("expected renew failure")
 	}
 

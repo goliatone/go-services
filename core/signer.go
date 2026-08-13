@@ -156,27 +156,26 @@ func (s *Service) resolveSignerForProvider(provider Provider) Signer {
 }
 
 func (s *Service) resolveSignerForCredential(provider Provider, cred *ActiveCredential) Signer {
-	if signer := s.resolveSignerForProvider(provider); signer != nil {
-		if provider != nil {
-			if _, ok := provider.(ProviderSigner); ok {
-				return signer
-			}
-		}
+	signer := s.resolveSignerForProvider(provider)
+	_, providerControlsSigner := provider.(ProviderSigner)
+	if signer != nil && providerControlsSigner {
+		return signer
 	}
-	if cred != nil {
-		if s == nil || s.signer == nil {
-			if authSigner := resolveAuthKindSigner(*cred); authSigner != nil {
-				return authSigner
-			}
-		} else {
-			if _, isDefaultBearer := s.signer.(BearerTokenSigner); isDefaultBearer {
-				if authSigner := resolveAuthKindSigner(*cred); authSigner != nil {
-					return authSigner
-				}
-			}
-		}
+	if cred == nil || !shouldUseCredentialSigner(s) {
+		return signer
 	}
-	return s.resolveSignerForProvider(provider)
+	if authSigner := resolveAuthKindSigner(*cred); authSigner != nil {
+		return authSigner
+	}
+	return signer
+}
+
+func shouldUseCredentialSigner(s *Service) bool {
+	if s == nil || s.signer == nil {
+		return true
+	}
+	_, isDefaultBearer := s.signer.(BearerTokenSigner)
+	return isDefaultBearer
 }
 
 func (s *Service) SignRequest(
@@ -194,55 +193,18 @@ func (s *Service) SignRequest(
 	}
 
 	connectionID = strings.TrimSpace(connectionID)
-	resolvedProviderID := strings.TrimSpace(providerID)
-	if s.connectionStore != nil && connectionID != "" {
-		connection, loadErr := s.connectionStore.Get(ctx, connectionID)
-		if loadErr != nil {
-			return s.mapError(loadErr)
-		}
-		connectionProviderID := strings.TrimSpace(connection.ProviderID)
-		if connectionProviderID == "" {
-			return s.mapError(fmt.Errorf("core: connection %q has no provider id", connectionID))
-		}
-		if resolvedProviderID == "" {
-			resolvedProviderID = connectionProviderID
-		} else if !strings.EqualFold(resolvedProviderID, connectionProviderID) {
-			return s.mapError(
-				fmt.Errorf(
-					"core: provider mismatch for connection %q: got %q want %q",
-					connectionID,
-					resolvedProviderID,
-					connectionProviderID,
-				),
-			)
-		}
-	}
-	if resolvedProviderID == "" {
-		return s.mapError(fmt.Errorf("core: provider id is required for signing"))
+	resolvedProviderID, err := s.resolveSigningProviderID(ctx, providerID, connectionID)
+	if err != nil {
+		return s.mapError(err)
 	}
 
 	provider, err := s.resolveProvider(resolvedProviderID)
 	if err != nil {
 		return err
 	}
-	active := ActiveCredential{}
-	if cred != nil {
-		active = *cred
-	} else if s.credentialStore != nil {
-		if connectionID == "" {
-			return s.mapError(fmt.Errorf("core: connection id is required to load signing credential"))
-		}
-		stored, loadErr := s.credentialStore.GetActiveByConnection(ctx, connectionID)
-		if loadErr != nil {
-			return s.mapError(loadErr)
-		}
-		resolved, resolveErr := s.credentialToActive(ctx, stored)
-		if resolveErr != nil {
-			return s.mapError(resolveErr)
-		}
-		active = resolved
-	} else {
-		return s.mapError(fmt.Errorf("core: credential is required for signing"))
+	active, err := s.resolveSigningCredential(ctx, connectionID, cred)
+	if err != nil {
+		return s.mapError(err)
 	}
 
 	signer := s.resolveSignerForCredential(provider, &active)
@@ -254,6 +216,57 @@ func (s *Service) SignRequest(
 		return s.mapError(signErr)
 	}
 	return nil
+}
+
+func (s *Service) resolveSigningProviderID(ctx context.Context, providerID, connectionID string) (string, error) {
+	resolvedProviderID := strings.TrimSpace(providerID)
+	if s.connectionStore == nil || connectionID == "" {
+		if resolvedProviderID == "" {
+			return "", fmt.Errorf("core: provider id is required for signing")
+		}
+		return resolvedProviderID, nil
+	}
+	connection, err := s.connectionStore.Get(ctx, connectionID)
+	if err != nil {
+		return "", err
+	}
+	connectionProviderID := strings.TrimSpace(connection.ProviderID)
+	if connectionProviderID == "" {
+		return "", fmt.Errorf("core: connection %q has no provider id", connectionID)
+	}
+	if resolvedProviderID == "" {
+		return connectionProviderID, nil
+	}
+	if !strings.EqualFold(resolvedProviderID, connectionProviderID) {
+		return "", fmt.Errorf(
+			"core: provider mismatch for connection %q: got %q want %q",
+			connectionID,
+			resolvedProviderID,
+			connectionProviderID,
+		)
+	}
+	return resolvedProviderID, nil
+}
+
+func (s *Service) resolveSigningCredential(
+	ctx context.Context,
+	connectionID string,
+	cred *ActiveCredential,
+) (ActiveCredential, error) {
+	if cred != nil {
+		return *cred, nil
+	}
+	if s.credentialStore == nil {
+		return ActiveCredential{}, fmt.Errorf("core: credential is required for signing")
+	}
+	if connectionID == "" {
+		return ActiveCredential{}, fmt.Errorf("core: connection id is required to load signing credential")
+	}
+	stored, err := s.credentialStore.GetActiveByConnection(ctx, connectionID)
+	if err != nil {
+		return ActiveCredential{}, err
+	}
+	return s.credentialToActive(ctx, stored)
 }
 
 func resolveAuthKindSigner(cred ActiveCredential) Signer {

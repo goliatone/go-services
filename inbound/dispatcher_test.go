@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -185,8 +186,26 @@ func TestDispatcher_ReturnsFailPersistenceErrorOnHandlerFailure(t *testing.T) {
 	if !errors.Is(err, handlerErr) {
 		t.Fatalf("expected original handler error to be preserved, got %v", err)
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "mark idempotency claim failed") {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		t.Fatalf("expected joined handler and persistence errors, got %T", err)
+	}
+	var persistenceErr *goerrors.Error
+	for _, source := range joined.Unwrap() {
+		var candidate *goerrors.Error
+		if goerrors.As(source, &candidate) && strings.Contains(
+			strings.ToLower(candidate.Message),
+			"mark idempotency claim failed",
+		) {
+			persistenceErr = candidate
+			break
+		}
+	}
+	if persistenceErr == nil {
 		t.Fatalf("expected idempotency fail persistence context, got %v", err)
+	}
+	if persistenceErr.TextCode != core.ServiceErrorInternal {
+		t.Fatalf("expected persistence error text code %q, got %q", core.ServiceErrorInternal, persistenceErr.TextCode)
 	}
 }
 
@@ -203,9 +222,9 @@ func TestInMemoryClaimStore_RecoversAfterLeaseExpiry(t *testing.T) {
 		t.Fatalf("expected first claim to be accepted")
 	}
 
-	if _, accepted, err := store.Claim(context.Background(), "provider:surface:key", time.Minute); err != nil {
-		t.Fatalf("claim while lease active: %v", err)
-	} else if accepted {
+	if _, acceptedWhileLeased, testErr := store.Claim(context.Background(), "provider:surface:key", time.Minute); testErr != nil {
+		t.Fatalf("claim while lease active: %v", testErr)
+	} else if acceptedWhileLeased {
 		t.Fatalf("expected claim to be rejected while lease is active")
 	}
 

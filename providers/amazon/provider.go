@@ -166,15 +166,9 @@ func (p *Provider) CompleteAuth(ctx context.Context, req core.CompleteAuthReques
 	if err != nil {
 		return core.CompleteAuthResponse{}, err
 	}
-	complete.Credential.Metadata, err = p.applySigV4Metadata(complete.Credential.Metadata, req.Metadata, "")
-	if err != nil {
+	if err := p.decorateCredential(&complete.Credential, &complete.Metadata, req.Metadata); err != nil {
 		return core.CompleteAuthResponse{}, err
 	}
-	complete.Metadata = mergeMetadata(complete.Metadata, map[string]any{
-		"signing_profile": core.AuthKindAWSSigV4,
-		"aws_region":      complete.Credential.Metadata["aws_region"],
-		"aws_service":     complete.Credential.Metadata["aws_service"],
-	})
 	return complete, nil
 }
 
@@ -186,16 +180,28 @@ func (p *Provider) Refresh(ctx context.Context, cred core.ActiveCredential) (cor
 	if err != nil {
 		return core.RefreshResult{}, err
 	}
-	refreshed.Credential.Metadata, err = p.applySigV4Metadata(refreshed.Credential.Metadata, cred.Metadata, "")
-	if err != nil {
+	if err := p.decorateCredential(&refreshed.Credential, &refreshed.Metadata, cred.Metadata); err != nil {
 		return core.RefreshResult{}, err
 	}
-	refreshed.Metadata = mergeMetadata(refreshed.Metadata, map[string]any{
-		"signing_profile": core.AuthKindAWSSigV4,
-		"aws_region":      refreshed.Credential.Metadata["aws_region"],
-		"aws_service":     refreshed.Credential.Metadata["aws_service"],
-	})
 	return refreshed, nil
+}
+
+func (p *Provider) decorateCredential(
+	credential *core.ActiveCredential,
+	responseMetadata *map[string]any,
+	runtimeMetadata map[string]any,
+) error {
+	metadata, err := p.applySigV4Metadata(credential.Metadata, runtimeMetadata, "")
+	if err != nil {
+		return err
+	}
+	credential.Metadata = metadata
+	*responseMetadata = mergeMetadata(*responseMetadata, map[string]any{
+		"signing_profile": core.AuthKindAWSSigV4,
+		"aws_region":      metadata["aws_region"],
+		"aws_service":     metadata["aws_service"],
+	})
+	return nil
 }
 
 func (p *Provider) Signer() core.Signer {

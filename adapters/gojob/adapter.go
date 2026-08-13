@@ -124,24 +124,21 @@ func (a *EnqueuerAdapter) Enqueue(ctx context.Context, msg *core.JobExecutionMes
 }
 
 func (a *EnqueuerAdapter) EnqueueAt(ctx context.Context, msg *core.JobExecutionMessage, at time.Time) (core.JobEnqueueReceipt, error) {
-	if a == nil || a.enqueuer == nil {
-		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: enqueuer is not configured")
-	}
-	if msg == nil {
-		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: execution message is required")
-	}
-	scheduled, ok := a.enqueuer.(queue.ScheduledEnqueuer)
-	if !ok {
-		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: %w", queue.ErrScheduledEnqueueUnsupported)
-	}
-	receipt, err := scheduled.EnqueueAt(ctx, ToExecutionMessage(msg), at)
-	if err != nil {
-		return core.JobEnqueueReceipt{}, err
-	}
-	return toEnqueueReceipt(receipt), nil
+	return a.enqueueScheduled(msg, func(scheduled queue.ScheduledEnqueuer, execution *job.ExecutionMessage) (queue.EnqueueReceipt, error) {
+		return scheduled.EnqueueAt(ctx, execution, at)
+	})
 }
 
 func (a *EnqueuerAdapter) EnqueueAfter(ctx context.Context, msg *core.JobExecutionMessage, delay time.Duration) (core.JobEnqueueReceipt, error) {
+	return a.enqueueScheduled(msg, func(scheduled queue.ScheduledEnqueuer, execution *job.ExecutionMessage) (queue.EnqueueReceipt, error) {
+		return scheduled.EnqueueAfter(ctx, execution, delay)
+	})
+}
+
+func (a *EnqueuerAdapter) enqueueScheduled(
+	msg *core.JobExecutionMessage,
+	enqueue func(queue.ScheduledEnqueuer, *job.ExecutionMessage) (queue.EnqueueReceipt, error),
+) (core.JobEnqueueReceipt, error) {
 	if a == nil || a.enqueuer == nil {
 		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: enqueuer is not configured")
 	}
@@ -152,7 +149,7 @@ func (a *EnqueuerAdapter) EnqueueAfter(ctx context.Context, msg *core.JobExecuti
 	if !ok {
 		return core.JobEnqueueReceipt{}, fmt.Errorf("gojob: %w", queue.ErrScheduledEnqueueUnsupported)
 	}
-	receipt, err := scheduled.EnqueueAfter(ctx, ToExecutionMessage(msg), delay)
+	receipt, err := enqueue(scheduled, ToExecutionMessage(msg))
 	if err != nil {
 		return core.JobEnqueueReceipt{}, err
 	}

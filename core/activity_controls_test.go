@@ -24,13 +24,13 @@ func TestOperationalActivitySink_NonBlockingFallbackWhenQueueIsFull(t *testing.T
 	}()
 
 	entry := ServiceActivityEntry{ID: "a", Action: "first"}
-	if err := sink.Record(context.Background(), entry); err != nil {
-		t.Fatalf("record first: %v", err)
+	if testErr := sink.Record(context.Background(), entry); testErr != nil {
+		t.Fatalf("record first: %v", testErr)
 	}
 	<-primary.started
 
-	if err := sink.Record(context.Background(), ServiceActivityEntry{ID: "b", Action: "second"}); err != nil {
-		t.Fatalf("record queued entry: %v", err)
+	if testErr := sink.Record(context.Background(), ServiceActivityEntry{ID: "b", Action: "second"}); testErr != nil {
+		t.Fatalf("record queued entry: %v", testErr)
 	}
 
 	start := time.Now()

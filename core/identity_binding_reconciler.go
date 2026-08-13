@@ -86,17 +86,8 @@ func (r *IdentityBindingReconciler) ReconcileIdentity(
 	}
 
 	req = normalizeReconcileIdentityRequest(req)
-	if req.ProviderID == "" {
-		return ReconcileIdentityResult{}, fmt.Errorf("core: provider id is required")
-	}
-	if err := req.Scope.Validate(); err != nil {
+	if err := validateReconcileIdentityRequest(req); err != nil {
 		return ReconcileIdentityResult{}, err
-	}
-	if req.ConnectionID == "" || req.SyncBindingID == "" {
-		return ReconcileIdentityResult{}, fmt.Errorf("core: connection id and sync binding id are required")
-	}
-	if req.SourceObject == "" || req.ExternalID == "" {
-		return ReconcileIdentityResult{}, fmt.Errorf("core: source object and external id are required")
 	}
 
 	existing, found, err := r.store.GetByExternalID(ctx, req.SyncBindingID, req.ExternalID)
@@ -113,15 +104,38 @@ func (r *IdentityBindingReconciler) ReconcileIdentity(
 	candidates := normalizeCandidates(req.Candidates)
 	matchKind, selected, secondConfidence := r.resolveMatchKind(candidates)
 
-	metadata := copyMetadata(req.Metadata)
-	metadata["reconcile.candidate_count"] = len(candidates)
-	metadata["reconcile.second_confidence"] = secondConfidence
-	if selected != nil {
-		metadata["reconcile.top_confidence"] = selected.Confidence
-		metadata["reconcile.top_internal_type"] = selected.InternalType
-		metadata["reconcile.top_internal_id"] = selected.InternalID
+	binding := reconciledIdentityBinding(req, candidates, matchKind, selected, secondConfidence)
+	saved, saveErr := r.store.Upsert(ctx, binding)
+	if saveErr != nil {
+		return ReconcileIdentityResult{}, saveErr
 	}
+	return ReconcileIdentityResult{Binding: saved, Created: true}, nil
+}
 
+func validateReconcileIdentityRequest(req ReconcileIdentityRequest) error {
+	if req.ProviderID == "" {
+		return fmt.Errorf("core: provider id is required")
+	}
+	if err := req.Scope.Validate(); err != nil {
+		return err
+	}
+	if req.ConnectionID == "" || req.SyncBindingID == "" {
+		return fmt.Errorf("core: connection id and sync binding id are required")
+	}
+	if req.SourceObject == "" || req.ExternalID == "" {
+		return fmt.Errorf("core: source object and external id are required")
+	}
+	return nil
+}
+
+func reconciledIdentityBinding(
+	req ReconcileIdentityRequest,
+	candidates []IdentityCandidate,
+	matchKind IdentityBindingMatchKind,
+	selected *IdentityCandidate,
+	secondConfidence float64,
+) IdentityBinding {
+	metadata := identityReconciliationMetadata(req.Metadata, candidates, selected, secondConfidence)
 	binding := IdentityBinding{
 		ProviderID:    req.ProviderID,
 		Scope:         req.Scope,
@@ -148,14 +162,24 @@ func (r *IdentityBindingReconciler) ReconcileIdentity(
 		binding.Confidence = 0
 	}
 
-	saved, saveErr := r.store.Upsert(ctx, binding)
-	if saveErr != nil {
-		return ReconcileIdentityResult{}, saveErr
+	return binding
+}
+
+func identityReconciliationMetadata(
+	raw map[string]any,
+	candidates []IdentityCandidate,
+	selected *IdentityCandidate,
+	secondConfidence float64,
+) map[string]any {
+	metadata := copyMetadata(raw)
+	metadata["reconcile.candidate_count"] = len(candidates)
+	metadata["reconcile.second_confidence"] = secondConfidence
+	if selected != nil {
+		metadata["reconcile.top_confidence"] = selected.Confidence
+		metadata["reconcile.top_internal_type"] = selected.InternalType
+		metadata["reconcile.top_internal_id"] = selected.InternalID
 	}
-	return ReconcileIdentityResult{
-		Binding: saved,
-		Created: true,
-	}, nil
+	return metadata
 }
 
 func (r *IdentityBindingReconciler) resolveMatchKind(

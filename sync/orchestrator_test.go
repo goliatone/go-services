@@ -89,8 +89,8 @@ func TestOrchestrator_DurableCheckpointAndResume(t *testing.T) {
 		t.Fatalf("expected next attempt timestamp")
 	}
 
-	if err := orchestrator.Resume(context.Background(), job.ID); err != nil {
-		t.Fatalf("resume job: %v", err)
+	if testErr := orchestrator.Resume(context.Background(), job.ID); testErr != nil {
+		t.Fatalf("resume job: %v", testErr)
 	}
 	resumed, err := jobStore.Get(context.Background(), job.ID)
 	if err != nil {

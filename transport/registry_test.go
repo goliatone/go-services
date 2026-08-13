@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	goerrors "github.com/goliatone/go-errors"
 	"github.com/goliatone/go-services/core"
 )
 
@@ -210,8 +211,12 @@ func TestRESTAdapter_DoFailsOnResponseBodyOverLimit(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected response body limit error")
 	}
-	if !strings.Contains(err.Error(), "response body exceeds limit") {
+	var richErr *goerrors.Error
+	if !goerrors.As(err, &richErr) || !strings.Contains(richErr.Message, "response body exceeds limit") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if richErr.TextCode != core.ServiceErrorExternalFailure {
+		t.Fatalf("expected text code %q, got %q", core.ServiceErrorExternalFailure, richErr.TextCode)
 	}
 }
 
@@ -233,8 +238,12 @@ func TestRESTAdapter_RequestBodyLimitOverridesAdapterLimit(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected response body limit error")
 	}
-	if !strings.Contains(err.Error(), "response body exceeds limit of 4 bytes") {
+	var richErr *goerrors.Error
+	if !goerrors.As(err, &richErr) || !strings.Contains(richErr.Message, "response body exceeds limit of 4 bytes") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if richErr.TextCode != core.ServiceErrorExternalFailure {
+		t.Fatalf("expected text code %q, got %q", core.ServiceErrorExternalFailure, richErr.TextCode)
 	}
 }
 
@@ -305,7 +314,15 @@ func TestGraphQLAdapter_ForwardsResponseBodyLimit(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected response body limit error")
 	}
-	if !strings.Contains(err.Error(), "response body exceeds limit of 4 bytes") {
+	var richErr *goerrors.Error
+	if !goerrors.As(err, &richErr) {
+		t.Fatalf("expected graphql error envelope, got %T", err)
+	}
+	if richErr.TextCode != core.ServiceErrorExternalFailure {
+		t.Fatalf("expected text code %q, got %q", core.ServiceErrorExternalFailure, richErr.TextCode)
+	}
+	var restErr *goerrors.Error
+	if !goerrors.As(richErr.Source, &restErr) || !strings.Contains(restErr.Message, "response body exceeds limit of 4 bytes") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

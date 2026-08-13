@@ -20,17 +20,39 @@ func (s *CredentialStore) SaveNewVersion(ctx context.Context, in core.SaveCreden
 	if s == nil || s.repo == nil || s.db == nil {
 		return core.Credential{}, fmt.Errorf("sqlstore: credential store is not configured")
 	}
-	trimmedConnectionID := strings.TrimSpace(in.ConnectionID)
-	if trimmedConnectionID == "" {
-		return core.Credential{}, fmt.Errorf("sqlstore: connection id is required")
+	prepared, err := prepareCredentialInput(in)
+	if err != nil {
+		return core.Credential{}, err
 	}
+	return runInTxResult(ctx, s.db, func(ctx context.Context, tx bun.Tx) (core.Credential, error) {
+		return s.saveCredentialVersionTx(ctx, tx, prepared, time.Now().UTC())
+	})
+}
 
-	status := in.Status
-	if strings.TrimSpace(string(status)) == "" {
-		status = core.CredentialStatusActive
+func prepareCredentialInput(in core.SaveCredentialInput) (core.SaveCredentialInput, error) {
+	in = normalizeCredentialInput(in)
+	return in, validateCredentialInput(in)
+}
+
+func runInTxResult[T any](
+	ctx context.Context,
+	db *bun.DB,
+	operation func(context.Context, bun.Tx) (T, error),
+) (T, error) {
+	var result T
+	err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		resolved, operationErr := operation(ctx, tx)
+		result = resolved
+		return operationErr
+	})
+	return result, err
+}
+
+func normalizeCredentialInput(in core.SaveCredentialInput) core.SaveCredentialInput {
+	in.ConnectionID = strings.TrimSpace(in.ConnectionID)
+	if strings.TrimSpace(string(in.Status)) == "" {
+		in.Status = core.CredentialStatusActive
 	}
-	in.ConnectionID = trimmedConnectionID
-	in.Status = status
 	in.EncryptionKeyID = strings.TrimSpace(in.EncryptionKeyID)
 	in.PayloadFormat = strings.TrimSpace(in.PayloadFormat)
 	if in.PayloadFormat == "" {
@@ -39,58 +61,54 @@ func (s *CredentialStore) SaveNewVersion(ctx context.Context, in core.SaveCreden
 	if in.PayloadVersion <= 0 {
 		in.PayloadVersion = core.CredentialPayloadVersionV1
 	}
+	return in
+}
+
+func validateCredentialInput(in core.SaveCredentialInput) error {
+	if in.ConnectionID == "" {
+		return fmt.Errorf("sqlstore: connection id is required")
+	}
 	if len(in.EncryptedPayload) == 0 {
-		return core.Credential{}, fmt.Errorf("sqlstore: encrypted payload is required")
-	}
-	if in.PayloadFormat == "" {
-		return core.Credential{}, fmt.Errorf("sqlstore: payload format is required")
-	}
-	if in.PayloadVersion <= 0 {
-		return core.Credential{}, fmt.Errorf("sqlstore: payload version must be greater than zero")
+		return fmt.Errorf("sqlstore: encrypted payload is required")
 	}
 	if in.EncryptionKeyID == "" {
-		return core.Credential{}, fmt.Errorf("sqlstore: encryption key id is required")
+		return fmt.Errorf("sqlstore: encryption key id is required")
 	}
 	if in.EncryptionVersion <= 0 {
-		return core.Credential{}, fmt.Errorf("sqlstore: encryption version must be greater than zero")
+		return fmt.Errorf("sqlstore: encryption version must be greater than zero")
 	}
-	now := time.Now().UTC()
+	return nil
+}
 
-	var created core.Credential
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		nextVersion, versionErr := s.nextVersion(ctx, tx, trimmedConnectionID)
-		if versionErr != nil {
-			return versionErr
-		}
-
-		if status == core.CredentialStatusActive {
-			revokeReason := "rotated"
-			_, updateErr := tx.NewUpdate().
-				Model((*credentialRecord)(nil)).
-				Set("status = ?", string(core.CredentialStatusRevoked)).
-				Set("revocation_reason = ?", revokeReason).
-				Set("updated_at = ?", now).
-				Where("connection_id = ?", trimmedConnectionID).
-				Where("status = ?", string(core.CredentialStatusActive)).
-				Exec(ctx)
-			if updateErr != nil {
-				return updateErr
-			}
-		}
-
-		record := newCredentialRecord(in, nextVersion, now)
-		inserted, createErr := s.repo.CreateTx(ctx, tx, record)
-		if createErr != nil {
-			return createErr
-		}
-		created = inserted.toDomain()
-		return nil
-	})
+func (s *CredentialStore) saveCredentialVersionTx(
+	ctx context.Context,
+	tx bun.Tx,
+	in core.SaveCredentialInput,
+	now time.Time,
+) (core.Credential, error) {
+	nextVersion, err := s.nextVersion(ctx, tx, in.ConnectionID)
 	if err != nil {
 		return core.Credential{}, err
 	}
-
-	return created, nil
+	if in.Status == core.CredentialStatusActive {
+		_, err = tx.NewUpdate().
+			Model((*credentialRecord)(nil)).
+			Set("status = ?", string(core.CredentialStatusRevoked)).
+			Set("revocation_reason = ?", "rotated").
+			Set("updated_at = ?", now).
+			Where("connection_id = ?", in.ConnectionID).
+			Where("status = ?", string(core.CredentialStatusActive)).
+			Exec(ctx)
+		if err != nil {
+			return core.Credential{}, err
+		}
+	}
+	record := newCredentialRecord(in, nextVersion, now)
+	inserted, err := s.repo.CreateTx(ctx, tx, record)
+	if err != nil {
+		return core.Credential{}, err
+	}
+	return inserted.toDomain(), nil
 }
 
 func (s *CredentialStore) GetActiveByConnection(ctx context.Context, connectionID string) (core.Credential, error) {

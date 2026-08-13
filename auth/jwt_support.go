@@ -101,7 +101,7 @@ func parseRSAPrivateKey(signingKey string) (*rsa.PrivateKey, error) {
 	if block == nil {
 		return nil, fmt.Errorf("auth: invalid rsa private key pem")
 	}
-	if x509.IsEncryptedPEMBlock(block) {
+	if strings.Contains(strings.ToUpper(block.Headers["Proc-Type"]), "ENCRYPTED") || block.Headers["DEK-Info"] != "" {
 		return nil, fmt.Errorf("auth: encrypted rsa private key pem is not supported")
 	}
 

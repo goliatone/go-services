@@ -76,82 +76,15 @@ func (c *SessionTokenExchangeClient) ExchangeSessionToken(
 	ctx context.Context,
 	req ExchangeSessionTokenRequest,
 ) (core.EmbeddedAccessToken, error) {
-	if c == nil || c.httpClient == nil {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "http client is not configured",
-			Cause:   ErrTokenExchangeFailed,
-		}
-	}
-	clientID := strings.TrimSpace(c.config.ClientID)
-	clientSecret := strings.TrimSpace(c.config.ClientSecret)
-	if clientID == "" || clientSecret == "" {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "client id and client secret are required",
-			Cause:   ErrTokenExchangeFailed,
-		}
-	}
-	shopDomain, err := normalizeShopDomain(req.ShopDomain)
+	input, err := c.resolveExchangeInput(req)
 	if err != nil {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "invalid shop domain",
-			Cause:   err,
-		}
+		return core.EmbeddedAccessToken{}, err
 	}
-	sessionToken := strings.TrimSpace(req.SessionToken)
-	if sessionToken == "" {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "session token is required",
-			Cause:   ErrTokenExchangeFailed,
-		}
-	}
-	tokenURL, err := c.config.BuildTokenURL(shopDomain)
+	httpReq, cancel, err := c.buildExchangeRequest(ctx, input)
 	if err != nil {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "resolve token url",
-			Cause:   err,
-		}
-	}
-	normalizedTokenType, requestedTypeURN, err := resolveRequestedTokenType(req.RequestedTokenType)
-	if err != nil {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "invalid requested token type",
-			Cause:   err,
-		}
-	}
-
-	values := url.Values{}
-	values.Set("grant_type", tokenExchangeGrantType)
-	values.Set("subject_token", sessionToken)
-	values.Set("subject_token_type", subjectTokenTypeIDToken)
-	values.Set("requested_token_type", requestedTypeURN)
-	values.Set("client_id", clientID)
-	values.Set("client_secret", clientSecret)
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	requestCtx := ctx
-	cancel := func() {}
-	if c.config.TokenRequestTimeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, c.config.TokenRequestTimeout)
+		return core.EmbeddedAccessToken{}, err
 	}
 	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(
-		requestCtx,
-		http.MethodPost,
-		tokenURL,
-		strings.NewReader(values.Encode()),
-	)
-	if err != nil {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "build exchange request",
-			Cause:   err,
-		}
-	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Accept", "application/json")
-
 	response, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return core.EmbeddedAccessToken{}, &ExchangeError{
@@ -159,56 +92,125 @@ func (c *SessionTokenExchangeClient) ExchangeSessionToken(
 			Cause:   err,
 		}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
+	payload, err := decodeExchangeResponse(response)
+	if err != nil {
+		return core.EmbeddedAccessToken{}, err
+	}
+	return c.exchangeAccessToken(response.StatusCode, payload, input)
+}
 
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxExchangeResponseBodyBytes+1))
-	if readErr != nil {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: "read exchange response",
-			Cause:   readErr,
-		}
+type exchangeInput struct {
+	clientID            string
+	clientSecret        string
+	shopDomain          string
+	sessionToken        string
+	tokenURL            string
+	normalizedTokenType core.EmbeddedRequestedTokenType
+	requestedTypeURN    string
+}
+
+func (c *SessionTokenExchangeClient) resolveExchangeInput(req ExchangeSessionTokenRequest) (exchangeInput, error) {
+	if c == nil || c.httpClient == nil {
+		return exchangeInput{}, &ExchangeError{Message: "http client is not configured", Cause: ErrTokenExchangeFailed}
+	}
+	input := exchangeInput{
+		clientID:     strings.TrimSpace(c.config.ClientID),
+		clientSecret: strings.TrimSpace(c.config.ClientSecret),
+		sessionToken: strings.TrimSpace(req.SessionToken),
+	}
+	if input.clientID == "" || input.clientSecret == "" {
+		return exchangeInput{}, &ExchangeError{Message: "client id and client secret are required", Cause: ErrTokenExchangeFailed}
+	}
+	var err error
+	input.shopDomain, err = normalizeShopDomain(req.ShopDomain)
+	if err != nil {
+		return exchangeInput{}, &ExchangeError{Message: "invalid shop domain", Cause: err}
+	}
+	if input.sessionToken == "" {
+		return exchangeInput{}, &ExchangeError{Message: "session token is required", Cause: ErrTokenExchangeFailed}
+	}
+	input.tokenURL, err = c.config.BuildTokenURL(input.shopDomain)
+	if err != nil {
+		return exchangeInput{}, &ExchangeError{Message: "resolve token url", Cause: err}
+	}
+	input.normalizedTokenType, input.requestedTypeURN, err = resolveRequestedTokenType(req.RequestedTokenType)
+	if err != nil {
+		return exchangeInput{}, &ExchangeError{Message: "invalid requested token type", Cause: err}
+	}
+	return input, nil
+}
+
+func (c *SessionTokenExchangeClient) buildExchangeRequest(
+	ctx context.Context,
+	input exchangeInput,
+) (*http.Request, context.CancelFunc, error) {
+	values := url.Values{
+		"grant_type":           {tokenExchangeGrantType},
+		"subject_token":        {input.sessionToken},
+		"subject_token_type":   {subjectTokenTypeIDToken},
+		"requested_token_type": {input.requestedTypeURN},
+		"client_id":            {input.clientID},
+		"client_secret":        {input.clientSecret},
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	requestCtx, cancel := context.WithCancel(ctx)
+	if c.config.TokenRequestTimeout > 0 {
+		requestCtx, cancel = context.WithTimeout(ctx, c.config.TokenRequestTimeout)
+	}
+	request, err := http.NewRequestWithContext(
+		requestCtx, http.MethodPost, input.tokenURL, strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		cancel()
+		return nil, func() {}, &ExchangeError{Message: "build exchange request", Cause: err}
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	return request, cancel, nil
+}
+
+func decodeExchangeResponse(response *http.Response) (map[string]any, error) {
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxExchangeResponseBodyBytes+1))
+	if err != nil {
+		return nil, &ExchangeError{Message: "read exchange response", Cause: err}
 	}
 	if int64(len(body)) > maxExchangeResponseBodyBytes {
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			Message: fmt.Sprintf("exchange response exceeds %d bytes", maxExchangeResponseBodyBytes),
-			Cause:   ErrTokenExchangeFailed,
-		}
+		return nil, &ExchangeError{Message: fmt.Sprintf("exchange response exceeds %d bytes", maxExchangeResponseBodyBytes), Cause: ErrTokenExchangeFailed}
 	}
-
 	payload := map[string]any{}
-	if len(strings.TrimSpace(string(body))) > 0 {
-		if err := json.Unmarshal(body, &payload); err != nil {
-			return core.EmbeddedAccessToken{}, &ExchangeError{
-				StatusCode: response.StatusCode,
-				Message:    "decode exchange response",
-				Cause:      err,
-			}
-		}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return payload, nil
 	}
-
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, &ExchangeError{StatusCode: response.StatusCode, Message: "decode exchange response", Cause: err}
+	}
 	errorCode := strings.TrimSpace(readAnyString(payload["error"]))
-	errorDescription := strings.TrimSpace(readAnyString(payload["error_description"]))
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || errorCode != "" {
-		if errorDescription == "" {
-			errorDescription = "shopify token exchange failed"
-		}
-		return core.EmbeddedAccessToken{}, &ExchangeError{
-			StatusCode: response.StatusCode,
-			ErrorCode:  errorCode,
-			Message:    errorDescription,
-			Cause:      ErrTokenExchangeFailed,
-		}
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && errorCode == "" {
+		return payload, nil
 	}
+	description := strings.TrimSpace(readAnyString(payload["error_description"]))
+	if description == "" {
+		description = "shopify token exchange failed"
+	}
+	return nil, &ExchangeError{StatusCode: response.StatusCode, ErrorCode: errorCode, Message: description, Cause: ErrTokenExchangeFailed}
+}
 
+func (c *SessionTokenExchangeClient) exchangeAccessToken(
+	statusCode int,
+	payload map[string]any,
+	input exchangeInput,
+) (core.EmbeddedAccessToken, error) {
 	accessToken := strings.TrimSpace(readAnyString(payload["access_token"]))
 	if accessToken == "" {
 		return core.EmbeddedAccessToken{}, &ExchangeError{
-			StatusCode: response.StatusCode,
+			StatusCode: statusCode,
 			Message:    "exchange response missing access token",
 			Cause:      ErrTokenExchangeFailed,
 		}
 	}
-
 	tokenType := strings.ToLower(strings.TrimSpace(readAnyString(payload["token_type"])))
 	if tokenType == "" {
 		tokenType = "bearer"
@@ -221,9 +223,9 @@ func (c *SessionTokenExchangeClient) ExchangeSessionToken(
 		expiresAt = &value
 	}
 	metadata := sanitizeExchangeMetadata(payload)
-	metadata["requested_token_type"] = requestedTypeURN
-	metadata["requested_token_mode"] = normalizedTokenType
-	metadata["shop_domain"] = shopDomain
+	metadata["requested_token_type"] = input.requestedTypeURN
+	metadata["requested_token_mode"] = input.normalizedTokenType
+	metadata["shop_domain"] = input.shopDomain
 
 	return core.EmbeddedAccessToken{
 		AccessToken: accessToken,

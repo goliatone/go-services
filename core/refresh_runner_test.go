@@ -36,15 +36,15 @@ func TestRunRefreshWithRetry_RetriesAndSucceeds(t *testing.T) {
 		t.Fatalf("create connection: %v", err)
 	}
 	credentialStore := newMemoryCredentialStore()
-	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
+	if _, testErr := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
 		ConnectionID:    connection.ID,
 		TokenType:       "bearer",
 		RequestedScopes: []string{"repo:read"},
 		GrantedScopes:   []string{"repo:read"},
 		Refreshable:     true,
 		Status:          CredentialStatusActive,
-	}); err != nil {
-		t.Fatalf("seed credential: %v", err)
+	}); testErr != nil {
+		t.Fatalf("seed credential: %v", testErr)
 	}
 
 	svc, err := NewService(
@@ -96,15 +96,15 @@ func TestRunRefreshWithRetry_TransitionsPendingReauthOnUnrecoverableError(t *tes
 		t.Fatalf("create connection: %v", err)
 	}
 	credentialStore := newMemoryCredentialStore()
-	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
+	if _, testErr := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
 		ConnectionID:    connection.ID,
 		TokenType:       "bearer",
 		RequestedScopes: []string{"repo:read"},
 		GrantedScopes:   []string{"repo:read"},
 		Refreshable:     true,
 		Status:          CredentialStatusActive,
-	}); err != nil {
-		t.Fatalf("seed credential: %v", err)
+	}); testErr != nil {
+		t.Fatalf("seed credential: %v", testErr)
 	}
 
 	svc, err := NewService(
@@ -200,7 +200,7 @@ func TestRefresh_IdempotentCredentialRotationUnderConcurrentExecution(t *testing
 	if err != nil {
 		t.Fatalf("encrypt seed credential: %v", err)
 	}
-	if _, err := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
+	if _, testErr := credentialStore.SaveNewVersion(ctx, SaveCredentialInput{
 		ConnectionID:     connection.ID,
 		EncryptedPayload: encryptedToken,
 		TokenType:        "bearer",
@@ -209,8 +209,8 @@ func TestRefresh_IdempotentCredentialRotationUnderConcurrentExecution(t *testing
 		ExpiresAt:        &expiresInitial,
 		Refreshable:      true,
 		Status:           CredentialStatusActive,
-	}); err != nil {
-		t.Fatalf("seed credential: %v", err)
+	}); testErr != nil {
+		t.Fatalf("seed credential: %v", testErr)
 	}
 
 	svc, err := NewService(

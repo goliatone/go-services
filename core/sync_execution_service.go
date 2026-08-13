@@ -87,36 +87,9 @@ func (s *SyncExecutionService) run(
 		return SyncRunResult{}, fmt.Errorf("core: sync execution dependencies are required")
 	}
 
-	plan.BindingID = strings.TrimSpace(plan.BindingID)
-	if plan.BindingID == "" {
-		return SyncRunResult{}, fmt.Errorf("core: sync run plan binding id is required")
-	}
-	if !plan.Mode.IsValid() {
-		return SyncRunResult{}, fmt.Errorf("core: invalid sync run mode %q", plan.Mode)
-	}
-
-	checkpoint := plan.Checkpoint
-	if checkpoint.SyncBindingID == "" {
-		checkpoint.SyncBindingID = plan.BindingID
-	}
-	if checkpoint.SyncBindingID != plan.BindingID {
-		return SyncRunResult{}, fmt.Errorf("core: checkpoint binding id does not match plan binding id")
-	}
-	if checkpoint.Direction == "" {
-		checkpoint.Direction = direction
-	}
-	if checkpoint.Direction != direction {
-		return SyncRunResult{}, fmt.Errorf("core: checkpoint direction %q does not match run direction %q", checkpoint.Direction, direction)
-	}
-
-	sequence := checkpoint.Sequence
-	result := SyncRunResult{
-		RunID:    strings.TrimSpace(plan.ID),
-		Status:   SyncRunStatusSucceeded,
-		Metadata: copyMetadata(runMetadata),
-	}
-	if result.RunID == "" {
-		result.RunID = "run_" + BuildSyncIdempotencyKey(plan.BindingID, direction, checkpoint.Cursor, checkpoint.SourceVersion)[:16]
+	plan, checkpoint, result, err := prepareSyncRun(plan, runMetadata, direction)
+	if err != nil {
+		return SyncRunResult{}, err
 	}
 	if publishErr := s.publishSyncRunEvent(ctx, result.RunID, checkpoint, "services.sync.run.started", map[string]any{
 		"status":    string(SyncRunStatusRunning),
@@ -127,92 +100,8 @@ func (s *SyncExecutionService) run(
 	}
 
 	for _, change := range changes {
-		change = normalizeSyncChange(change)
-		if change.ExternalID == "" {
-			result.Status = SyncRunStatusFailed
-			result.FailedCount++
-			result.NextCheckpoint = &checkpoint
-			_ = s.publishSyncRunEvent(ctx, result.RunID, checkpoint, "services.sync.run.failed", map[string]any{
-				"status": string(result.Status),
-				"error":  "core: sync change external id is required",
-			})
-			return result, fmt.Errorf("core: sync change external id is required")
-		}
-
-		sequence++
-		checkpoint.Sequence = sequence
-		checkpoint.SyncBindingID = plan.BindingID
-		checkpoint.Direction = direction
-		checkpoint.SourceVersion = change.SourceVersion
-		checkpoint.UpdatedAt = s.now()
-
-		if plan.Mode == SyncRunModeDryRun {
-			result.ProcessedCount++
-			continue
-		}
-
-		idempotencyKey := BuildSyncIdempotencyKey(
-			plan.BindingID,
-			direction,
-			change.ExternalID,
-			change.SourceVersion,
-		)
-		entry := SyncChangeLogEntry{
-			ProviderID:     checkpoint.ProviderID,
-			Scope:          checkpoint.Scope,
-			ConnectionID:   checkpoint.ConnectionID,
-			SyncBindingID:  plan.BindingID,
-			Direction:      direction,
-			SourceObject:   change.SourceObject,
-			ExternalID:     change.ExternalID,
-			SourceVersion:  change.SourceVersion,
-			IdempotencyKey: idempotencyKey,
-			Payload:        RedactSensitiveMap(change.Payload),
-			Metadata:       RedactSensitiveMap(mergeMetadata(change.Metadata, runMetadata)),
-			OccurredAt:     s.now(),
-		}
-
-		applied, appendErr := s.changeLogStore.Append(ctx, entry)
-		if appendErr != nil {
-			result.Status = SyncRunStatusFailed
-			result.FailedCount++
-			result.NextCheckpoint = &checkpoint
-			_ = s.publishSyncRunEvent(ctx, result.RunID, checkpoint, "services.sync.run.failed", map[string]any{
-				"status": string(result.Status),
-				"error":  appendErr.Error(),
-			})
-			return result, appendErr
-		}
-		if applied {
-			result.ProcessedCount++
-		} else {
-			result.SkippedCount++
-		}
-
-		savedCheckpoint, saveErr := s.checkpointStore.Save(ctx, checkpoint)
-		if saveErr != nil {
-			result.Status = SyncRunStatusFailed
-			result.FailedCount++
-			result.NextCheckpoint = &checkpoint
-			_ = s.publishSyncRunEvent(ctx, result.RunID, checkpoint, "services.sync.run.failed", map[string]any{
-				"status": string(result.Status),
-				"error":  saveErr.Error(),
-			})
-			return result, saveErr
-		}
-		checkpoint = savedCheckpoint
-		if publishErr := s.publishSyncRunEvent(
-			ctx,
-			result.RunID,
-			checkpoint,
-			"services.sync.run.checkpoint",
-			map[string]any{
-				"status":         string(SyncRunStatusRunning),
-				"sequence":       checkpoint.Sequence,
-				"source_version": checkpoint.SourceVersion,
-			},
-		); publishErr != nil {
-			return SyncRunResult{}, publishErr
+		if err := s.processSyncChange(ctx, plan, runMetadata, direction, change, &checkpoint, &result); err != nil {
+			return result, err
 		}
 	}
 
@@ -233,6 +122,114 @@ func (s *SyncExecutionService) run(
 		return SyncRunResult{}, publishErr
 	}
 	return result, nil
+}
+
+func prepareSyncRun(
+	plan SyncRunPlan,
+	metadata map[string]any,
+	direction SyncDirection,
+) (SyncRunPlan, SyncCheckpoint, SyncRunResult, error) {
+	plan.BindingID = strings.TrimSpace(plan.BindingID)
+	if plan.BindingID == "" {
+		return SyncRunPlan{}, SyncCheckpoint{}, SyncRunResult{}, fmt.Errorf("core: sync run plan binding id is required")
+	}
+	if !plan.Mode.IsValid() {
+		return SyncRunPlan{}, SyncCheckpoint{}, SyncRunResult{}, fmt.Errorf("core: invalid sync run mode %q", plan.Mode)
+	}
+	checkpoint := plan.Checkpoint
+	if checkpoint.SyncBindingID == "" {
+		checkpoint.SyncBindingID = plan.BindingID
+	}
+	if checkpoint.SyncBindingID != plan.BindingID {
+		return SyncRunPlan{}, SyncCheckpoint{}, SyncRunResult{}, fmt.Errorf("core: checkpoint binding id does not match plan binding id")
+	}
+	if checkpoint.Direction == "" {
+		checkpoint.Direction = direction
+	}
+	if checkpoint.Direction != direction {
+		return SyncRunPlan{}, SyncCheckpoint{}, SyncRunResult{}, fmt.Errorf(
+			"core: checkpoint direction %q does not match run direction %q", checkpoint.Direction, direction,
+		)
+	}
+	result := SyncRunResult{RunID: strings.TrimSpace(plan.ID), Status: SyncRunStatusSucceeded, Metadata: copyMetadata(metadata)}
+	if result.RunID == "" {
+		result.RunID = "run_" + BuildSyncIdempotencyKey(plan.BindingID, direction, checkpoint.Cursor, checkpoint.SourceVersion)[:16]
+	}
+	return plan, checkpoint, result, nil
+}
+
+func (s *SyncExecutionService) processSyncChange(
+	ctx context.Context,
+	plan SyncRunPlan,
+	runMetadata map[string]any,
+	direction SyncDirection,
+	change SyncChange,
+	checkpoint *SyncCheckpoint,
+	result *SyncRunResult,
+) error {
+	change = normalizeSyncChange(change)
+	if change.ExternalID == "" {
+		return s.failSyncRun(ctx, result, checkpoint, fmt.Errorf("core: sync change external id is required"))
+	}
+	checkpoint.Sequence++
+	checkpoint.SyncBindingID = plan.BindingID
+	checkpoint.Direction = direction
+	checkpoint.SourceVersion = change.SourceVersion
+	checkpoint.UpdatedAt = s.now()
+	if plan.Mode == SyncRunModeDryRun {
+		result.ProcessedCount++
+		return nil
+	}
+	applied, err := s.changeLogStore.Append(ctx, syncChangeLogEntry(plan.BindingID, direction, change, *checkpoint, runMetadata, s.now()))
+	if err != nil {
+		return s.failSyncRun(ctx, result, checkpoint, err)
+	}
+	if applied {
+		result.ProcessedCount++
+	} else {
+		result.SkippedCount++
+	}
+	saved, err := s.checkpointStore.Save(ctx, *checkpoint)
+	if err != nil {
+		return s.failSyncRun(ctx, result, checkpoint, err)
+	}
+	*checkpoint = saved
+	return s.publishSyncRunEvent(ctx, result.RunID, saved, "services.sync.run.checkpoint", map[string]any{
+		"status": string(SyncRunStatusRunning), "sequence": saved.Sequence, "source_version": saved.SourceVersion,
+	})
+}
+
+func syncChangeLogEntry(
+	bindingID string,
+	direction SyncDirection,
+	change SyncChange,
+	checkpoint SyncCheckpoint,
+	runMetadata map[string]any,
+	now time.Time,
+) SyncChangeLogEntry {
+	return SyncChangeLogEntry{
+		ProviderID: checkpoint.ProviderID, Scope: checkpoint.Scope, ConnectionID: checkpoint.ConnectionID,
+		SyncBindingID: bindingID, Direction: direction, SourceObject: change.SourceObject,
+		ExternalID: change.ExternalID, SourceVersion: change.SourceVersion,
+		IdempotencyKey: BuildSyncIdempotencyKey(bindingID, direction, change.ExternalID, change.SourceVersion),
+		Payload:        RedactSensitiveMap(change.Payload), Metadata: RedactSensitiveMap(mergeMetadata(change.Metadata, runMetadata)),
+		OccurredAt: now,
+	}
+}
+
+func (s *SyncExecutionService) failSyncRun(
+	ctx context.Context,
+	result *SyncRunResult,
+	checkpoint *SyncCheckpoint,
+	failure error,
+) error {
+	result.Status = SyncRunStatusFailed
+	result.FailedCount++
+	result.NextCheckpoint = checkpoint
+	_ = s.publishSyncRunEvent(ctx, result.RunID, *checkpoint, "services.sync.run.failed", map[string]any{
+		"status": string(result.Status), "error": failure.Error(),
+	})
+	return failure
 }
 
 func BuildSyncIdempotencyKey(

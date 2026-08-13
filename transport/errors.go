@@ -15,7 +15,7 @@ func transportError(
 		WithCode(code).
 		WithTextCode(transportTextCode(category))
 	if len(metadata) > 0 {
-		err.WithMetadata(metadata)
+		err = err.WithMetadata(metadata)
 	}
 	return err
 }
@@ -34,7 +34,7 @@ func transportWrapError(
 		WithCode(code).
 		WithTextCode(transportTextCode(category))
 	if len(metadata) > 0 {
-		err.WithMetadata(metadata)
+		err = err.WithMetadata(metadata)
 	}
 	return err
 }

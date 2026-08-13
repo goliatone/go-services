@@ -138,19 +138,8 @@ func (s *Service) reconcileGrantSnapshot(
 		}
 	}
 
-	if transactionalStore, ok := s.grantStore.(GrantStoreTransactional); ok {
-		if saveErr := transactionalStore.SaveSnapshotAndEvent(ctx, snapshotInput, eventInput); saveErr != nil {
-			return GrantSnapshot{}, GrantDelta{}, saveErr
-		}
-	} else {
-		if saveErr := s.grantStore.SaveSnapshot(ctx, snapshotInput); saveErr != nil {
-			return GrantSnapshot{}, GrantDelta{}, saveErr
-		}
-		if eventInput != nil {
-			if appendErr := s.grantStore.AppendEvent(ctx, *eventInput); appendErr != nil {
-				return GrantSnapshot{}, GrantDelta{}, appendErr
-			}
-		}
+	if err := s.persistGrantSnapshot(ctx, snapshotInput, eventInput); err != nil {
+		return GrantSnapshot{}, GrantDelta{}, err
 	}
 
 	return GrantSnapshot{
@@ -161,6 +150,23 @@ func (s *Service) reconcileGrantSnapshot(
 		CapturedAt:   now,
 		Metadata:     copyAnyMap(metadata),
 	}, delta, nil
+}
+
+func (s *Service) persistGrantSnapshot(
+	ctx context.Context,
+	snapshot SaveGrantSnapshotInput,
+	event *AppendGrantEventInput,
+) error {
+	if transactionalStore, ok := s.grantStore.(GrantStoreTransactional); ok {
+		return transactionalStore.SaveSnapshotAndEvent(ctx, snapshot, event)
+	}
+	if err := s.grantStore.SaveSnapshot(ctx, snapshot); err != nil {
+		return err
+	}
+	if event == nil {
+		return nil
+	}
+	return s.grantStore.AppendEvent(ctx, *event)
 }
 
 func missingRequiredProviderGrants(capabilities []CapabilityDescriptor, granted []string) []string {

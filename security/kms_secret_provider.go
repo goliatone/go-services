@@ -142,75 +142,50 @@ func (p *KMSSecretProvider) Encrypt(ctx context.Context, plaintext []byte) ([]by
 	if p == nil {
 		return nil, fmt.Errorf("security: secret provider is nil")
 	}
-	if len(plaintext) == 0 {
-		return nil, fmt.Errorf("security: plaintext is required")
-	}
-	if !p.rotationWindowAllows(p.active) {
-		return nil, fmt.Errorf("security: kms key %q version %d is outside the configured rotation window", p.active.KeyID, p.active.Version)
-	}
-
-	response, err := p.client.Encrypt(ctx, KMSEncryptRequest{
-		KeyID:      p.active.KeyID,
-		KeyVersion: p.active.Version,
-		Plaintext:  append([]byte(nil), plaintext...),
-		Metadata:   copyStringMap(p.metadata),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("security: kms encrypt: %w", err)
-	}
-	if len(response.Ciphertext) == 0 {
-		return nil, fmt.Errorf("security: kms encrypt returned empty ciphertext")
-	}
-	return encodeEnvelope(envelope{
-		KeyID:      p.active.KeyID,
-		Version:    p.active.Version,
-		Algorithm:  envelopeAlgorithmKMS,
-		Ciphertext: encodeCiphertextPayload(response.Ciphertext),
-		Metadata:   copyStringMap(p.metadata),
-	})
+	return encryptManagedEnvelope(
+		plaintext,
+		"kms",
+		p.active.KeyID,
+		p.active.Version,
+		envelopeAlgorithmKMS,
+		p.metadata,
+		p.rotationWindowAllows(p.active),
+		func(payload []byte) ([]byte, error) {
+			response, err := p.client.Encrypt(ctx, KMSEncryptRequest{
+				KeyID: p.active.KeyID, KeyVersion: p.active.Version, Plaintext: payload, Metadata: copyStringMap(p.metadata),
+			})
+			return response.Ciphertext, err
+		},
+	)
 }
 
+//nolint:dupl // Shared policy is in decryptManagedEnvelope; typed KMS request/error handling cannot share the Vault client API. Round-trip and rotation are covered by TestKMSSecretProvider_EncryptDecryptRoundTrip and TestKMSSecretProvider_RotationWindowAndLegacyDecryptCompatibility.
 func (p *KMSSecretProvider) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
 	if p == nil {
 		return nil, fmt.Errorf("security: secret provider is nil")
 	}
-	env, _, err := decodeEnvelope(ciphertext, envelopeDecodeOptions{DefaultAlgorithm: envelopeAlgorithmKMS})
-	if err != nil {
-		return nil, err
-	}
-	if env.Algorithm != envelopeAlgorithmKMS {
-		return nil, fmt.Errorf("security: unsupported envelope algorithm %q", env.Algorithm)
-	}
-	ref, err := newKMSKeyRef(env.KeyID, env.Version)
-	if err != nil {
-		return nil, err
-	}
-	if !p.allowAnyDecrypt {
-		if _, ok := p.decryptAllowed[ref.id()]; !ok {
-			return nil, fmt.Errorf("security: kms decrypt key %q version %d is not configured", ref.KeyID, ref.Version)
-		}
-	}
-	if !p.rotationWindowAllows(ref) {
-		return nil, fmt.Errorf("security: kms key %q version %d is outside the configured rotation window", ref.KeyID, ref.Version)
-	}
-
-	payload, err := decodeCiphertextPayload(env.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	response, err := p.client.Decrypt(ctx, KMSDecryptRequest{
-		KeyID:      ref.KeyID,
-		KeyVersion: ref.Version,
-		Ciphertext: payload,
-		Metadata:   copyStringMap(env.Metadata),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("security: kms decrypt: %w", err)
-	}
-	if len(response.Plaintext) == 0 {
-		return nil, fmt.Errorf("security: kms decrypt returned empty plaintext")
-	}
-	return response.Plaintext, nil
+	return decryptManagedEnvelope(
+		ciphertext,
+		"kms",
+		envelopeAlgorithmKMS,
+		p.allowAnyDecrypt,
+		func(env envelope) (managedEnvelopeKey, error) {
+			ref, err := newKMSKeyRef(env.KeyID, env.Version)
+			if err != nil {
+				return managedEnvelopeKey{}, err
+			}
+			_, configured := p.decryptAllowed[ref.id()]
+			return managedEnvelopeKey{
+				keyID: ref.KeyID, version: ref.Version, configured: configured, rotationAllowed: p.rotationWindowAllows(ref),
+			}, nil
+		},
+		func(key managedEnvelopeKey, payload []byte, metadata map[string]string) ([]byte, error) {
+			response, err := p.client.Decrypt(ctx, KMSDecryptRequest{
+				KeyID: key.keyID, KeyVersion: key.version, Ciphertext: payload, Metadata: metadata,
+			})
+			return response.Plaintext, err
+		},
+	)
 }
 
 func (p *KMSSecretProvider) KeyID() string {

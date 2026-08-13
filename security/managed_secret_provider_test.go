@@ -31,17 +31,7 @@ func (c *fakeKMSClient) Decrypt(_ context.Context, req KMSDecryptRequest) (KMSDe
 	if c.failDecrypt {
 		return KMSDecryptResponse{}, fmt.Errorf("kms unavailable")
 	}
-	parts := strings.Split(string(req.Ciphertext), "|")
-	if len(parts) != 4 || parts[0] != "kms" {
-		return KMSDecryptResponse{}, fmt.Errorf("invalid kms payload")
-	}
-	if parts[1] != req.KeyID {
-		return KMSDecryptResponse{}, fmt.Errorf("kms key mismatch")
-	}
-	if fmt.Sprintf("%d", req.KeyVersion) != parts[2] {
-		return KMSDecryptResponse{}, fmt.Errorf("kms version mismatch")
-	}
-	decoded, err := base64.StdEncoding.DecodeString(parts[3])
+	decoded, err := decodeFakeManagedPayload("kms", req.KeyID, req.KeyVersion, req.Ciphertext)
 	if err != nil {
 		return KMSDecryptResponse{}, err
 	}
@@ -66,21 +56,25 @@ func (c *fakeVaultClient) Decrypt(_ context.Context, req VaultDecryptRequest) (V
 	if c.failDecrypt {
 		return VaultDecryptResponse{}, fmt.Errorf("vault unavailable")
 	}
-	parts := strings.Split(string(req.Ciphertext), "|")
-	if len(parts) != 4 || parts[0] != "vault" {
-		return VaultDecryptResponse{}, fmt.Errorf("invalid vault payload")
-	}
-	if parts[1] != req.KeyPath {
-		return VaultDecryptResponse{}, fmt.Errorf("vault path mismatch")
-	}
-	if fmt.Sprintf("%d", req.KeyVersion) != parts[2] {
-		return VaultDecryptResponse{}, fmt.Errorf("vault version mismatch")
-	}
-	decoded, err := base64.StdEncoding.DecodeString(parts[3])
+	decoded, err := decodeFakeManagedPayload("vault", req.KeyPath, req.KeyVersion, req.Ciphertext)
 	if err != nil {
 		return VaultDecryptResponse{}, err
 	}
 	return VaultDecryptResponse{Plaintext: decoded}, nil
+}
+
+func decodeFakeManagedPayload(kind, key string, version int, ciphertext []byte) ([]byte, error) {
+	parts := strings.Split(string(ciphertext), "|")
+	if len(parts) != 4 || parts[0] != kind {
+		return nil, fmt.Errorf("invalid %s payload", kind)
+	}
+	if parts[1] != key {
+		return nil, fmt.Errorf("%s key mismatch", kind)
+	}
+	if fmt.Sprintf("%d", version) != parts[2] {
+		return nil, fmt.Errorf("%s version mismatch", kind)
+	}
+	return base64.StdEncoding.DecodeString(parts[3])
 }
 
 func TestKMSSecretProvider_EncryptDecryptRoundTrip(t *testing.T) {
@@ -312,8 +306,8 @@ func TestFailoverSecretProvider_Migration_AppKeyToVault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("legacy encrypt: %v", err)
 	}
-	if _, err := provider.Decrypt(context.Background(), legacyCiphertext); err != nil {
-		t.Fatalf("vault migration decrypt legacy payload: %v", err)
+	if _, testErr := provider.Decrypt(context.Background(), legacyCiphertext); testErr != nil {
+		t.Fatalf("vault migration decrypt legacy payload: %v", testErr)
 	}
 	newCiphertext, err := provider.Encrypt(context.Background(), []byte("new-token"))
 	if err != nil {

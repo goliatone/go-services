@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,7 +85,6 @@ func (s *ServiceAccountJWTStrategy) Begin(_ context.Context, req core.AuthBeginR
 
 func (s *ServiceAccountJWTStrategy) Complete(ctx context.Context, req core.AuthCompleteRequest) (core.AuthCompleteResponse, error) {
 	metadata := cloneMetadata(req.Metadata)
-
 	issuer := firstNonEmpty(
 		readString(metadata, "issuer", "jwt_issuer", "client_email"),
 		s.config.Issuer,
@@ -122,7 +122,6 @@ func (s *ServiceAccountJWTStrategy) Complete(ctx context.Context, req core.AuthC
 	)
 
 	now := s.config.Now().UTC()
-	expiresAt := now.Add(s.config.TokenTTL)
 	requested := readStringSlice(metadata, "requested_grants", "requested_scopes", "scopes")
 	granted := readStringSlice(metadata, "granted_grants", "granted_scopes")
 	if len(granted) == 0 {
@@ -143,15 +142,20 @@ func (s *ServiceAccountJWTStrategy) Complete(ctx context.Context, req core.AuthC
 	if signingKey == "" {
 		return core.AuthCompleteResponse{}, fmt.Errorf("auth: service_account_jwt signing key is required")
 	}
+	return s.completeSignedServiceAccount(req, metadata, issuer, audience, subject, signingAlgorithm, signingKey, keyID, signingKeyFromMetadata, requested, granted, now)
+}
 
-	claims := map[string]any{
-		"iss": issuer,
-		"sub": subject,
-		"aud": audience,
-		"iat": now.Unix(),
-		"exp": expiresAt.Unix(),
-	}
-	token, err := buildJWT(keyID, signingAlgorithm, signingKey, claims)
+func (s *ServiceAccountJWTStrategy) completeSignedServiceAccount(
+	req core.AuthCompleteRequest,
+	metadata map[string]any,
+	issuer, audience, subject, signingAlgorithm, signingKey, keyID, signingKeyFromMetadata string,
+	requested, granted []string,
+	now time.Time,
+) (core.AuthCompleteResponse, error) {
+	expiresAt := now.Add(s.config.TokenTTL)
+	token, err := buildJWT(keyID, signingAlgorithm, signingKey, map[string]any{
+		"iss": issuer, "sub": subject, "aud": audience, "iat": now.Unix(), "exp": expiresAt.Unix(),
+	})
 	if err != nil {
 		return core.AuthCompleteResponse{}, err
 	}
@@ -220,41 +224,15 @@ func (s *ServiceAccountJWTStrategy) Refresh(ctx context.Context, cred core.Activ
 	}
 	googleSpec, googleExchange := s.googleServiceAccountSpec(metadata, issuer, audience, subject, signingAlgorithm, signingKey, keyID, requested)
 	if googleExchange {
-		refreshed, granted, err := s.exchangeGoogleServiceAccountJWT(ctx, googleSpec, now)
-		if err != nil {
-			return core.RefreshResult{}, err
-		}
-		refreshed.ConnectionID = cred.ConnectionID
-		refreshed.RequestedScopes = append([]string(nil), requested...)
-		if len(granted) == 0 {
-			granted = append([]string(nil), cred.GrantedScopes...)
-		}
-		if len(granted) == 0 {
-			granted = append([]string(nil), requested...)
-		}
-		refreshed.GrantedScopes = append([]string(nil), granted...)
-		refreshed.Refreshable = true
-		refreshed.Metadata = googleSpec.metadata()
-		return core.RefreshResult{
-			Credential:    refreshed,
-			GrantedGrants: append([]string(nil), refreshed.GrantedScopes...),
-			Metadata: map[string]any{
-				"auth_kind": core.AuthKindServiceAccountJWT,
-			},
-		}, nil
+		return s.refreshGoogleServiceAccount(ctx, cred, googleSpec, requested, now)
 	}
 	if subject == "" {
 		return core.RefreshResult{}, fmt.Errorf("auth: service_account_jwt refresh requires subject")
 	}
 
-	claims := map[string]any{
-		"iss": issuer,
-		"sub": subject,
-		"aud": audience,
-		"iat": now.Unix(),
-		"exp": expiresAt.Unix(),
-	}
-	token, err := buildJWT(keyID, signingAlgorithm, signingKey, claims)
+	token, err := buildJWT(keyID, signingAlgorithm, signingKey, map[string]any{
+		"iss": issuer, "sub": subject, "aud": audience, "iat": now.Unix(), "exp": expiresAt.Unix(),
+	})
 	if err != nil {
 		return core.RefreshResult{}, err
 	}
@@ -278,6 +256,39 @@ func (s *ServiceAccountJWTStrategy) Refresh(ctx context.Context, cred core.Activ
 			"auth_kind": core.AuthKindServiceAccountJWT,
 		},
 	}, nil
+}
+
+func (s *ServiceAccountJWTStrategy) refreshGoogleServiceAccount(
+	ctx context.Context,
+	cred core.ActiveCredential,
+	spec googleServiceAccountSpec,
+	requested []string,
+	now time.Time,
+) (core.RefreshResult, error) {
+	refreshed, granted, err := s.exchangeGoogleServiceAccountJWT(ctx, spec, now)
+	if err != nil {
+		return core.RefreshResult{}, err
+	}
+	refreshed.ConnectionID = cred.ConnectionID
+	refreshed.RequestedScopes = append([]string(nil), requested...)
+	if len(granted) == 0 {
+		granted = append([]string(nil), cred.GrantedScopes...)
+	}
+	if len(granted) == 0 {
+		granted = append([]string(nil), requested...)
+	}
+	refreshed.GrantedScopes = append([]string(nil), granted...)
+	refreshed.Refreshable = true
+	refreshed.Metadata = spec.metadata()
+	return serviceAccountRefreshResult(refreshed), nil
+}
+
+func serviceAccountRefreshResult(credential core.ActiveCredential) core.RefreshResult {
+	return core.RefreshResult{
+		Credential:    credential,
+		GrantedGrants: append([]string(nil), credential.GrantedScopes...),
+		Metadata:      map[string]any{"auth_kind": core.AuthKindServiceAccountJWT},
+	}
 }
 
 type googleServiceAccountJSON struct {
@@ -368,17 +379,8 @@ func (s *ServiceAccountJWTStrategy) completeGoogleServiceAccount(ctx context.Con
 }
 
 func (s *ServiceAccountJWTStrategy) exchangeGoogleServiceAccountJWT(ctx context.Context, spec googleServiceAccountSpec, now time.Time) (core.ActiveCredential, []string, error) {
-	if strings.TrimSpace(spec.issuer) == "" {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account client_email is required")
-	}
-	if strings.TrimSpace(spec.signingKey) == "" {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account private_key is required")
-	}
-	if strings.TrimSpace(spec.tokenURI) == "" {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account token_uri is required")
-	}
-	if len(spec.scopes) == 0 {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account scopes are required")
+	if err := validateGoogleServiceAccountSpec(spec); err != nil {
+		return core.ActiveCredential{}, nil, err
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -386,6 +388,38 @@ func (s *ServiceAccountJWTStrategy) exchangeGoogleServiceAccountJWT(ctx context.
 		now = now.UTC()
 	}
 	expiresAt := now.Add(spec.tokenTTL)
+	assertion, err := buildGoogleServiceAccountAssertion(spec, now, expiresAt)
+	if err != nil {
+		return core.ActiveCredential{}, nil, err
+	}
+	httpReq, err := googleServiceAccountTokenRequest(ctx, spec.tokenURI, assertion)
+	if err != nil {
+		return core.ActiveCredential{}, nil, err
+	}
+	body, err := s.executeGoogleServiceAccountTokenRequest(httpReq)
+	if err != nil {
+		return core.ActiveCredential{}, nil, err
+	}
+	return decodeGoogleServiceAccountToken(body, spec, now, expiresAt)
+}
+
+func validateGoogleServiceAccountSpec(spec googleServiceAccountSpec) error {
+	if strings.TrimSpace(spec.issuer) == "" {
+		return fmt.Errorf("auth: google service account client_email is required")
+	}
+	if strings.TrimSpace(spec.signingKey) == "" {
+		return fmt.Errorf("auth: google service account private_key is required")
+	}
+	if strings.TrimSpace(spec.tokenURI) == "" {
+		return fmt.Errorf("auth: google service account token_uri is required")
+	}
+	if len(spec.scopes) == 0 {
+		return fmt.Errorf("auth: google service account scopes are required")
+	}
+	return nil
+}
+
+func buildGoogleServiceAccountAssertion(spec googleServiceAccountSpec, now, expiresAt time.Time) (string, error) {
 	claims := map[string]any{
 		"iss":   spec.issuer,
 		"scope": strings.Join(spec.scopes, " "),
@@ -396,35 +430,69 @@ func (s *ServiceAccountJWTStrategy) exchangeGoogleServiceAccountJWT(ctx context.
 	if strings.TrimSpace(spec.subject) != "" {
 		claims["sub"] = strings.TrimSpace(spec.subject)
 	}
-	assertion, err := buildJWT(spec.keyID, spec.signingAlgorithm, spec.signingKey, claims)
-	if err != nil {
-		return core.ActiveCredential{}, nil, err
-	}
+	return buildJWT(spec.keyID, spec.signingAlgorithm, spec.signingKey, claims)
+}
 
+func googleServiceAccountTokenRequest(ctx context.Context, tokenURI, assertion string) (*http.Request, error) {
+	endpoint, err := validateGoogleTokenEndpoint(tokenURI)
+	if err != nil {
+		return nil, err
+	}
 	form := url.Values{}
 	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	form.Set("assertion", assertion)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSpace(spec.tokenURI), bytes.NewBufferString(form.Encode()))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		return core.ActiveCredential{}, nil, err
+		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return httpReq, nil
+}
+
+func validateGoogleTokenEndpoint(raw string) (*url.URL, error) {
+	endpoint, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, fmt.Errorf("auth: google service account token_uri is invalid: %w", err)
+	}
+	if endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
+		return nil, fmt.Errorf("auth: google service account token_uri must be an HTTPS URL without user info")
+	}
+	hostname := strings.ToLower(strings.TrimSpace(endpoint.Hostname()))
+	if hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") {
+		return nil, fmt.Errorf("auth: google service account token_uri cannot target localhost")
+	}
+	if address := net.ParseIP(hostname); address != nil &&
+		(address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() || address.IsUnspecified()) {
+		return nil, fmt.Errorf("auth: google service account token_uri cannot target a private address")
+	}
+	return endpoint, nil
+}
+
+func (s *ServiceAccountJWTStrategy) executeGoogleServiceAccountTokenRequest(httpReq *http.Request) ([]byte, error) {
 	httpClient := s.config.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultGoogleServiceAccountTokenTimeout}
 	}
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- validateGoogleTokenEndpoint requires HTTPS and rejects user-info, localhost, and private IP literals before request construction.
 	if err != nil {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account token exchange failed")
+		return nil, fmt.Errorf("auth: google service account token exchange failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if readErr != nil {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account token response read failed")
+		return nil, fmt.Errorf("auth: google service account token response read failed")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return core.ActiveCredential{}, nil, fmt.Errorf("auth: google service account token exchange status %d", resp.StatusCode)
+		return nil, fmt.Errorf("auth: google service account token exchange status %d", resp.StatusCode)
 	}
+	return body, nil
+}
+
+func decodeGoogleServiceAccountToken(
+	body []byte,
+	spec googleServiceAccountSpec,
+	now, expiresAt time.Time,
+) (core.ActiveCredential, []string, error) {
 	tokenResponse := struct {
 		AccessToken string `json:"access_token"`
 		TokenType   string `json:"token_type"`

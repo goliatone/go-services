@@ -69,70 +69,10 @@ func (p *MappingPreviewer) PreviewMappingSpec(
 	appliedRuleCount := 0
 
 	for _, sample := range req.Samples {
-		output := make(map[string]any)
-		diffs := make([]PreviewFieldDiff, 0, len(compiledRules))
-		recordIssues := make([]MappingValidationIssue, 0)
-
-		for _, compiledRule := range compiledRules {
-			sourceValue, sourceFound := lookupPathValue(sample, compiledRule.Rule.SourcePath)
-			if !sourceFound {
-				recordIssues = append(recordIssues, mappingIssue(
-					"preview_source_missing",
-					fmt.Sprintf("core: source value for path %q was not found in sample", compiledRule.Rule.SourcePath),
-					compiledRule.Rule.ID,
-					compiledRule.Rule.SourcePath,
-					compiledRule.Rule.TargetPath,
-					MappingValidationIssueWarning,
-				))
-				continue
-			}
-
-			transformed, transformErr := applyMappingTransform(compiledRule.Transform, sourceValue)
-			if transformErr != nil {
-				recordIssues = append(recordIssues, mappingIssue(
-					"preview_transform_failed",
-					fmt.Sprintf("core: transform %q failed: %v", compiledRule.Transform, transformErr),
-					compiledRule.Rule.ID,
-					compiledRule.Rule.SourcePath,
-					compiledRule.Rule.TargetPath,
-					MappingValidationIssueError,
-				))
-				continue
-			}
-
-			setPathValue(output, compiledRule.Rule.TargetPath, transformed)
-			diffs = append(diffs, PreviewFieldDiff{
-				RuleID:      compiledRule.Rule.ID,
-				SourcePath:  compiledRule.Rule.SourcePath,
-				TargetPath:  compiledRule.Rule.TargetPath,
-				InputValue:  sourceValue,
-				OutputValue: transformed,
-				Changed: !reflect.DeepEqual(sourceValue, transformed) ||
-					normalizePath(compiledRule.Rule.SourcePath) != normalizePath(compiledRule.Rule.TargetPath),
-			})
-			appliedRuleCount++
-		}
-
-		sort.SliceStable(diffs, func(i, j int) bool {
-			left := diffs[i]
-			right := diffs[j]
-			if left.TargetPath != right.TargetPath {
-				return left.TargetPath < right.TargetPath
-			}
-			if left.SourcePath != right.SourcePath {
-				return left.SourcePath < right.SourcePath
-			}
-			return left.RuleID < right.RuleID
-		})
-		sortMappingValidationIssues(recordIssues)
-		totalRecordIssues += len(recordIssues)
-
-		records = append(records, PreviewRecord{
-			Input:  sample,
-			Output: output,
-			Diff:   diffs,
-			Issues: recordIssues,
-		})
+		record, applied := previewMappingRecord(sample, compiledRules)
+		totalRecordIssues += len(record.Issues)
+		appliedRuleCount += applied
+		records = append(records, record)
 	}
 
 	report := PreviewReport{
@@ -151,6 +91,75 @@ func (p *MappingPreviewer) PreviewMappingSpec(
 		Report:            report,
 		DeterministicHash: deterministicHash,
 		GeneratedAt:       p.now(),
+	}, nil
+}
+
+func previewMappingRecord(sample map[string]any, compiledRules []CompiledMappingRule) (PreviewRecord, int) {
+	output := make(map[string]any)
+	diffs := make([]PreviewFieldDiff, 0, len(compiledRules))
+	issues := make([]MappingValidationIssue, 0)
+	applied := 0
+	for _, compiledRule := range compiledRules {
+		diff, issue := previewMappingRule(output, sample, compiledRule)
+		if issue != nil {
+			issues = append(issues, *issue)
+			continue
+		}
+		diffs = append(diffs, diff)
+		applied++
+	}
+	sort.SliceStable(diffs, func(i, j int) bool {
+		left, right := diffs[i], diffs[j]
+		if left.TargetPath != right.TargetPath {
+			return left.TargetPath < right.TargetPath
+		}
+		if left.SourcePath != right.SourcePath {
+			return left.SourcePath < right.SourcePath
+		}
+		return left.RuleID < right.RuleID
+	})
+	sortMappingValidationIssues(issues)
+	return PreviewRecord{Input: sample, Output: output, Diff: diffs, Issues: issues}, applied
+}
+
+func previewMappingRule(
+	output map[string]any,
+	sample map[string]any,
+	compiledRule CompiledMappingRule,
+) (PreviewFieldDiff, *MappingValidationIssue) {
+	sourceValue, found := lookupPathValue(sample, compiledRule.Rule.SourcePath)
+	if !found {
+		issue := mappingIssue(
+			"preview_source_missing",
+			fmt.Sprintf("core: source value for path %q was not found in sample", compiledRule.Rule.SourcePath),
+			compiledRule.Rule.ID,
+			compiledRule.Rule.SourcePath,
+			compiledRule.Rule.TargetPath,
+			MappingValidationIssueWarning,
+		)
+		return PreviewFieldDiff{}, &issue
+	}
+	transformed, err := applyMappingTransform(compiledRule.Transform, sourceValue)
+	if err != nil {
+		issue := mappingIssue(
+			"preview_transform_failed",
+			fmt.Sprintf("core: transform %q failed: %v", compiledRule.Transform, err),
+			compiledRule.Rule.ID,
+			compiledRule.Rule.SourcePath,
+			compiledRule.Rule.TargetPath,
+			MappingValidationIssueError,
+		)
+		return PreviewFieldDiff{}, &issue
+	}
+	setPathValue(output, compiledRule.Rule.TargetPath, transformed)
+	return PreviewFieldDiff{
+		RuleID:      compiledRule.Rule.ID,
+		SourcePath:  compiledRule.Rule.SourcePath,
+		TargetPath:  compiledRule.Rule.TargetPath,
+		InputValue:  sourceValue,
+		OutputValue: transformed,
+		Changed: !reflect.DeepEqual(sourceValue, transformed) ||
+			normalizePath(compiledRule.Rule.SourcePath) != normalizePath(compiledRule.Rule.TargetPath),
 	}, nil
 }
 

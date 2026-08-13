@@ -102,8 +102,8 @@ func TestAppKeySecretProvider_RejectsEnvelopeAlgorithmTampering(t *testing.T) {
 
 	payload := strings.TrimPrefix(string(encrypted), envelopePrefix)
 	var parsed map[string]any
-	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-		t.Fatalf("decode envelope json: %v", err)
+	if testErr := json.Unmarshal([]byte(payload), &parsed); testErr != nil {
+		t.Fatalf("decode envelope json: %v", testErr)
 	}
 	parsed["alg"] = "none"
 	tamperedRaw, err := json.Marshal(parsed)

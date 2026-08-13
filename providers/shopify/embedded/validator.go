@@ -61,258 +61,202 @@ func (v *HMACSessionTokenValidator) ValidateSessionToken(
 	_ context.Context,
 	req ValidateSessionTokenRequest,
 ) (core.EmbeddedSessionClaims, error) {
+	secret, clientID, parts, err := v.validationInputs(req.SessionToken)
+	if err != nil {
+		return core.EmbeddedSessionClaims{}, err
+	}
+	payload, err := validateTokenEnvelope(parts, secret)
+	if err != nil {
+		return core.EmbeddedSessionClaims{}, err
+	}
+	identity, err := validateTokenIdentity(payload, clientID, req.ExpectedShopDomain)
+	if err != nil {
+		return core.EmbeddedSessionClaims{}, err
+	}
+	times, err := parseTokenTimes(payload)
+	if err != nil {
+		return core.EmbeddedSessionClaims{}, err
+	}
+	if err := validateTokenTimes(v.config, times); err != nil {
+		return core.EmbeddedSessionClaims{}, err
+	}
+
+	return core.EmbeddedSessionClaims{
+		Issuer:      identity.issuer,
+		Destination: identity.destination,
+		Audience:    clientID,
+		Subject:     strings.TrimSpace(readAnyString(payload["sub"])),
+		JTI:         identity.jti,
+		ShopDomain:  identity.shop,
+		IssuedAt:    times.issuedAt,
+		NotBefore:   times.notBefore,
+		ExpiresAt:   times.expiresAt,
+		Raw:         copyAnyMap(payload),
+	}, nil
+}
+
+func validationFailure(code, field string, cause error) error {
+	return &ValidationError{Code: code, Field: field, Cause: cause}
+}
+
+func (v *HMACSessionTokenValidator) validationInputs(token string) (string, string, []string, error) {
 	if v == nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "validator_not_configured",
-			Field: "validator",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", nil, validationFailure("validator_not_configured", "validator", ErrInvalidSessionToken)
 	}
 	secret := strings.TrimSpace(v.config.AppSecret)
 	if secret == "" {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "app_secret_required",
-			Field: "app_secret",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", nil, validationFailure("app_secret_required", "app_secret", ErrInvalidSessionToken)
 	}
 	clientID := strings.TrimSpace(v.config.ClientID)
 	if clientID == "" {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "client_id_required",
-			Field: "client_id",
-			Cause: ErrInvalidAudience,
-		}
+		return "", "", nil, validationFailure("client_id_required", "client_id", ErrInvalidAudience)
 	}
-	token := strings.TrimSpace(req.SessionToken)
+	token = strings.TrimSpace(token)
 	if token == "" {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "session_token_required",
-			Field: "session_token",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", nil, validationFailure("session_token_required", "session_token", ErrInvalidSessionToken)
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "token_malformed",
-			Field: "session_token",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", nil, validationFailure("token_malformed", "session_token", ErrInvalidSessionToken)
 	}
+	return secret, clientID, parts, nil
+}
 
+func validateTokenEnvelope(parts []string, secret string) (map[string]any, error) {
 	header, err := decodeJWTSection(parts[0])
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "header_decode_failed",
-			Field: "header",
-			Cause: ErrInvalidSessionToken,
-		}
+		return nil, validationFailure("header_decode_failed", "header", ErrInvalidSessionToken)
 	}
-	alg := strings.ToUpper(strings.TrimSpace(readAnyString(header["alg"])))
-	if alg != "HS256" {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "unsupported_alg",
-			Field: "alg",
-			Cause: ErrUnsupportedJWTAlgorithm,
-		}
+	if alg := strings.ToUpper(strings.TrimSpace(readAnyString(header["alg"]))); alg != "HS256" {
+		return nil, validationFailure("unsupported_alg", "alg", ErrUnsupportedJWTAlgorithm)
 	}
-
-	signatureRaw, err := base64.RawURLEncoding.DecodeString(parts[2])
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "signature_decode_failed",
-			Field: "signature",
-			Cause: ErrInvalidSessionToken,
-		}
+		return nil, validationFailure("signature_decode_failed", "signature", ErrInvalidSessionToken)
 	}
-	signingInput := parts[0] + "." + parts[1]
 	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(signingInput))
-	if !hmac.Equal(mac.Sum(nil), signatureRaw) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "signature_mismatch",
-			Field: "signature",
-			Cause: ErrInvalidSessionToken,
-		}
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	if !hmac.Equal(mac.Sum(nil), signature) {
+		return nil, validationFailure("signature_mismatch", "signature", ErrInvalidSessionToken)
 	}
-
 	payload, err := decodeJWTSection(parts[1])
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "payload_decode_failed",
-			Field: "payload",
-			Cause: ErrInvalidSessionToken,
-		}
+		return nil, validationFailure("payload_decode_failed", "payload", ErrInvalidSessionToken)
 	}
+	return payload, nil
+}
 
+type tokenIdentity struct {
+	issuer      string
+	destination string
+	shop        string
+	jti         string
+}
+
+func validateTokenIdentity(payload map[string]any, clientID, expectedShop string) (tokenIdentity, error) {
+	issuer, destination, destinationShop, err := validateTokenDestinations(payload)
+	if err != nil {
+		return tokenIdentity{}, err
+	}
+	if !audienceContains(payload["aud"], clientID) {
+		return tokenIdentity{}, validationFailure("aud_mismatch", "aud", ErrInvalidAudience)
+	}
+	jti := strings.TrimSpace(readAnyString(payload["jti"]))
+	if jti == "" {
+		return tokenIdentity{}, validationFailure("missing_jti", "jti", ErrMissingJTI)
+	}
+	if err := validateExpectedShop(expectedShop, destinationShop); err != nil {
+		return tokenIdentity{}, err
+	}
+	return tokenIdentity{issuer: issuer, destination: destination, shop: destinationShop, jti: jti}, nil
+}
+
+func validateTokenDestinations(payload map[string]any) (string, string, string, error) {
 	issuer := strings.TrimSpace(readAnyString(payload["iss"]))
 	issuerURL, err := parseHTTPSURL(issuer)
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_iss",
-			Field: "iss",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", "", validationFailure("invalid_iss", "iss", ErrInvalidSessionToken)
 	}
 	destination := strings.TrimSpace(readAnyString(payload["dest"]))
 	destinationURL, err := parseHTTPSURL(destination)
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_dest",
-			Field: "dest",
-			Cause: ErrInvalidDestination,
-		}
+		return "", "", "", validationFailure("invalid_dest", "dest", ErrInvalidDestination)
 	}
 	if !validIssuerPath(issuerURL.Path) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_iss_path",
-			Field: "iss",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", "", validationFailure("invalid_iss_path", "iss", ErrInvalidSessionToken)
 	}
 	if !validDestinationPath(destinationURL.Path) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_dest_path",
-			Field: "dest",
-			Cause: ErrInvalidDestination,
-		}
+		return "", "", "", validationFailure("invalid_dest_path", "dest", ErrInvalidDestination)
 	}
-
 	issuerShop, err := normalizeShopDomainStrict(issuerURL.Hostname())
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_iss_host",
-			Field: "iss",
-			Cause: ErrInvalidSessionToken,
-		}
+		return "", "", "", validationFailure("invalid_iss_host", "iss", ErrInvalidSessionToken)
 	}
 	destinationShop, err := normalizeShopDomainStrict(destinationURL.Hostname())
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_dest_host",
-			Field: "dest",
-			Cause: ErrInvalidDestination,
-		}
+		return "", "", "", validationFailure("invalid_dest_host", "dest", ErrInvalidDestination)
 	}
 	if !strings.EqualFold(issuerShop, destinationShop) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "issuer_destination_mismatch",
-			Field: "iss,dest",
-			Cause: ErrInvalidDestination,
-		}
+		return "", "", "", validationFailure("issuer_destination_mismatch", "iss,dest", ErrInvalidDestination)
 	}
+	return issuer, destination, destinationShop, nil
+}
 
-	if !audienceContains(payload["aud"], clientID) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "aud_mismatch",
-			Field: "aud",
-			Cause: ErrInvalidAudience,
-		}
+func validateExpectedShop(expectedShop, destinationShop string) error {
+	expectedShop = strings.TrimSpace(expectedShop)
+	if expectedShop == "" {
+		return nil
 	}
-
-	exp, err := parseUnixClaim(payload["exp"])
+	normalized, err := normalizeShopDomain(expectedShop)
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_exp",
-			Field: "exp",
-			Cause: ErrInvalidSessionToken,
-		}
+		return validationFailure("invalid_expected_shop", "expected_shop_domain", ErrInvalidSessionToken)
 	}
-	nbf, err := parseUnixClaim(payload["nbf"])
+	if !strings.EqualFold(normalized, destinationShop) {
+		return validationFailure("shop_mismatch", "expected_shop_domain", ErrInvalidDestination)
+	}
+	return nil
+}
+
+type tokenTimes struct {
+	expiresAt time.Time
+	notBefore time.Time
+	issuedAt  time.Time
+}
+
+func parseTokenTimes(payload map[string]any) (tokenTimes, error) {
+	expiresAt, err := parseUnixClaim(payload["exp"])
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_nbf",
-			Field: "nbf",
-			Cause: ErrInvalidSessionToken,
-		}
+		return tokenTimes{}, validationFailure("invalid_exp", "exp", ErrInvalidSessionToken)
 	}
-	iat, err := parseUnixClaim(payload["iat"])
+	notBefore, err := parseUnixClaim(payload["nbf"])
 	if err != nil {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_iat",
-			Field: "iat",
-			Cause: ErrInvalidSessionToken,
-		}
+		return tokenTimes{}, validationFailure("invalid_nbf", "nbf", ErrInvalidSessionToken)
 	}
+	issuedAt, err := parseUnixClaim(payload["iat"])
+	if err != nil {
+		return tokenTimes{}, validationFailure("invalid_iat", "iat", ErrInvalidSessionToken)
+	}
+	return tokenTimes{expiresAt: expiresAt, notBefore: notBefore, issuedAt: issuedAt}, nil
+}
 
-	jti := strings.TrimSpace(readAnyString(payload["jti"]))
-	if jti == "" {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "missing_jti",
-			Field: "jti",
-			Cause: ErrMissingJTI,
-		}
+func validateTokenTimes(config SessionTokenValidatorConfig, times tokenTimes) error {
+	now := config.Now().UTC()
+	if now.After(times.expiresAt.Add(config.ClockSkew)) {
+		return validationFailure("token_expired", "exp", ErrInvalidSessionToken)
 	}
-
-	expectedShop := strings.TrimSpace(req.ExpectedShopDomain)
-	if expectedShop != "" {
-		normalizedExpectedShop, expectedErr := normalizeShopDomain(expectedShop)
-		if expectedErr != nil {
-			return core.EmbeddedSessionClaims{}, &ValidationError{
-				Code:  "invalid_expected_shop",
-				Field: "expected_shop_domain",
-				Cause: ErrInvalidSessionToken,
-			}
-		}
-		if !strings.EqualFold(normalizedExpectedShop, destinationShop) {
-			return core.EmbeddedSessionClaims{}, &ValidationError{
-				Code:  "shop_mismatch",
-				Field: "expected_shop_domain",
-				Cause: ErrInvalidDestination,
-			}
-		}
+	if now.Add(config.ClockSkew).Before(times.notBefore) {
+		return validationFailure("token_not_active", "nbf", ErrInvalidSessionToken)
 	}
-
-	now := v.config.Now().UTC()
-	if now.After(exp.Add(v.config.ClockSkew)) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "token_expired",
-			Field: "exp",
-			Cause: ErrInvalidSessionToken,
-		}
+	if now.Add(config.ClockSkew).Before(times.issuedAt) {
+		return validationFailure("issued_in_future", "iat", ErrInvalidSessionToken)
 	}
-	if now.Add(v.config.ClockSkew).Before(nbf) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "token_not_active",
-			Field: "nbf",
-			Cause: ErrInvalidSessionToken,
-		}
+	if times.expiresAt.Add(config.ClockSkew).Before(times.issuedAt) {
+		return validationFailure("invalid_time_window", "iat,exp", ErrInvalidSessionToken)
 	}
-	if now.Add(v.config.ClockSkew).Before(iat) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "issued_in_future",
-			Field: "iat",
-			Cause: ErrInvalidSessionToken,
-		}
+	if config.MaxIssuedAtAge > 0 && now.After(times.issuedAt.Add(config.MaxIssuedAtAge+config.ClockSkew)) {
+		return validationFailure("issued_too_old", "iat", ErrInvalidSessionToken)
 	}
-	if exp.Add(v.config.ClockSkew).Before(iat) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "invalid_time_window",
-			Field: "iat,exp",
-			Cause: ErrInvalidSessionToken,
-		}
-	}
-	if v.config.MaxIssuedAtAge > 0 && now.After(iat.Add(v.config.MaxIssuedAtAge+v.config.ClockSkew)) {
-		return core.EmbeddedSessionClaims{}, &ValidationError{
-			Code:  "issued_too_old",
-			Field: "iat",
-			Cause: ErrInvalidSessionToken,
-		}
-	}
-
-	return core.EmbeddedSessionClaims{
-		Issuer:      issuer,
-		Destination: destination,
-		Audience:    clientID,
-		Subject:     strings.TrimSpace(readAnyString(payload["sub"])),
-		JTI:         jti,
-		ShopDomain:  destinationShop,
-		IssuedAt:    iat,
-		NotBefore:   nbf,
-		ExpiresAt:   exp,
-		Raw:         copyAnyMap(payload),
-	}, nil
+	return nil
 }
 
 func decodeJWTSection(section string) (map[string]any, error) {
