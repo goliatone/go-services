@@ -47,7 +47,7 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 		return core.TrackerNodePage{}, err
 	}
 	limit := tracker.Limit(input.Limit, 50, 100)
-	target := endpoint.ResolveReference(&url.URL{Path: "/rest/api/3/project/search"})
+	target := endpointPath(endpoint, "/rest/api/3/project/search")
 	query := target.Query()
 	query.Set("startAt", strconv.Itoa(offset))
 	query.Set("maxResults", strconv.Itoa(limit))
@@ -90,7 +90,7 @@ func (p *Provider) DiscoverTrackerSchema(ctx context.Context, input core.Tracker
 		return core.TrackerSchemaPage{}, err
 	}
 	limit := tracker.Limit(input.Limit, 50, 100)
-	target := endpoint.ResolveReference(&url.URL{Path: "/rest/api/3/field/search"})
+	target := endpointPath(endpoint, "/rest/api/3/field/search")
 	query := target.Query()
 	query.Set("startAt", strconv.Itoa(offset))
 	query.Set("maxResults", strconv.Itoa(limit))
@@ -132,7 +132,7 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 	if err != nil {
 		return core.TrackerChangePage{}, err
 	}
-	target := endpoint.ResolveReference(&url.URL{Path: "/rest/api/3/search/jql"})
+	target := endpointPath(endpoint, "/rest/api/3/search/jql")
 	payload := map[string]any{"jql": fmt.Sprintf("project = %q ORDER BY updated ASC", input.ResourceID), "maxResults": tracker.Limit(input.Limit, 50, 100), "fields": []string{"*all"}}
 	if strings.TrimSpace(input.Cursor) != "" {
 		payload["nextPageToken"] = input.Cursor
@@ -167,7 +167,7 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 			return core.TrackerChangePage{}, core.NewTrackerProviderError(core.TrackerErrorExternal, "Jira issue payload is invalid", false, 0, err)
 		}
 		normalized := map[string]any{"key": issue.Key, "title": issue.Fields.Summary, "description": issue.Fields.Description, "status": issue.Fields.Status, "assignee": issue.Fields.Assignee, "reporter": issue.Fields.Reporter, "labels": issue.Fields.Labels, "priority": issue.Fields.Priority, "issue_type": issue.Fields.IssueType}
-		items = append(items, core.TrackerResource{ProviderID: ProviderID, ResourceType: "issue", ExternalID: issue.ID, ProviderRevision: firstNonEmpty(issue.Fields.Updated, tracker.Revision(raw)), CanonicalURL: endpoint.ResolveReference(&url.URL{Path: "/browse/" + url.PathEscape(issue.Key)}).String(), ObservedAt: observedAt, NormalizedFields: tracker.RawJSON(normalized), NativeExtension: raw, SchemaRevision: "jira.issue.v1"})
+		items = append(items, core.TrackerResource{ProviderID: ProviderID, ResourceType: "issue", ExternalID: issue.ID, ProviderRevision: firstNonEmpty(issue.Fields.Updated, tracker.Revision(raw)), CanonicalURL: endpointPath(endpoint, "/browse/"+url.PathEscape(issue.Key)).String(), ObservedAt: observedAt, NormalizedFields: tracker.RawJSON(normalized), NativeExtension: raw, SchemaRevision: "jira.issue.v1"})
 	}
 	hasMore := !response.IsLast && response.NextPageToken != ""
 	return core.TrackerChangePage{Items: items, NextCursor: response.NextPageToken, HasMore: hasMore}, nil
@@ -178,7 +178,7 @@ func (p *Provider) Subscribe(ctx context.Context, input core.SubscribeRequest) (
 	if err != nil {
 		return core.SubscriptionResult{}, err
 	}
-	target := endpoint.ResolveReference(&url.URL{Path: "/rest/api/3/webhook"})
+	target := endpointPath(endpoint, "/rest/api/3/webhook")
 	payload := map[string]any{"url": input.CallbackURL, "webhooks": []map[string]any{{"events": []string{"jira:issue_created", "jira:issue_updated", "jira:issue_deleted"}, "jqlFilter": fmt.Sprintf("project = %q", input.ResourceID)}}}
 	request, _ := jsonRequest(ctx, http.MethodPost, target.String(), payload)
 	var response struct {
@@ -209,7 +209,7 @@ func (p *Provider) CancelSubscription(ctx context.Context, input core.CancelSubs
 	if err != nil {
 		return core.NewTrackerProviderError(core.TrackerErrorExternal, "Jira webhook id is invalid", false, 0, err)
 	}
-	target := endpoint.ResolveReference(&url.URL{Path: "/rest/api/3/webhook"})
+	target := endpointPath(endpoint, "/rest/api/3/webhook")
 	request, _ := jsonRequest(ctx, http.MethodDelete, target.String(), map[string]any{"webhookIds": []int64{id}})
 	return p.runtime.DoJSONWithCredential(ctx, credential, request, nil)
 }
@@ -260,6 +260,12 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return "unknown"
+}
+
+func endpointPath(endpoint *url.URL, suffix string) *url.URL {
+	target := *endpoint
+	target.Path = strings.TrimRight(endpoint.Path, "/") + "/" + strings.TrimLeft(suffix, "/")
+	return &target
 }
 
 var _ core.TrackerProvider = (*Provider)(nil)
