@@ -1,5 +1,23 @@
 # Changelog
 
+# [0.7.3](https://github.com/goliatone/go-services/compare/v0.7.2...v0.7.3) - (2026-08-22)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.7.3 ([12a6d59](https://github.com/goliatone/go-services/commit/12a6d59046e61373a670e436f050af0a32faf690))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Jira, github, linear providers ([8c5729d](https://github.com/goliatone/go-services/commit/8c5729d01fc314f8b9eda8aaaf46477549853ee1))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.7.2 ([fa2baa6](https://github.com/goliatone/go-services/commit/fa2baa6afc5d606f516ebc928aec20e8daef5a7b))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Fix linting ([02946a6](https://github.com/goliatone/go-services/commit/02946a6e046b9fa2f337cf55713ef07ce872794a))  - (goliatone)
+
 # [0.7.2](https://github.com/goliatone/go-services/compare/v0.7.1...v0.7.2) - (2026-05-12)
 
 ## <!-- 13 -->📦 Bumps
