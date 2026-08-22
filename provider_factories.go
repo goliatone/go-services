@@ -4,11 +4,14 @@ import (
 	"github.com/goliatone/go-services/core"
 	"github.com/goliatone/go-services/providers/amazon"
 	"github.com/goliatone/go-services/providers/github"
+	"github.com/goliatone/go-services/providers/githubprojects"
 	"github.com/goliatone/go-services/providers/google/calendar"
 	"github.com/goliatone/go-services/providers/google/docs"
 	"github.com/goliatone/go-services/providers/google/drive"
 	"github.com/goliatone/go-services/providers/google/gmail"
 	"github.com/goliatone/go-services/providers/google/shopping"
+	"github.com/goliatone/go-services/providers/jira"
+	"github.com/goliatone/go-services/providers/linear"
 	"github.com/goliatone/go-services/providers/meta/facebook"
 	"github.com/goliatone/go-services/providers/meta/instagram"
 	"github.com/goliatone/go-services/providers/pinterest"
@@ -20,6 +23,18 @@ import (
 
 func GitHubProvider(cfg github.Config) (core.Provider, error) {
 	return github.New(cfg)
+}
+
+func GitHubProjectsProvider(cfg githubprojects.Config) (core.Provider, error) {
+	return githubprojects.New(cfg)
+}
+
+func LinearProvider(cfg linear.Config) (core.Provider, error) {
+	return linear.New(cfg)
+}
+
+func JiraProvider(cfg jira.Config) (core.Provider, error) {
+	return jira.New(cfg)
 }
 
 func GmailProvider(cfg gmail.Config) (core.Provider, error) {

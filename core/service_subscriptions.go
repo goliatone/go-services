@@ -90,6 +90,11 @@ func (s *Service) RenewSubscription(ctx context.Context, req RenewSubscriptionRe
 		return Subscription{}, s.mapError(fmt.Errorf("core: provider %q is not subscribable", existing.ProviderID))
 	}
 
+	req.ConnectionID = existing.ConnectionID
+	req.ResourceType = existing.ResourceType
+	req.ResourceID = existing.ResourceID
+	req.RemoteSubscriptionID = existing.RemoteSubscriptionID
+	req.Metadata = mergeAnyMap(existing.Metadata, req.Metadata)
 	result, err := subscribable.RenewSubscription(ctx, req)
 	if err != nil {
 		_ = s.subscriptionStore.UpdateState(ctx, existing.ID, SubscriptionStatusErrored, err.Error())
@@ -159,8 +164,13 @@ func (s *Service) CancelSubscription(ctx context.Context, req CancelSubscription
 		return s.mapError(fmt.Errorf("core: provider %q is not subscribable", existing.ProviderID))
 	}
 	if err := subscribable.CancelSubscription(ctx, CancelSubscriptionRequest{
-		SubscriptionID: subscriptionID,
-		Reason:         reason,
+		SubscriptionID:       subscriptionID,
+		ConnectionID:         existing.ConnectionID,
+		ResourceType:         existing.ResourceType,
+		ResourceID:           existing.ResourceID,
+		RemoteSubscriptionID: existing.RemoteSubscriptionID,
+		Reason:               reason,
+		Metadata:             copyAnyMap(existing.Metadata),
 	}); err != nil {
 		_ = s.subscriptionStore.UpdateState(ctx, existing.ID, SubscriptionStatusErrored, err.Error())
 		return s.mapError(err)

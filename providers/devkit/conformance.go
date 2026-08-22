@@ -62,6 +62,37 @@ func ValidateWebhookLedgerConformance(
 	return nil
 }
 
+// ValidateTrackerProviderConformance exercises the complete read-observation
+// surface and validates the returned versioned contracts. Callers supply known
+// fixture identifiers so the same suite can be reused by every provider pack.
+func ValidateTrackerProviderConformance(ctx context.Context, provider core.TrackerProvider, connectionID, resourceType, resourceID string) error {
+	if provider == nil {
+		return fmt.Errorf("devkit: tracker provider is required")
+	}
+	discovery, err := provider.DiscoverTrackerScopes(ctx, core.TrackerDiscoveryRequest{ConnectionID: connectionID, Limit: 10})
+	if err != nil {
+		return err
+	}
+	if err := discovery.Validate(); err != nil {
+		return fmt.Errorf("devkit: tracker discovery: %w", err)
+	}
+	schema, err := provider.DiscoverTrackerSchema(ctx, core.TrackerDiscoveryRequest{ConnectionID: connectionID, ResourceType: resourceType, ResourceID: resourceID, Limit: 10})
+	if err != nil {
+		return err
+	}
+	if err := schema.Validate(); err != nil {
+		return fmt.Errorf("devkit: tracker schema: %w", err)
+	}
+	changes, err := provider.ListTrackerChanges(ctx, core.TrackerChangesRequest{ConnectionID: connectionID, ResourceType: resourceType, ResourceID: resourceID, Limit: 10})
+	if err != nil {
+		return err
+	}
+	if err := changes.Validate(); err != nil {
+		return fmt.Errorf("devkit: tracker changes: %w", err)
+	}
+	return nil
+}
+
 func ValidateIdempotencyClaimStoreConformance(
 	ctx context.Context,
 	store core.IdempotencyClaimStore,

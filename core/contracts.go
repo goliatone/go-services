@@ -195,13 +195,22 @@ type SubscribeRequest struct {
 }
 
 type RenewSubscriptionRequest struct {
-	SubscriptionID string
-	Metadata       map[string]any
+	SubscriptionID       string
+	ConnectionID         string
+	ResourceType         string
+	ResourceID           string
+	RemoteSubscriptionID string
+	Metadata             map[string]any
 }
 
 type CancelSubscriptionRequest struct {
-	SubscriptionID string
-	Reason         string
+	SubscriptionID       string
+	ConnectionID         string
+	ResourceType         string
+	ResourceID           string
+	RemoteSubscriptionID string
+	Reason               string
+	Metadata             map[string]any
 }
 
 type SubscriptionResult struct {

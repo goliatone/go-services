@@ -6,6 +6,7 @@ import (
 	"github.com/goliatone/go-services/core"
 	"github.com/goliatone/go-services/identity"
 	"github.com/goliatone/go-services/providers"
+	"github.com/goliatone/go-services/providers/tracker"
 )
 
 const (
@@ -22,6 +23,7 @@ type Config struct {
 	DefaultScopes       []string
 	SupportedScopeTypes []string
 	TokenTTL            time.Duration
+	TrackerRuntime      tracker.Runtime
 }
 
 func DefaultConfig() Config {
@@ -43,7 +45,7 @@ func New(cfg Config) (core.Provider, error) {
 	if len(cfg.DefaultScopes) == 0 {
 		cfg.DefaultScopes = defaults.DefaultScopes
 	}
-	return providers.NewOAuth2Provider(providers.OAuth2Config{
+	base, err := providers.NewOAuth2Provider(providers.OAuth2Config{
 		ID:                  ProviderID,
 		AuthURL:             cfg.AuthURL,
 		TokenURL:            cfg.TokenURL,
@@ -60,4 +62,8 @@ func New(cfg Config) (core.Provider, error) {
 			{Name: "issues.write", RequiredGrants: []string{"repo"}, DeniedBehavior: core.CapabilityDeniedBehaviorBlock},
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{Provider: base, runtime: cfg.TrackerRuntime}, nil
 }
