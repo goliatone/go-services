@@ -1,5 +1,27 @@
 # Changelog
 
+# [0.8.0](https://github.com/goliatone/go-services/compare/v0.7.3...v0.8.0) - (2026-09-12)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Code quality ([2cf051f](https://github.com/goliatone/go-services/commit/2cf051f5aa85b9e52c459497e89e21568ec35a82))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.8.0 ([599d1bc](https://github.com/goliatone/go-services/commit/599d1bca3982b954c815d250fd6eb76165cc2801))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Github tracker and mutations ([12d1710](https://github.com/goliatone/go-services/commit/12d17109cbefe3834809a2a4280bd29d218c67e3))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.7.3 ([71625e8](https://github.com/goliatone/go-services/commit/71625e8f283a046a843912ddf27892d8c468ae53))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update tests ([92dfe6f](https://github.com/goliatone/go-services/commit/92dfe6f21c88f76625d1b52ded012daa431b268a))  - (goliatone)
+
 # [0.7.3](https://github.com/goliatone/go-services/compare/v0.7.2...v0.7.3) - (2026-08-22)
 
 ## <!-- 13 -->📦 Bumps
