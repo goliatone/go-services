@@ -2,8 +2,10 @@ package devkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +91,53 @@ func ValidateTrackerProviderConformance(ctx context.Context, provider core.Track
 	}
 	if err := changes.Validate(); err != nil {
 		return fmt.Errorf("devkit: tracker changes: %w", err)
+	}
+	return nil
+}
+
+type TrackerMutationConformanceFixture struct {
+	Capability core.TrackerFieldCapabilityRequest
+	Create     core.TrackerIssueCreateRequest
+	Update     core.TrackerIssueUpdateRequest
+}
+
+func ValidateTrackerMutationProviderConformance(ctx context.Context, provider core.TrackerMutationProvider, fixture TrackerMutationConformanceFixture) error {
+	capabilities, err := provider.DiscoverTrackerFieldCapabilities(ctx, fixture.Capability)
+	if err != nil {
+		return fmt.Errorf("tracker mutation capabilities: %w", err)
+	}
+	titleCreate, titleUpdate := false, false
+	for _, capability := range capabilities {
+		if err := capability.Validate(); err != nil {
+			return fmt.Errorf("tracker mutation capability: %w", err)
+		}
+		titleCreate = titleCreate || capability.Field == "title" && capability.Operation == "create" && capability.Granted
+		titleUpdate = titleUpdate || capability.Field == "title" && capability.Operation == "update" && capability.Granted
+	}
+	if !titleCreate || !titleUpdate {
+		return errors.New("tracker mutation provider does not grant title create and update")
+	}
+	created, err := provider.CreateTrackerIssue(ctx, fixture.Create)
+	if err != nil {
+		return fmt.Errorf("tracker mutation create: %w", err)
+	}
+	if err := created.Validate(); err != nil {
+		return fmt.Errorf("tracker mutation create receipt: %w", err)
+	}
+	fixture.Update.IssueID = created.ExternalID
+	fixture.Update.ExpectedRevision = created.ProviderRevision
+	if fixture.Update.IssueNumber == 0 {
+		fixture.Update.IssueNumber, _ = strconv.Atoi(created.DisplayID)
+	}
+	updated, err := provider.UpdateTrackerIssue(ctx, fixture.Update)
+	if err != nil {
+		return fmt.Errorf("tracker mutation update: %w", err)
+	}
+	if err := updated.Validate(); err != nil {
+		return fmt.Errorf("tracker mutation update receipt: %w", err)
+	}
+	if updated.ExternalID != created.ExternalID || updated.RepositoryID != created.RepositoryID || updated.ProviderRevision == created.ProviderRevision {
+		return errors.New("tracker mutation update did not preserve identity and advance revision")
 	}
 	return nil
 }

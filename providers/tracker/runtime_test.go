@@ -59,6 +59,62 @@ func TestRuntimeMapsRateLimitWithoutCredentialDisclosure(t *testing.T) {
 	}
 }
 
+func TestRuntimeMapsGitHubFailureCategories(t *testing.T) {
+	tests := []struct {
+		status int
+		header http.Header
+		code   string
+	}{
+		{http.StatusForbidden, http.Header{}, core.TrackerErrorPermission},
+		{http.StatusForbidden, http.Header{"X-Ratelimit-Remaining": []string{"0"}}, core.TrackerErrorRateLimited},
+		{http.StatusNotFound, http.Header{}, core.TrackerErrorNotFound},
+		{http.StatusUnprocessableEntity, http.Header{}, core.TrackerErrorValidation},
+		{http.StatusPreconditionFailed, http.Header{}, core.TrackerErrorConflict},
+	}
+	for _, test := range tests {
+		response := &http.Response{StatusCode: test.status, Header: test.header}
+		err := responseError(response, []byte(`{"message":"safe"}`))
+		providerErr, ok := err.(*core.TrackerProviderError)
+		if !ok || providerErr.Code != test.code {
+			t.Fatalf("status %d: %#v", test.status, err)
+		}
+	}
+}
+
+func TestRuntimeReturnsSafeResponseMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-GitHub-Request-Id", "request-1")
+		writer.Header().Set("ETag", `"etag-1"`)
+		writer.Header().Set("X-RateLimit-Remaining", "12")
+		writer.Header().Set("X-RateLimit-Reset", "1789257600")
+		_, _ = writer.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	runtime := Runtime{Credentials: credentialResolverFunc(func(context.Context, string) (core.ActiveCredential, error) {
+		return core.ActiveCredential{AccessToken: "secret"}, nil
+	}), HTTPClient: server.Client()}
+	request, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	metadata, err := runtime.DoJSONWithCredentialMetadata(context.Background(), core.ActiveCredential{AccessToken: "secret"}, request, nil)
+	if err != nil || metadata.RequestID != "request-1" || metadata.ETag != `"etag-1"` || metadata.RateLimitRemaining != 12 || metadata.RateLimitReset.IsZero() {
+		t.Fatalf("metadata=%#v err=%v", metadata, err)
+	}
+}
+
+func TestRuntimeRedactsCredentialMaterialEchoedByProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = writer.Write([]byte(`token=secret-access refresh=secret-refresh signing=secret-signing`))
+	}))
+	defer server.Close()
+	credential := core.ActiveCredential{AccessToken: "secret-access", RefreshToken: "secret-refresh", Metadata: map[string]any{"webhook_secret": "secret-signing"}}
+	runtime := Runtime{HTTPClient: server.Client()}
+	request, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	_, err := runtime.DoJSONWithCredentialMetadata(context.Background(), credential, request, nil)
+	if err == nil || strings.Contains(err.Error(), "secret-access") || strings.Contains(err.Error(), "secret-refresh") || strings.Contains(err.Error(), "secret-signing") {
+		t.Fatalf("unredacted error: %v", err)
+	}
+}
+
 func TestEndpointRejectsUnsafeConnectionConfiguration(t *testing.T) {
 	unsafe := []string{"http://jira.example", "https://user:pass@jira.example", "https://jira.example?redirect=http://localhost"}
 	for _, value := range unsafe {

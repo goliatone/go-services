@@ -29,6 +29,16 @@ type Runtime struct {
 	MaxResponseBodyBytes int64
 }
 
+type ResponseMetadata struct {
+	StatusCode         int
+	RequestID          string
+	ETag               string
+	LastModified       string
+	RateLimitRemaining int
+	RateLimitReset     time.Time
+	OAuthScopes        []string
+}
+
 func (r Runtime) DoJSON(ctx context.Context, connectionID string, request *http.Request, output any) error {
 	if r.Credentials == nil || request == nil {
 		return core.NewTrackerProviderError(core.TrackerErrorUnavailable, "tracker runtime is incomplete", true, 0, nil)
@@ -52,15 +62,20 @@ func (r Runtime) ResolveCredential(ctx context.Context, connectionID string) (co
 }
 
 func (r Runtime) DoJSONWithCredential(ctx context.Context, credential core.ActiveCredential, request *http.Request, output any) error {
+	_, err := r.DoJSONWithCredentialMetadata(ctx, credential, request, output)
+	return err
+}
+
+func (r Runtime) DoJSONWithCredentialMetadata(ctx context.Context, credential core.ActiveCredential, request *http.Request, output any) (ResponseMetadata, error) {
 	if request == nil {
-		return core.NewTrackerProviderError(core.TrackerErrorUnavailable, "tracker request is missing", false, 0, nil)
+		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorUnavailable, "tracker request is missing", false, 0, nil)
 	}
 	authenticate := r.Authenticate
 	if authenticate == nil {
 		authenticate = BearerAuthenticator
 	}
 	if err := authenticate(ctx, request, credential); err != nil {
-		return core.NewTrackerProviderError(core.TrackerErrorCredentialRevoked, "credential cannot authenticate request", false, 0, err)
+		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorCredentialRevoked, "credential cannot authenticate request", false, 0, err)
 	}
 	client := r.HTTPClient
 	if client == nil {
@@ -68,30 +83,66 @@ func (r Runtime) DoJSONWithCredential(ctx context.Context, credential core.Activ
 	}
 	response, err := client.Do(request.WithContext(ctx))
 	if err != nil {
-		return core.NewTrackerProviderError(core.TrackerErrorUnavailable, "provider request failed", true, 0, err)
+		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorUnavailable, "provider request failed", true, 0, err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	metadata := responseMetadata(response)
 	limit := r.MaxResponseBodyBytes
 	if limit <= 0 {
 		limit = DefaultMaxResponseBodyBytes
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return core.NewTrackerProviderError(core.TrackerErrorExternal, "provider response read failed", true, 0, err)
+		return metadata, core.NewTrackerProviderError(core.TrackerErrorExternal, "provider response read failed", true, 0, err)
 	}
 	if int64(len(body)) > limit {
-		return core.NewTrackerProviderError(core.TrackerErrorExternal, "provider response exceeds configured bound", false, 0, nil)
+		return metadata, core.NewTrackerProviderError(core.TrackerErrorExternal, "provider response exceeds configured bound", false, 0, nil)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return responseError(response, body)
+		return metadata, responseError(response, redactTrackerResponse(body, credential))
 	}
 	if output == nil || len(body) == 0 {
-		return nil
+		return metadata, nil
 	}
 	if err := json.Unmarshal(body, output); err != nil {
-		return core.NewTrackerProviderError(core.TrackerErrorExternal, "provider response is invalid JSON", false, 0, err)
+		return metadata, core.NewTrackerProviderError(core.TrackerErrorExternal, "provider response is invalid JSON", false, 0, err)
 	}
-	return nil
+	return metadata, nil
+}
+
+func redactTrackerResponse(body []byte, credential core.ActiveCredential) []byte {
+	message := string(body)
+	for _, secret := range []string{credential.AccessToken, credential.RefreshToken} {
+		if secret = strings.TrimSpace(secret); secret != "" {
+			message = strings.ReplaceAll(message, secret, "[redacted]")
+		}
+	}
+	for key, value := range credential.Metadata {
+		name := strings.ToLower(strings.TrimSpace(key))
+		if !strings.Contains(name, "token") && !strings.Contains(name, "secret") && !strings.Contains(name, "password") {
+			continue
+		}
+		secret := strings.TrimSpace(fmt.Sprint(value))
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[redacted]")
+		}
+	}
+	return []byte(message)
+}
+
+func responseMetadata(response *http.Response) ResponseMetadata {
+	remaining, _ := strconv.Atoi(strings.TrimSpace(response.Header.Get("X-RateLimit-Remaining")))
+	resetUnix, _ := strconv.ParseInt(strings.TrimSpace(response.Header.Get("X-RateLimit-Reset")), 10, 64)
+	metadata := ResponseMetadata{StatusCode: response.StatusCode, RequestID: strings.TrimSpace(response.Header.Get("X-GitHub-Request-Id")), ETag: strings.TrimSpace(response.Header.Get("ETag")), LastModified: strings.TrimSpace(response.Header.Get("Last-Modified")), RateLimitRemaining: remaining}
+	for _, scope := range strings.Split(response.Header.Get("X-OAuth-Scopes"), ",") {
+		if scope = strings.TrimSpace(scope); scope != "" {
+			metadata.OAuthScopes = append(metadata.OAuthScopes, scope)
+		}
+	}
+	if resetUnix > 0 {
+		metadata.RateLimitReset = time.Unix(resetUnix, 0).UTC()
+	}
+	return metadata
 }
 
 func BearerAuthenticator(_ context.Context, request *http.Request, credential core.ActiveCredential) error {
@@ -118,14 +169,23 @@ func responseError(response *http.Response, body []byte) error {
 		message = message[:512]
 	}
 	switch response.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return core.NewTrackerProviderError(core.TrackerErrorCredentialRevoked, message, false, 0, nil)
+	case http.StatusForbidden:
+		if strings.TrimSpace(response.Header.Get("X-RateLimit-Remaining")) == "0" {
+			return core.NewTrackerProviderError(core.TrackerErrorRateLimited, message, true, retryAfter(response.Header), nil)
+		}
+		return core.NewTrackerProviderError(core.TrackerErrorPermission, message, false, 0, nil)
 	case http.StatusTooManyRequests:
 		return core.NewTrackerProviderError(core.TrackerErrorRateLimited, message, true, retryAfter(response.Header), nil)
+	case http.StatusNotFound:
+		return core.NewTrackerProviderError(core.TrackerErrorNotFound, message, false, 0, nil)
+	case http.StatusUnprocessableEntity:
+		return core.NewTrackerProviderError(core.TrackerErrorValidation, message, false, 0, nil)
 	case http.StatusGone:
 		return core.NewTrackerProviderError(core.TrackerErrorCursorInvalid, message, true, 0, nil)
 	case http.StatusConflict, http.StatusPreconditionFailed:
-		return core.NewTrackerProviderError(core.TrackerErrorSchemaChanged, message, true, 0, nil)
+		return core.NewTrackerProviderError(core.TrackerErrorConflict, message, true, 0, nil)
 	default:
 		retryable := response.StatusCode >= 500
 		return core.NewTrackerProviderError(core.TrackerErrorExternal, fmt.Sprintf("provider returned HTTP %d: %s", response.StatusCode, message), retryable, 0, nil)
