@@ -75,22 +75,22 @@ func ValidateTrackerProviderConformance(ctx context.Context, provider core.Track
 	if err != nil {
 		return err
 	}
-	if err := discovery.Validate(); err != nil {
-		return fmt.Errorf("devkit: tracker discovery: %w", err)
+	if validationErr := discovery.Validate(); validationErr != nil {
+		return fmt.Errorf("devkit: tracker discovery: %w", validationErr)
 	}
 	schema, err := provider.DiscoverTrackerSchema(ctx, core.TrackerDiscoveryRequest{ConnectionID: connectionID, ResourceType: resourceType, ResourceID: resourceID, Limit: 10})
 	if err != nil {
 		return err
 	}
-	if err := schema.Validate(); err != nil {
-		return fmt.Errorf("devkit: tracker schema: %w", err)
+	if validationErr := schema.Validate(); validationErr != nil {
+		return fmt.Errorf("devkit: tracker schema: %w", validationErr)
 	}
 	changes, err := provider.ListTrackerChanges(ctx, core.TrackerChangesRequest{ConnectionID: connectionID, ResourceType: resourceType, ResourceID: resourceID, Limit: 10})
 	if err != nil {
 		return err
 	}
-	if err := changes.Validate(); err != nil {
-		return fmt.Errorf("devkit: tracker changes: %w", err)
+	if validationErr := changes.Validate(); validationErr != nil {
+		return fmt.Errorf("devkit: tracker changes: %w", validationErr)
 	}
 	return nil
 }
@@ -106,23 +106,15 @@ func ValidateTrackerMutationProviderConformance(ctx context.Context, provider co
 	if err != nil {
 		return fmt.Errorf("tracker mutation capabilities: %w", err)
 	}
-	titleCreate, titleUpdate := false, false
-	for _, capability := range capabilities {
-		if err := capability.Validate(); err != nil {
-			return fmt.Errorf("tracker mutation capability: %w", err)
-		}
-		titleCreate = titleCreate || capability.Field == "title" && capability.Operation == "create" && capability.Granted
-		titleUpdate = titleUpdate || capability.Field == "title" && capability.Operation == "update" && capability.Granted
-	}
-	if !titleCreate || !titleUpdate {
-		return errors.New("tracker mutation provider does not grant title create and update")
+	if validationErr := validateTrackerMutationCapabilities(capabilities); validationErr != nil {
+		return validationErr
 	}
 	created, err := provider.CreateTrackerIssue(ctx, fixture.Create)
 	if err != nil {
 		return fmt.Errorf("tracker mutation create: %w", err)
 	}
-	if err := created.Validate(); err != nil {
-		return fmt.Errorf("tracker mutation create receipt: %w", err)
+	if validationErr := created.Validate(); validationErr != nil {
+		return fmt.Errorf("tracker mutation create receipt: %w", validationErr)
 	}
 	fixture.Update.IssueID = created.ExternalID
 	fixture.Update.ExpectedRevision = created.ProviderRevision
@@ -133,11 +125,26 @@ func ValidateTrackerMutationProviderConformance(ctx context.Context, provider co
 	if err != nil {
 		return fmt.Errorf("tracker mutation update: %w", err)
 	}
-	if err := updated.Validate(); err != nil {
-		return fmt.Errorf("tracker mutation update receipt: %w", err)
+	if validationErr := updated.Validate(); validationErr != nil {
+		return fmt.Errorf("tracker mutation update receipt: %w", validationErr)
 	}
 	if updated.ExternalID != created.ExternalID || updated.RepositoryID != created.RepositoryID || updated.ProviderRevision == created.ProviderRevision {
 		return errors.New("tracker mutation update did not preserve identity and advance revision")
+	}
+	return nil
+}
+
+func validateTrackerMutationCapabilities(capabilities []core.TrackerFieldCapability) error {
+	titleCreate, titleUpdate := false, false
+	for _, capability := range capabilities {
+		if err := capability.Validate(); err != nil {
+			return fmt.Errorf("tracker mutation capability: %w", err)
+		}
+		titleCreate = titleCreate || capability.Field == "title" && capability.Operation == "create" && capability.Granted
+		titleUpdate = titleUpdate || capability.Field == "title" && capability.Operation == "update" && capability.Granted
+	}
+	if !titleCreate || !titleUpdate {
+		return errors.New("tracker mutation provider does not grant title create and update")
 	}
 	return nil
 }

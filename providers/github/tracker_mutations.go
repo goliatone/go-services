@@ -78,7 +78,7 @@ func (p *Provider) CreateTrackerIssue(ctx context.Context, input core.TrackerIss
 	for field := range input.Fields {
 		fields = append(fields, field)
 	}
-	if _, err := p.requireRepositoryWrite(ctx, credential, *endpoint, input.RepositoryID, fields...); err != nil {
+	if _, err = p.requireRepositoryWrite(ctx, credential, *endpoint, input.RepositoryID, fields...); err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
 	requestURL := *endpoint
@@ -107,14 +107,14 @@ func (p *Provider) UpdateTrackerIssue(ctx context.Context, input core.TrackerIss
 	if err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
-	if _, err := p.requireRepositoryWrite(ctx, credential, *endpoint, input.RepositoryID, input.Field); err != nil {
+	if _, err = p.requireRepositoryWrite(ctx, credential, *endpoint, input.RepositoryID, input.Field); err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
 	requestURL := *endpoint
 	requestURL.Path += "/repos/" + escapePath(input.RepositoryID) + "/issues/" + strconv.Itoa(input.IssueNumber)
 	currentRequest, _ := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	var current issue
-	if _, err := p.runtime.DoJSONWithCredentialMetadata(ctx, credential, currentRequest, &current); err != nil {
+	if _, err = p.runtime.DoJSONWithCredentialMetadata(ctx, credential, currentRequest, &current); err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
 	if strconv.FormatInt(current.ID, 10) != input.IssueID || githubIssueRevision(current) != input.ExpectedRevision {
@@ -173,9 +173,8 @@ func githubIssueFieldValue(field string, raw json.RawMessage) (string, any, erro
 	}
 	switch field {
 	case "title", "description", "state":
-		text, ok := value.(string)
-		if !ok || field == "title" && strings.TrimSpace(text) == "" || field == "state" && text != "open" && text != "closed" {
-			return "", nil, core.NewTrackerProviderError(core.TrackerErrorValidation, "GitHub issue scalar field is invalid", false, 0, nil)
+		if err := validateGitHubIssueScalar(field, value); err != nil {
+			return "", nil, err
 		}
 	case "labels", "assignees":
 		items, ok := value.([]any)
@@ -198,6 +197,14 @@ func githubIssueFieldValue(field string, raw json.RawMessage) (string, any, erro
 		return "", nil, core.NewTrackerProviderError(core.TrackerErrorValidation, "unsupported GitHub issue field", false, 0, errors.New(field))
 	}
 	return mapped, value, nil
+}
+
+func validateGitHubIssueScalar(field string, value any) error {
+	text, ok := value.(string)
+	if !ok || field == "title" && strings.TrimSpace(text) == "" || field == "state" && text != "open" && text != "closed" {
+		return core.NewTrackerProviderError(core.TrackerErrorValidation, "GitHub issue scalar field is invalid", false, 0, nil)
+	}
+	return nil
 }
 
 func githubIssueRevision(value issue) string {

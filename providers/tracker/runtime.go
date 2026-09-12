@@ -134,7 +134,7 @@ func responseMetadata(response *http.Response) ResponseMetadata {
 	remaining, _ := strconv.Atoi(strings.TrimSpace(response.Header.Get("X-RateLimit-Remaining")))
 	resetUnix, _ := strconv.ParseInt(strings.TrimSpace(response.Header.Get("X-RateLimit-Reset")), 10, 64)
 	metadata := ResponseMetadata{StatusCode: response.StatusCode, RequestID: strings.TrimSpace(response.Header.Get("X-GitHub-Request-Id")), ETag: strings.TrimSpace(response.Header.Get("ETag")), LastModified: strings.TrimSpace(response.Header.Get("Last-Modified")), RateLimitRemaining: remaining}
-	for _, scope := range strings.Split(response.Header.Get("X-OAuth-Scopes"), ",") {
+	for scope := range strings.SplitSeq(response.Header.Get("X-OAuth-Scopes"), ",") {
 		if scope = strings.TrimSpace(scope); scope != "" {
 			metadata.OAuthScopes = append(metadata.OAuthScopes, scope)
 		}

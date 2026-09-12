@@ -88,7 +88,7 @@ func (r TrackerIssueUpdateRequest) Validate() error {
 
 type TrackerRateLimit struct {
 	Remaining int       `json:"remaining,omitempty"`
-	ResetAt   time.Time `json:"reset_at,omitempty"`
+	ResetAt   time.Time `json:"reset_at"`
 }
 
 type TrackerMutationReceipt struct {

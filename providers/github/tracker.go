@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,16 +91,7 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 	}
 	items := make([]core.TrackerNode, 0, len(response))
 	for _, repo := range response {
-		capabilities := []string{}
-		if repo.HasIssues && (repo.Permissions.Pull || repo.Permissions.Triage || repo.Permissions.Push || repo.Permissions.Maintain || repo.Permissions.Admin) {
-			capabilities = append(capabilities, "issues.read")
-		}
-		if repo.HasIssues && !repo.Archived && (repo.Permissions.Triage || repo.Permissions.Push || repo.Permissions.Maintain || repo.Permissions.Admin) {
-			capabilities = append(capabilities, "issues.write")
-		}
-		if !repo.Archived && repo.Permissions.Admin {
-			capabilities = append(capabilities, "webhook.manage")
-		}
+		capabilities := githubRepositoryCapabilities(repo)
 		visibility := strings.TrimSpace(repo.Visibility)
 		if visibility == "" {
 			visibility = "public"
@@ -115,6 +107,24 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 		next = strconv.Itoa(page + 1)
 	}
 	return core.TrackerNodePage{Items: items, NextCursor: next, HasMore: hasMore, Revision: trackerruntime.Revision(items)}, nil
+}
+
+func githubRepositoryCapabilities(repo repository) []string {
+	capabilities := []string{}
+	if githubRepositoryReadGranted(repo) {
+		capabilities = append(capabilities, "issues.read")
+	}
+	if repo.HasIssues && !repo.Archived && (repo.Permissions.Triage || repo.Permissions.Push || repo.Permissions.Maintain || repo.Permissions.Admin) {
+		capabilities = append(capabilities, "issues.write")
+	}
+	if !repo.Archived && repo.Permissions.Admin {
+		capabilities = append(capabilities, "webhook.manage")
+	}
+	return capabilities
+}
+
+func githubRepositoryReadGranted(repo repository) bool {
+	return repo.HasIssues && (repo.Permissions.Pull || repo.Permissions.Triage || repo.Permissions.Push || repo.Permissions.Maintain || repo.Permissions.Admin)
 }
 
 func (p *Provider) DiscoverTrackerSchema(_ context.Context, input core.TrackerDiscoveryRequest) (core.TrackerSchemaPage, error) {
@@ -220,8 +230,7 @@ func redactGitHubSecret(err error, secret string) error {
 	if err == nil || secret == "" || !strings.Contains(err.Error(), secret) {
 		return err
 	}
-	var providerErr *core.TrackerProviderError
-	if errors.As(err, &providerErr) {
+	if providerErr, ok := errors.AsType[*core.TrackerProviderError](err); ok {
 		return core.NewTrackerProviderError(providerErr.Code, strings.ReplaceAll(providerErr.Message, secret, "[redacted]"), providerErr.Retryable, providerErr.RetryAfter, nil)
 	}
 	return errors.New(strings.ReplaceAll(err.Error(), secret, "[redacted]"))
@@ -266,12 +275,7 @@ func (p *Provider) findGitHubHook(ctx context.Context, credential core.ActiveCre
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 func githubWebhookPayload(input core.SubscribeRequest) (map[string]any, error) {

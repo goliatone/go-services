@@ -36,6 +36,7 @@ const (
 )
 
 type serviceErrorConvertible interface {
+	error
 	ToServiceError() *goerrors.Error
 }
 
@@ -57,8 +58,7 @@ func mapStructuredServiceError(err error) (*goerrors.Error, bool) {
 	if goerrors.As(err, &richErr) {
 		return ensureServiceErrorEnvelope(richErr), true
 	}
-	var convertible serviceErrorConvertible
-	if errors.As(err, &convertible) {
+	if convertible, ok := errors.AsType[serviceErrorConvertible](err); ok {
 		mapped := convertible.ToServiceError()
 		if mapped != nil {
 			return ensureServiceErrorEnvelope(mapped), true

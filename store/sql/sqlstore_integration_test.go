@@ -1326,8 +1326,7 @@ func TestRateLimitStateStore_PersistsAndSupportsPolicyFlow(t *testing.T) {
 	policy := servicesratelimit.NewAdaptivePolicy(store)
 	policy.Now = func() time.Time { return now }
 	beforeErr := policy.BeforeCall(ctx, key)
-	var throttledErr servicesratelimit.ThrottledError
-	if !errors.As(beforeErr, &throttledErr) {
+	if _, ok := errors.AsType[servicesratelimit.ThrottledError](beforeErr); !ok {
 		t.Fatalf("expected throttled error from persisted state, got %v", beforeErr)
 	}
 

@@ -14,6 +14,8 @@ type testConvertibleError struct {
 	message string
 }
 
+var _ serviceErrorConvertible = testConvertibleError{}
+
 func (e testConvertibleError) Error() string {
 	if strings.TrimSpace(e.message) == "" {
 		return "convertible error"
