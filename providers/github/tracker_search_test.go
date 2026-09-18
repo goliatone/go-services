@@ -51,7 +51,7 @@ func TestRepositorySearchFindsLateInventoryWithinBudget(t *testing.T) {
 	if err != nil || len(page.Items) != 0 || !page.HasMore || page.NextCursor == "" || calls.Load() != 3 {
 		t.Fatalf("first scan=%+v calls=%d err=%v", page, calls.Load(), err)
 	}
-	if err := page.Validate(); err != nil {
+	if err = page.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	input.Cursor, input.Search = page.NextCursor, "target"
@@ -186,12 +186,12 @@ func TestRepositorySearchCursorRejectsChangedBindings(t *testing.T) {
 			request := input
 			tt.mutate(&request)
 			before := calls.Load()
-			result, err := provider.DiscoverTrackerScopes(ctx, request)
+			result, discoveryErr := provider.DiscoverTrackerScopes(ctx, request)
 			var providerErr *core.TrackerProviderError
-			if !errors.As(err, &providerErr) || providerErr.Code != core.TrackerErrorCursorInvalid || result.NextCursor != "" || len(result.Items) != 0 || calls.Load() != before {
-				t.Fatalf("accepted changed cursor: %+v %v", result, err)
+			if !errors.As(discoveryErr, &providerErr) || providerErr.Code != core.TrackerErrorCursorInvalid || result.NextCursor != "" || len(result.Items) != 0 || calls.Load() != before {
+				t.Fatalf("accepted changed cursor: %+v %v", result, discoveryErr)
 			}
-			if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "rotated-private-token") {
+			if strings.Contains(discoveryErr.Error(), "must-not-leak") || strings.Contains(discoveryErr.Error(), "rotated-private-token") {
 				t.Fatal("credential leaked")
 			}
 		})
@@ -237,7 +237,7 @@ func TestRepositorySearchRejectsExpiredAndInvalidPositions(t *testing.T) {
 		{Version: 1, Expires: time.Now().Add(time.Minute).Unix(), Page: 1, Offset: 100},
 	} {
 		before := calls.Load()
-		_, err := provider.DiscoverTrackerScopes(ctx, core.TrackerDiscoveryRequest{ConnectionID: "connection-1", Search: "match", Limit: 1, Cursor: provider.encodeSearchCursor(state, binding)})
+		_, err = provider.DiscoverTrackerScopes(ctx, core.TrackerDiscoveryRequest{ConnectionID: "connection-1", Search: "match", Limit: 1, Cursor: provider.encodeSearchCursor(state, binding)})
 		var providerErr *core.TrackerProviderError
 		if !errors.As(err, &providerErr) || providerErr.Code != core.TrackerErrorCursorInvalid || calls.Load() != before {
 			t.Fatalf("accepted invalid state %+v: %v", state, err)

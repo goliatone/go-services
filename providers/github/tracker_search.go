@@ -58,50 +58,16 @@ func (p *Provider) searchRepositories(ctx context.Context, input core.TrackerDis
 		if err := ctx.Err(); err != nil {
 			return core.TrackerNodePage{}, err
 		}
-		target := *endpoint
-		target.Path += "/user/repos"
-		query := target.Query()
-		query.Set("affiliation", repositoryAffiliation)
-		query.Set("sort", "full_name")
-		query.Set("direction", "asc")
-		query.Set("per_page", strconv.Itoa(repositorySearchPageSize))
-		query.Set("page", strconv.FormatInt(cursor.Page, 10))
-		target.RawQuery = query.Encode()
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+		repos, err := p.searchRepositoryPage(ctx, credential, endpoint, cursor.Page)
 		if err != nil {
 			return core.TrackerNodePage{}, err
-		}
-		var repos []repository
-		if err := p.runtime.DoJSONWithCredential(ctx, credential, request, &repos); err != nil {
-			return core.TrackerNodePage{}, err
-		}
-		if len(repos) > repositorySearchPageSize {
-			return core.TrackerNodePage{}, core.NewTrackerProviderError(core.TrackerErrorExternal, "repository inventory exceeds page bound", false, 0, nil)
 		}
 		if cursor.Offset > 0 && cursor.Offset >= len(repos) {
 			return core.TrackerNodePage{}, invalidSearchCursor()
 		}
-		for cursor.Offset < len(repos) {
-			if err := ctx.Err(); err != nil {
-				return core.TrackerNodePage{}, err
-			}
-			repo := repos[cursor.Offset]
-			cursor.Offset++
-			if !strings.Contains(strings.ToLower(repo.FullName), binding.Search) && !strings.Contains(strings.ToLower(repo.Owner.Login), binding.Search) {
-				continue
-			}
-			identity := repo.FullName
-			if repo.ID > 0 {
-				identity = strconv.FormatInt(repo.ID, 10)
-			}
-			if seen[identity] {
-				continue
-			}
-			seen[identity] = true
-			items = append(items, githubRepositoryNode(repo))
-			if len(items) == binding.Limit {
-				break
-			}
+		items, err = cursor.appendMatches(ctx, repos, binding, items, seen)
+		if err != nil {
+			return core.TrackerNodePage{}, err
 		}
 		if err := ctx.Err(); err != nil {
 			return core.TrackerNodePage{}, err
@@ -121,6 +87,56 @@ func (p *Provider) searchRepositories(ctx context.Context, input core.TrackerDis
 		}
 	}
 	return searchNodePage(items, p.encodeSearchCursor(cursor, binding)), nil
+}
+
+func (p *Provider) searchRepositoryPage(ctx context.Context, credential core.ActiveCredential, endpoint *url.URL, page int64) ([]repository, error) {
+	target := *endpoint
+	target.Path += "/user/repos"
+	query := target.Query()
+	query.Set("affiliation", repositoryAffiliation)
+	query.Set("sort", "full_name")
+	query.Set("direction", "asc")
+	query.Set("per_page", strconv.Itoa(repositorySearchPageSize))
+	query.Set("page", strconv.FormatInt(page, 10))
+	target.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var repos []repository
+	if err = p.runtime.DoJSONWithCredential(ctx, credential, request, &repos); err != nil {
+		return nil, err
+	}
+	if len(repos) > repositorySearchPageSize {
+		return nil, core.NewTrackerProviderError(core.TrackerErrorExternal, "repository inventory exceeds page bound", false, 0, nil)
+	}
+	return repos, nil
+}
+
+func (cursor *repositorySearchCursor) appendMatches(ctx context.Context, repos []repository, binding repositorySearchBinding, items []core.TrackerNode, seen map[string]bool) ([]core.TrackerNode, error) {
+	for cursor.Offset < len(repos) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		repo := repos[cursor.Offset]
+		cursor.Offset++
+		if !strings.Contains(strings.ToLower(repo.FullName), binding.Search) && !strings.Contains(strings.ToLower(repo.Owner.Login), binding.Search) {
+			continue
+		}
+		identity := repo.FullName
+		if repo.ID > 0 {
+			identity = strconv.FormatInt(repo.ID, 10)
+		}
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		items = append(items, githubRepositoryNode(repo))
+		if len(items) == binding.Limit {
+			break
+		}
+	}
+	return items, nil
 }
 
 func searchNodePage(items []core.TrackerNode, cursor string) core.TrackerNodePage {
