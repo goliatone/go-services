@@ -6,7 +6,7 @@ require (
 	github.com/goliatone/go-command v0.24.2
 	github.com/goliatone/go-config v0.14.0
 	github.com/goliatone/go-errors v0.12.0
-	github.com/goliatone/go-job v0.19.0
+	github.com/goliatone/go-job v0.19.1
 	github.com/goliatone/go-logger v0.10.1
 	github.com/goliatone/go-options v0.7.2
 	github.com/goliatone/go-persistence-bun v0.17.1

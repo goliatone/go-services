@@ -54,7 +54,7 @@ func (p *Provider) searchRepositories(ctx context.Context, input core.TrackerDis
 	}
 	items := make([]core.TrackerNode, 0, binding.Limit)
 	seen := make(map[string]bool)
-	for fetch := 0; fetch < repositorySearchFetchLimit; fetch++ {
+	for range repositorySearchFetchLimit {
 		if err := ctx.Err(); err != nil {
 			return core.TrackerNodePage{}, err
 		}

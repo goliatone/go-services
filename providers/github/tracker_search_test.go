@@ -29,7 +29,7 @@ func TestRepositorySearchFindsLateInventoryWithinBudget(t *testing.T) {
 		page, _ := strconv.Atoi(q.Get("page"))
 		repos := []repository{}
 		if page <= 3 {
-			for n := 0; n < 100; n++ {
+			for n := range 100 {
 				repos = append(repos, repository{ID: int64(page*100 + n), FullName: fmt.Sprintf("a-owner/repo-%d-%03d", page, n)})
 			}
 		} else if page == 4 {
@@ -98,7 +98,7 @@ func TestRepositorySearchResumesWithinPageWithoutDroppingMatches(t *testing.T) {
 				expected = 100
 			}
 			expiry := int64(0)
-			for iteration := 0; iteration < 10; iteration++ {
+			for range 10 {
 				before := calls.Load()
 				page, err := provider.DiscoverTrackerScopes(context.Background(), input)
 				if err != nil {
