@@ -302,6 +302,24 @@ if err != nil {
 _ = result.Credential.AccessToken
 ```
 
+## GitHub repository discovery search
+
+GitHub's `core.TrackerProvider.DiscoverTrackerScopes` accepts optional `TrackerDiscoveryRequest.Search` to match a trimmed, case-insensitive literal owner or repository name within the credential's authenticated inventory. Empty search keeps existing browsing and numeric cursors. Terms must be valid UTF-8 with at most 256 characters after trimming.
+
+```go
+page, err := trackerProvider.DiscoverTrackerScopes(ctx, core.TrackerDiscoveryRequest{
+    ConnectionID: connectionID,
+    Search:       "widgets",
+    Limit:        50,
+})
+```
+
+Each search call fetches at most three inventory pages of 100 repositories and returns up to 50 matches by default (100 maximum). `HasMore` means inventory remains to be scanned, including when `Items` is empty. Continue with the returned `NextCursor` and the same connection, search and effective limit; clear the cursor when changing the search. Only exhaustion establishes that no further match exists. A failed call returns no successful partial page; retry its original cursor.
+
+Search cursors expire after 15 minutes and are bound to the provider instance, endpoint, query and resolved credential state. Restarting the provider or changing tokens/grants requires restarting the search; handle `core.TrackerErrorCursorInvalid` accordingly. Inventory is not a snapshot, so callers should deduplicate by repository identity and revalidate selection permissions. Reuse the provider instance across requests. Neither credentials nor endpoints are included in cursor payloads.
+
+Linear, Jira, GitHub Projects scope discovery and all tracker schema discovery reject nonempty search with `core.TrackerErrorSearchUnsupported`. Repository search does not implement GitHub query syntax or search unrelated public repositories.
+
 ## Package Map
 
 - `core`: domain contracts, service orchestration, permission/rate limit/runtime logic.

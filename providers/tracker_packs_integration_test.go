@@ -2,6 +2,7 @@ package providers_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -130,5 +131,38 @@ func assertTrackerConformance(t *testing.T, provider core.Provider, resourceType
 	}
 	if err := devkit.ValidateTrackerProviderConformance(context.Background(), trackerProvider, "connection-1", resourceType, resourceID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTrackerPacksRejectUnsupportedSearchBeforeIO(t *testing.T) {
+	factories := []struct {
+		name   string
+		create func() (core.Provider, error)
+	}{
+		{"github", func() (core.Provider, error) { return github.New(github.Config{ClientID: "client"}) }},
+		{"github-projects", func() (core.Provider, error) { return githubprojects.New(githubprojects.Config{ClientID: "client"}) }},
+		{"linear", func() (core.Provider, error) { return linear.New(linear.Config{}) }},
+		{"jira", func() (core.Provider, error) { return jira.New(jira.Config{}) }},
+	}
+	for _, factory := range factories {
+		t.Run(factory.name, func(t *testing.T) {
+			provider, err := factory.create()
+			if err != nil {
+				t.Fatal(err)
+			}
+			trackerProvider := provider.(core.TrackerProvider)
+			input := core.TrackerDiscoveryRequest{ConnectionID: "connection", Search: "term"}
+			_, err = trackerProvider.DiscoverTrackerSchema(context.Background(), input)
+			var providerErr *core.TrackerProviderError
+			if !errors.As(err, &providerErr) || providerErr.Code != core.TrackerErrorSearchUnsupported {
+				t.Fatalf("schema did not reject search before credential I/O: %v", err)
+			}
+			if factory.name != "github" {
+				_, err = trackerProvider.DiscoverTrackerScopes(context.Background(), input)
+				if !errors.As(err, &providerErr) || providerErr.Code != core.TrackerErrorSearchUnsupported {
+					t.Fatalf("scope did not reject search before credential I/O: %v", err)
+				}
+			}
+		})
 	}
 }

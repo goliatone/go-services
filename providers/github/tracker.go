@@ -22,7 +22,8 @@ const defaultAPIURL = "https://api.github.com"
 
 type Provider struct {
 	core.Provider
-	runtime trackerruntime.Runtime
+	runtime         trackerruntime.Runtime
+	searchCursorKey [32]byte
 }
 
 type repository struct {
@@ -71,6 +72,9 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 	if err != nil {
 		return core.TrackerNodePage{}, err
 	}
+	if strings.TrimSpace(input.Search) != "" {
+		return p.searchRepositories(ctx, input, credential, endpoint)
+	}
 	page, err := trackerruntime.Page(input.Cursor)
 	if err != nil {
 		return core.TrackerNodePage{}, err
@@ -91,15 +95,7 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 	}
 	items := make([]core.TrackerNode, 0, len(response))
 	for _, repo := range response {
-		capabilities := githubRepositoryCapabilities(repo)
-		visibility := strings.TrimSpace(repo.Visibility)
-		if visibility == "" {
-			visibility = "public"
-			if repo.Private {
-				visibility = "private"
-			}
-		}
-		items = append(items, core.TrackerNode{ExternalID: repo.FullName, Type: "repository", Name: repo.FullName, Capabilities: capabilities, NativeRevision: firstNonEmpty(repo.Updated, strconv.FormatInt(repo.ID, 10)), Metadata: map[string]any{"repository_id": strconv.FormatInt(repo.ID, 10), "canonical_url": repo.HTMLURL, "owner": repo.Owner.Login, "visibility": visibility, "archived": repo.Archived}})
+		items = append(items, githubRepositoryNode(repo))
 	}
 	hasMore := len(response) == limit
 	next := ""
@@ -107,6 +103,18 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 		next = strconv.Itoa(page + 1)
 	}
 	return core.TrackerNodePage{Items: items, NextCursor: next, HasMore: hasMore, Revision: trackerruntime.Revision(items)}, nil
+}
+
+func githubRepositoryNode(repo repository) core.TrackerNode {
+	capabilities := githubRepositoryCapabilities(repo)
+	visibility := strings.TrimSpace(repo.Visibility)
+	if visibility == "" {
+		visibility = "public"
+		if repo.Private {
+			visibility = "private"
+		}
+	}
+	return core.TrackerNode{ExternalID: repo.FullName, Type: "repository", Name: repo.FullName, Capabilities: capabilities, NativeRevision: firstNonEmpty(repo.Updated, strconv.FormatInt(repo.ID, 10)), Metadata: map[string]any{"repository_id": strconv.FormatInt(repo.ID, 10), "canonical_url": repo.HTMLURL, "owner": repo.Owner.Login, "visibility": visibility, "archived": repo.Archived}}
 }
 
 func githubRepositoryCapabilities(repo repository) []string {
@@ -130,6 +138,9 @@ func githubRepositoryReadGranted(repo repository) bool {
 func (p *Provider) DiscoverTrackerSchema(_ context.Context, input core.TrackerDiscoveryRequest) (core.TrackerSchemaPage, error) {
 	if err := input.Validate(); err != nil {
 		return core.TrackerSchemaPage{}, err
+	}
+	if strings.TrimSpace(input.Search) != "" {
+		return core.TrackerSchemaPage{}, core.NewTrackerProviderError(core.TrackerErrorSearchUnsupported, "search is not supported for this discovery operation", false, 0, nil)
 	}
 	fields := []core.TrackerField{
 		{ID: "title", Name: "Title", Type: "string", Required: true, NativeRevision: "github.issue.v1"},

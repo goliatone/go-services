@@ -8,11 +8,13 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const TrackerContractVersion = "go-services.tracker.v1"
 
 const (
+	TrackerErrorSearchUnsupported = "search_unsupported"
 	TrackerErrorUnavailable       = "provider_unavailable"
 	TrackerErrorCredentialRevoked = "credential_revoked"
 	TrackerErrorRateLimited       = "rate_limited"
@@ -29,6 +31,7 @@ type TrackerCredentialResolver interface {
 }
 
 type TrackerDiscoveryRequest struct {
+	Search       string
 	ConnectionID string
 	ResourceType string
 	ResourceID   string
@@ -39,6 +42,9 @@ type TrackerDiscoveryRequest struct {
 func (r TrackerDiscoveryRequest) Validate() error {
 	if strings.TrimSpace(r.ConnectionID) == "" {
 		return errors.New("core: tracker connection id is required")
+	}
+	if !utf8.ValidString(r.Search) || utf8.RuneCountInString(strings.TrimSpace(r.Search)) > 256 {
+		return errors.New("core: tracker discovery search must be valid UTF-8 and at most 256 characters")
 	}
 	if r.Limit < 0 || r.Limit > 500 {
 		return errors.New("core: tracker discovery limit must be between 0 and 500")

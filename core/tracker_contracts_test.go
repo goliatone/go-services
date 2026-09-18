@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,5 +27,23 @@ func TestTrackerPagesRequireContinuationCursor(t *testing.T) {
 	}
 	if err := (TrackerChangePage{HasMore: true}).Validate(); err == nil {
 		t.Fatal("change page accepted has_more without cursor")
+	}
+}
+
+func TestTrackerDiscoverySearchValidation(t *testing.T) {
+	for _, term := range []string{"", " ", "owner/repo", "  " + strings.Repeat("界", 256) + "  "} {
+		if err := (TrackerDiscoveryRequest{ConnectionID: "connection", Search: term, Limit: 500}).Validate(); err != nil {
+			t.Fatalf("valid term rejected: %v", err)
+		}
+	}
+	for _, term := range []string{strings.Repeat("a", 257), strings.Repeat("界", 257), string([]byte{0xff})} {
+		if err := (TrackerDiscoveryRequest{ConnectionID: "connection", Search: term}).Validate(); err == nil {
+			t.Fatal("invalid search accepted")
+		}
+	}
+	for _, limit := range []int{-1, 501} {
+		if err := (TrackerDiscoveryRequest{ConnectionID: "connection", Search: "match", Limit: limit}).Validate(); err == nil {
+			t.Fatal("invalid search limit accepted")
+		}
 	}
 }

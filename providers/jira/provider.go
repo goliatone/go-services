@@ -38,6 +38,9 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 	if err := input.Validate(); err != nil {
 		return core.TrackerNodePage{}, err
 	}
+	if strings.TrimSpace(input.Search) != "" {
+		return core.TrackerNodePage{}, core.NewTrackerProviderError(core.TrackerErrorSearchUnsupported, "search is not supported for this discovery operation", false, 0, nil)
+	}
 	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
 	if err != nil {
 		return core.TrackerNodePage{}, err
@@ -80,6 +83,9 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 func (p *Provider) DiscoverTrackerSchema(ctx context.Context, input core.TrackerDiscoveryRequest) (core.TrackerSchemaPage, error) {
 	if err := input.Validate(); err != nil {
 		return core.TrackerSchemaPage{}, err
+	}
+	if strings.TrimSpace(input.Search) != "" {
+		return core.TrackerSchemaPage{}, core.NewTrackerProviderError(core.TrackerErrorSearchUnsupported, "search is not supported for this discovery operation", false, 0, nil)
 	}
 	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
 	if err != nil {

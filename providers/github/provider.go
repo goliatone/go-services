@@ -1,6 +1,7 @@
 package github
 
 import (
+	"crypto/rand"
 	"time"
 
 	"github.com/goliatone/go-services/core"
@@ -65,5 +66,9 @@ func New(cfg Config) (core.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{Provider: base, runtime: cfg.TrackerRuntime}, nil
+	var cursorKey [32]byte
+	if _, err := rand.Read(cursorKey[:]); err != nil {
+		return nil, err
+	}
+	return &Provider{Provider: base, runtime: cfg.TrackerRuntime, searchCursorKey: cursorKey}, nil
 }
