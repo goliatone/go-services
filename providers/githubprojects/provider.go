@@ -48,51 +48,9 @@ func New(cfg Config) (core.Provider, error) {
 	return &Provider{Provider: base, runtime: cfg.TrackerRuntime}, nil
 }
 
-type projectNode struct {
-	ID        string    `json:"id"`
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
 type pageInfo struct {
 	HasNextPage bool   `json:"hasNextPage"`
 	EndCursor   string `json:"endCursor"`
-}
-
-func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.TrackerDiscoveryRequest) (core.TrackerNodePage, error) {
-	if err := input.Validate(); err != nil {
-		return core.TrackerNodePage{}, err
-	}
-	if strings.TrimSpace(input.Search) != "" {
-		return core.TrackerNodePage{}, core.NewTrackerProviderError(core.TrackerErrorSearchUnsupported, "search is not supported for this discovery operation", false, 0, nil)
-	}
-	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
-	if err != nil {
-		return core.TrackerNodePage{}, err
-	}
-	query := `query($first:Int!,$after:String){viewer{projectsV2(first:$first,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{id number title url updatedAt}pageInfo{hasNextPage endCursor}}}}`
-	var response tracker.GraphQLResponse[struct {
-		Viewer struct {
-			Projects struct {
-				Nodes    []projectNode `json:"nodes"`
-				PageInfo pageInfo      `json:"pageInfo"`
-			} `json:"projectsV2"`
-		} `json:"viewer"`
-	}]
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, map[string]any{"first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
-		return core.TrackerNodePage{}, err
-	}
-	if err := graphQLErrors(response.Errors); err != nil {
-		return core.TrackerNodePage{}, err
-	}
-	projects := response.Data.Viewer.Projects
-	items := make([]core.TrackerNode, 0, len(projects.Nodes))
-	for _, project := range projects.Nodes {
-		items = append(items, core.TrackerNode{ExternalID: project.ID, Type: "project_v2", Name: project.Title, Capabilities: []string{"items.read", "schema.read"}, NativeRevision: project.UpdatedAt.UTC().Format(time.RFC3339Nano), Metadata: map[string]any{"number": project.Number, "canonical_url": project.URL}})
-	}
-	return core.TrackerNodePage{Items: items, NextCursor: projects.PageInfo.EndCursor, HasMore: projects.PageInfo.HasNextPage, Revision: tracker.Revision(items)}, nil
 }
 
 func (p *Provider) DiscoverTrackerSchema(ctx context.Context, input core.TrackerDiscoveryRequest) (core.TrackerSchemaPage, error) {

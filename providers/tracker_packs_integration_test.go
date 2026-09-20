@@ -47,8 +47,8 @@ func TestTrackerProviderPacksConformToTypedObservationContract(t *testing.T) {
 	t.Run("github projects v2", func(t *testing.T) {
 		server := newTrackerTLSServer(t, func(_ *http.Request, body string) string {
 			switch {
-			case strings.Contains(body, "projectsV2"):
-				return `{"data":{"viewer":{"projectsV2":{"nodes":[{"id":"PVT_1","number":1,"title":"Roadmap","url":"https://github.com/users/acme/projects/1","updatedAt":"2026-08-21T10:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
+			case strings.Contains(body, "viewer{id login projectsV2"):
+				return `{"data":{"viewer":{"id":"U_1","login":"acme","projectsV2":{"nodes":[{"id":"PVT_1","number":1,"title":"Roadmap","url":"https://github.com/users/acme/projects/1","updatedAt":"2026-08-21T10:00:00Z","owner":{"__typename":"User","id":"U_1","login":"acme"}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
 			case strings.Contains(body, "fields(first"):
 				return `{"data":{"node":{"updatedAt":"2026-08-21T10:00:00Z","fields":{"nodes":[{"id":"PVTF_1","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"ready","name":"Ready"}]}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
 			case strings.Contains(body, "items(first"):
