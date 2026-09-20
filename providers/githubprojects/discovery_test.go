@@ -83,7 +83,7 @@ func TestDiscoverTrackerScopesEnumeratesViewerAndOrganizationProjects(t *testing
 
 	var ids []string
 	owners := map[string][]string{}
-	for pageNumber := 0; pageNumber < 10; pageNumber++ {
+	for pageNumber := range 10 {
 		page, err := provider.DiscoverTrackerScopes(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)

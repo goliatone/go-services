@@ -248,45 +248,79 @@ func decodeDiscoveryCursor(value, connectionID string) (discoveryCursor, error) 
 	if strings.TrimSpace(value) == "" {
 		return discoveryCursor{Version: discoveryCursorVersion, Binding: binding, Phase: discoveryPhaseViewer}, nil
 	}
+	cursor, err := parseDiscoveryCursor(value)
+	if err != nil {
+		return discoveryCursor{}, invalidDiscoveryCursor(err)
+	}
+	if err := validateDiscoveryCursor(cursor, binding); err != nil {
+		return discoveryCursor{}, invalidDiscoveryCursor(err)
+	}
+	return cursor, nil
+}
+
+func parseDiscoveryCursor(value string) (discoveryCursor, error) {
 	if len(value) > maxDiscoveryCursorSize {
-		return discoveryCursor{}, invalidDiscoveryCursor(errors.New("cursor exceeds size bound"))
+		return discoveryCursor{}, errors.New("cursor exceeds size bound")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(payload) == 0 || len(payload) > maxDiscoveryCursorSize {
-		return discoveryCursor{}, invalidDiscoveryCursor(err)
+	if err != nil {
+		return discoveryCursor{}, err
+	}
+	if len(payload) == 0 || len(payload) > maxDiscoveryCursorSize {
+		return discoveryCursor{}, errors.New("cursor payload size is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	var cursor discoveryCursor
 	if err := decoder.Decode(&cursor); err != nil {
-		return discoveryCursor{}, invalidDiscoveryCursor(err)
+		return discoveryCursor{}, err
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return discoveryCursor{}, invalidDiscoveryCursor(err)
-	}
-	if cursor.Version != discoveryCursorVersion || cursor.Binding != binding {
-		return discoveryCursor{}, invalidDiscoveryCursor(errors.New("cursor binding is invalid"))
-	}
-	if cursor.Phase != discoveryPhaseViewer && cursor.Phase != discoveryPhaseOrgs {
-		return discoveryCursor{}, invalidDiscoveryCursor(errors.New("cursor phase is invalid"))
-	}
-	for _, item := range []string{cursor.ProjectAfter, cursor.OrganizationAfter, cursor.OrganizationID, cursor.OrganizationLogin} {
-		if item != "" && !validDiscoveryStateValue(item) {
-			return discoveryCursor{}, invalidDiscoveryCursor(errors.New("cursor state is invalid"))
-		}
-	}
-	if cursor.Phase == discoveryPhaseViewer && (cursor.OrganizationAfter != "" || cursor.OrganizationID != "" || cursor.OrganizationLogin != "" || cursor.MoreOrganizations) {
-		return discoveryCursor{}, invalidDiscoveryCursor(errors.New("viewer cursor contains organization state"))
-	}
-	if cursor.Phase == discoveryPhaseOrgs {
-		if (cursor.OrganizationID == "") != (cursor.OrganizationLogin == "") {
-			return discoveryCursor{}, invalidDiscoveryCursor(errors.New("organization cursor identity is incomplete"))
-		}
-		if cursor.OrganizationID == "" && (cursor.ProjectAfter != "" || cursor.MoreOrganizations) {
-			return discoveryCursor{}, invalidDiscoveryCursor(errors.New("organization cursor has no active owner"))
-		}
+		return discoveryCursor{}, err
 	}
 	return cursor, nil
+}
+
+func validateDiscoveryCursor(cursor discoveryCursor, binding string) error {
+	if cursor.Version != discoveryCursorVersion || cursor.Binding != binding {
+		return errors.New("cursor binding is invalid")
+	}
+	if cursor.Phase != discoveryPhaseViewer && cursor.Phase != discoveryPhaseOrgs {
+		return errors.New("cursor phase is invalid")
+	}
+	if err := validateDiscoveryCursorStateValues(cursor); err != nil {
+		return err
+	}
+	if cursor.Phase == discoveryPhaseViewer {
+		return validateViewerDiscoveryCursor(cursor)
+	}
+	return validateOrganizationDiscoveryCursor(cursor)
+}
+
+func validateDiscoveryCursorStateValues(cursor discoveryCursor) error {
+	for _, item := range []string{cursor.ProjectAfter, cursor.OrganizationAfter, cursor.OrganizationID, cursor.OrganizationLogin} {
+		if item != "" && !validDiscoveryStateValue(item) {
+			return errors.New("cursor state is invalid")
+		}
+	}
+	return nil
+}
+
+func validateViewerDiscoveryCursor(cursor discoveryCursor) error {
+	if cursor.OrganizationAfter != "" || cursor.OrganizationID != "" || cursor.OrganizationLogin != "" || cursor.MoreOrganizations {
+		return errors.New("viewer cursor contains organization state")
+	}
+	return nil
+}
+
+func validateOrganizationDiscoveryCursor(cursor discoveryCursor) error {
+	if (cursor.OrganizationID == "") != (cursor.OrganizationLogin == "") {
+		return errors.New("organization cursor identity is incomplete")
+	}
+	if cursor.OrganizationID == "" && (cursor.ProjectAfter != "" || cursor.MoreOrganizations) {
+		return errors.New("organization cursor has no active owner")
+	}
+	return nil
 }
 
 func encodeDiscoveryCursor(cursor discoveryCursor) string {
