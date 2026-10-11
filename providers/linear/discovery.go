@@ -31,7 +31,7 @@ func (p *Provider) discoverProjects(ctx context.Context, input core.TrackerDisco
 		} `json:"team"`
 	}]
 	variables := map[string]any{"team": input.ResourceID, "first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}
-	if err := p.doGraphQL(ctx, credential, endpoint, query, variables, &response); err != nil {
+	if err := p.doGraphQL(ctx, &credential, endpoint, query, variables, &response); err != nil {
 		return core.TrackerNodePage{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -94,7 +94,7 @@ func (p *Provider) discoverSchema(ctx context.Context, input core.TrackerDiscove
 			} `json:"team"`
 		}]
 		variables := map[string]any{"team": input.ResourceID, "first": 100, "statesAfter": nullable(statesAfter), "labelsAfter": nullable(labelsAfter)}
-		if err := p.doGraphQL(ctx, credential, endpoint, query, variables, &response); err != nil {
+		if err := p.doGraphQL(ctx, &credential, endpoint, query, variables, &response); err != nil {
 			return core.TrackerSchemaPage{}, err
 		}
 		if err := graphqlErrors(response.Errors); err != nil {

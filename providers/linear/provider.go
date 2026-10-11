@@ -68,7 +68,7 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 			PageInfo pageInfo `json:"pageInfo"`
 		} `json:"teams"`
 	}]
-	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
+	if err := p.doGraphQL(ctx, &credential, endpoint, query, map[string]any{"first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
 		return core.TrackerNodePage{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -105,7 +105,7 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 			PageInfo pageInfo          `json:"pageInfo"`
 		} `json:"issues"`
 	}]
-	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"team": input.ResourceID, "first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
+	if err := p.doGraphQL(ctx, &credential, endpoint, query, map[string]any{"team": input.ResourceID, "first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
 		return core.TrackerChangePage{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -151,7 +151,7 @@ func (p *Provider) Subscribe(ctx context.Context, input core.SubscribeRequest) (
 		} `json:"webhookCreate"`
 	}]
 	variables := map[string]any{"input": map[string]any{"teamId": input.ResourceID, "url": input.CallbackURL, "resourceTypes": []string{"Issue"}}}
-	if err := p.doGraphQL(ctx, credential, endpoint, query, variables, &response); err != nil {
+	if err := p.doGraphQL(ctx, &credential, endpoint, query, variables, &response); err != nil {
 		return core.SubscriptionResult{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -177,7 +177,7 @@ func (p *Provider) CancelSubscription(ctx context.Context, input core.CancelSubs
 	var response tracker.GraphQLResponse[struct {
 		WebhookDelete struct{ Success bool } `json:"webhookDelete"`
 	}]
-	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"id": input.RemoteSubscriptionID}, &response); err != nil {
+	if err := p.doGraphQL(ctx, &credential, endpoint, query, map[string]any{"id": input.RemoteSubscriptionID}, &response); err != nil {
 		return err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {

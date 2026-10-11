@@ -20,7 +20,7 @@ func (p *Provider) DiscoverTrackerFieldCapabilities(ctx context.Context, input c
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requireTeam(ctx, credential, endpoint, input.RepositoryID); err != nil {
+	if err := p.requireTeam(ctx, &credential, endpoint, input.RepositoryID); err != nil {
 		return nil, err
 	}
 	write := linearWriteGranted(credential)
@@ -52,7 +52,7 @@ func linearWriteGranted(credential core.ActiveCredential) bool {
 	return false
 }
 
-func (p *Provider) requireTeam(ctx context.Context, credential core.ActiveCredential, endpoint, teamID string) error {
+func (p *Provider) requireTeam(ctx context.Context, credential *core.ActiveCredential, endpoint, teamID string) error {
 	query := `query($team:String!){viewer{id}team(id:$team){id}}`
 	var response tracker.GraphQLResponse[struct {
 		Viewer struct {
@@ -90,7 +90,7 @@ func (p *Provider) CreateTrackerIssue(ctx context.Context, input core.TrackerIss
 	if !linearWriteGranted(credential) {
 		return core.TrackerMutationReceipt{}, core.NewTrackerProviderError(core.TrackerErrorPermission, "Linear issue write grant is unproven", false, 0, nil)
 	}
-	if err := p.requireTeam(ctx, credential, endpoint, input.RepositoryID); err != nil {
+	if err := p.requireTeam(ctx, &credential, endpoint, input.RepositoryID); err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
 	if fields["stateId"] != nil || fields["labelIds"] != nil || fields["projectId"] != nil {
@@ -115,7 +115,7 @@ func (p *Provider) CreateTrackerIssue(ctx context.Context, input core.TrackerIss
 	var response tracker.GraphQLResponse[struct {
 		IssueCreate linearIssueMutation `json:"issueCreate"`
 	}]
-	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"input": fields}, &response); err != nil {
+	if err := p.doGraphQL(ctx, &credential, endpoint, query, map[string]any{"input": fields}, &response); err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ const linearOAuthTokenURL = "https://api.linear.app/oauth/token"
 type linearOAuthToken struct {
 	value     string
 	scopes    []string
+	requested []string
 	expiresAt time.Time
 }
 
@@ -29,6 +32,10 @@ func (p *Provider) oauthCredential(ctx context.Context, credential core.ActiveCr
 	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(clientSecret) == "" {
 		return core.ActiveCredential{}, core.NewTrackerProviderError(core.TrackerErrorCredentialRevoked, "Linear OAuth client credentials are unavailable", false, 0, nil)
 	}
+	requested, err := linearRequestedScopes(credential.RequestedScopes)
+	if err != nil {
+		return core.ActiveCredential{}, err
+	}
 	keyBytes := sha256.Sum256([]byte(credential.ConnectionID + "\x00" + clientID + "\x00" + clientSecret))
 	key := hex.EncodeToString(keyBytes[:])
 	p.oauthMu.Lock()
@@ -37,8 +44,8 @@ func (p *Provider) oauthCredential(ctx context.Context, credential core.ActiveCr
 		p.oauthTokens = map[string]linearOAuthToken{}
 	}
 	entry := p.oauthTokens[key]
-	if force || entry.value == "" || !entry.expiresAt.After(time.Now().Add(5*time.Minute)) {
-		form := url.Values{"grant_type": {"client_credentials"}, "client_id": {clientID}, "client_secret": {clientSecret}, "scope": {"read,write"}}
+	if force || !slices.Equal(entry.requested, requested) || entry.value == "" || !entry.expiresAt.After(time.Now().Add(5*time.Minute)) {
+		form := url.Values{"grant_type": {"client_credentials"}, "client_id": {clientID}, "client_secret": {clientSecret}, "scope": {strings.Join(requested, ",")}}
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, linearOAuthTokenURL, strings.NewReader(form.Encode()))
 		if err != nil {
 			return core.ActiveCredential{}, err
@@ -72,25 +79,37 @@ func (p *Provider) oauthCredential(ctx context.Context, credential core.ActiveCr
 			return core.ActiveCredential{}, core.NewTrackerProviderError(core.TrackerErrorExternal, "Linear OAuth token response is incomplete", false, 0, nil)
 		}
 		scopes := linearTokenScopes(token.Scope)
-		granted := false
-		for _, scope := range scopes {
-			if scope == "write" {
-				granted = true
-				break
-			}
-		}
-		if !granted {
+		if !slices.Contains(scopes, "read") {
 			delete(p.oauthTokens, key)
-			return core.ActiveCredential{}, core.NewTrackerProviderError(core.TrackerErrorPermission, "Linear OAuth write grant is unavailable", false, 0, nil)
+			return core.ActiveCredential{}, core.NewTrackerProviderError(core.TrackerErrorPermission, "Linear OAuth read grant is unavailable", false, 0, nil)
 		}
-		entry = linearOAuthToken{value: token.AccessToken, scopes: scopes, expiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)}
+		entry = linearOAuthToken{value: token.AccessToken, scopes: scopes, requested: requested, expiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)}
 		p.oauthTokens[key] = entry
 	}
+	credential.RequestedScopes = append([]string(nil), requested...)
 	credential.AccessToken = entry.value
 	credential.TokenType = "Bearer"
 	credential.GrantedScopes = append([]string(nil), entry.scopes...)
 	credential.ExpiresAt = &entry.expiresAt
 	return credential, nil
+}
+
+func linearRequestedScopes(input []string) ([]string, error) {
+	if len(input) == 0 {
+		input = []string{"read", "write"}
+	}
+	scopes := []string{"read"}
+	for _, value := range input {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.ContainsAny(value, ", \t\r\n\x00") {
+			return nil, core.NewTrackerProviderError(core.TrackerErrorValidation, "Linear OAuth requested scope is invalid", false, 0, nil)
+		}
+		if !slices.Contains(scopes, value) {
+			scopes = append(scopes, value)
+		}
+	}
+	sort.Strings(scopes[1:])
+	return scopes, nil
 }
 
 func linearTokenScopes(value any) []string {
@@ -112,15 +131,16 @@ func linearTokenScopes(value any) []string {
 	}
 }
 
-func (p *Provider) doGraphQL(ctx context.Context, credential core.ActiveCredential, endpoint, query string, variables map[string]any, output any) error {
-	err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, variables, output)
+func (p *Provider) doGraphQL(ctx context.Context, credential *core.ActiveCredential, endpoint, query string, variables map[string]any, output any) error {
+	err := p.runtime.DoGraphQL(ctx, *credential, endpoint, query, variables, output)
 	var providerErr *core.TrackerProviderError
 	if err == nil || credential.Metadata["auth_type"] != "oauth_client" || !errors.As(err, &providerErr) || providerErr.Code != core.TrackerErrorCredentialRevoked {
 		return err
 	}
-	credential, refreshErr := p.oauthCredential(ctx, credential, true)
+	refreshed, refreshErr := p.oauthCredential(ctx, *credential, true)
 	if refreshErr != nil {
 		return refreshErr
 	}
-	return p.runtime.DoGraphQL(ctx, credential, endpoint, query, variables, output)
+	*credential = refreshed
+	return p.runtime.DoGraphQL(ctx, *credential, endpoint, query, variables, output)
 }
