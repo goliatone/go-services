@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.11.0](https://github.com/goliatone/go-services/compare/v0.10.3...v0.11.0) - (2026-10-11)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.11.0 ([932c8d3](https://github.com/goliatone/go-services/commit/932c8d348de05df6840075aff747bebb7b06124d))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Jira imports and links ([53cef93](https://github.com/goliatone/go-services/commit/53cef932c46c21fe8c2815f3655570547ea6f023))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.10.3 ([1dac783](https://github.com/goliatone/go-services/commit/1dac7833696846b16a6cfaa5ffd617862dd97dab))  - (goliatone)
+
 # [0.10.3](https://github.com/goliatone/go-services/compare/v0.10.2...v0.10.3) - (2026-10-11)
 
 ## <!-- 13 -->📦 Bumps
