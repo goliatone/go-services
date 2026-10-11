@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.10.3](https://github.com/goliatone/go-services/compare/v0.10.2...v0.10.3) - (2026-10-11)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.10.3 ([5ed9c6b](https://github.com/goliatone/go-services/commit/5ed9c6bec74700dae2c6dd339821aaefc1cff265))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Linear provider discussions ([52879f1](https://github.com/goliatone/go-services/commit/52879f13492a5af34afa479a8c8cfc923d7bc088))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.10.2 ([2e26190](https://github.com/goliatone/go-services/commit/2e26190347efd91bf65cc814b129aaac9baa6247))  - (goliatone)
+
 # [0.10.2](https://github.com/goliatone/go-services/compare/v0.10.1...v0.10.2) - (2026-10-11)
 
 ## <!-- 1 -->🐛 Bug Fixes
