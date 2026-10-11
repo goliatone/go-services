@@ -306,6 +306,13 @@ type TrackerDiscussionWriter interface {
 	ReplyTrackerDiscussion(context.Context, TrackerDiscussionReplyRequest) (TrackerDiscussionReceipt, error)
 }
 
+// TrackerDiscussionConditionalWriter refuses replies when the cited parent revision changed.
+type TrackerDiscussionConditionalWriter interface {
+	TrackerDiscussionWriter
+	ValidateTrackerDiscussionReply(context.Context, TrackerDiscussionTarget, string, string) error
+	ReplyTrackerDiscussionAtRevision(context.Context, TrackerDiscussionReplyRequest, string) (TrackerDiscussionReceipt, error)
+}
+
 type TrackerDiscussionWebhookProvider interface {
 	Provider
 	VerifyTrackerDiscussionWebhook(context.Context, TrackerDiscussionTarget, TrackerWebhookVerificationRequest) (TrackerDiscussionWebhookHint, error)
