@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.10.0](https://github.com/goliatone/go-services/compare/v0.9.1...v0.10.0) - (2026-10-11)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.10.0 ([035b8ef](https://github.com/goliatone/go-services/commit/035b8efb8a16ad501f3846b21c28d47f59175f9a))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Linear provider and tracker contracts ([8bcbbb7](https://github.com/goliatone/go-services/commit/8bcbbb76db635b7f94a4b0aba6c2e88ddee9a0ad))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.9.1 ([f5b2a86](https://github.com/goliatone/go-services/commit/f5b2a86d42b0b135cc240f32cd63eb1377de7b73))  - (goliatone)
+
 # [0.9.1](https://github.com/goliatone/go-services/compare/v0.9.0...v0.9.1) - (2026-09-20)
 
 ## <!-- 1 -->🐛 Bug Fixes
