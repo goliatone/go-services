@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goliatone/go-services/core"
 )
@@ -68,8 +69,8 @@ func TestGitHubDiscussionReadReplyAndGrantRefusal(t *testing.T) {
 				if err != nil || receipt.Status != "confirmed" || receipt.IdempotencyKey != "effect" || posts != 1 {
 					t.Fatalf("reply: %+v, posts=%d, %v", receipt, posts, err)
 				}
-			} else if err == nil || posts != 0 {
-				t.Fatalf("unproven reply: posts=%d, %v", posts, err)
+			} else if err != nil || receipt.Status != "failed" || receipt.ErrorCode != core.TrackerErrorPermission || posts != 0 {
+				t.Fatalf("unproven reply: %+v, posts=%d, %v", receipt, posts, err)
 			}
 		})
 	}
@@ -214,11 +215,80 @@ func TestGitHubDiscussionRevisionAndConditionalReply(t *testing.T) {
 	}
 	missing = false
 	current = renamed
-	if _, err = provider.ReplyTrackerDiscussion(t.Context(), request); err == nil || posts != 0 {
+	if receipt, err = provider.ReplyTrackerDiscussion(t.Context(), request); err != nil || receipt.Status != "failed" || receipt.ErrorCode != core.TrackerErrorValidation || posts != 0 {
 		t.Fatalf("unguarded parent accepted: %v, posts=%d", err, posts)
 	}
 	receipt, err = provider.ReplyTrackerDiscussionAtRevision(t.Context(), request, message.Revision)
 	if err != nil || receipt.Status != "confirmed" || posts != 1 {
 		t.Fatalf("current parent refused: %+v, %v, posts=%d", receipt, err, posts)
+	}
+}
+
+func TestGitHubDiscussionPreflightFailuresAreKnownUnsent(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		grant  bool
+		code   string
+	}{
+		{"rate_limit", http.StatusTooManyRequests, true, core.TrackerErrorRateLimited},
+		{"revoked", http.StatusUnauthorized, true, core.TrackerErrorCredentialRevoked},
+		{"grant_lost", http.StatusOK, false, core.TrackerErrorPermission},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			posts := 0
+			provider, closeServer := githubMutationProvider(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts++
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				if r.URL.Path == "/repos/owner/repo" {
+					if test.status != http.StatusOK {
+						w.Header().Set("Retry-After", "60")
+						w.WriteHeader(test.status)
+						return
+					}
+					if test.grant {
+						w.Header().Set("X-OAuth-Scopes", "repo")
+					}
+					_, _ = w.Write([]byte(`{"id":1,"full_name":"owner/repo","has_issues":true,"permissions":{"pull":true}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"id":9001,"number":42}`))
+			})
+			defer closeServer()
+			target := core.TrackerDiscussionTarget{ProviderID: ProviderID, ConnectionID: "connection-1", ScopeID: "owner/repo", ResourceType: "issue", ResourceID: "9001:42"}
+			receipt, err := provider.ReplyTrackerDiscussion(t.Context(), core.TrackerDiscussionReplyRequest{Target: target, Body: "approved", ActorID: "reviewer", IdempotencyKey: "effect", CorrelationID: "corr", CausationID: "decision"})
+			if err != nil || receipt.Status != "failed" || receipt.ErrorCode != test.code || posts != 0 {
+				t.Fatalf("unsent: %+v, %v, posts=%d", receipt, err, posts)
+			}
+			if test.status == http.StatusTooManyRequests && !receipt.RateLimit.ResetAt.After(time.Now().UTC()) {
+				t.Fatalf("lost retry deadline: %+v", receipt)
+			}
+		})
+	}
+}
+
+func TestGitHubDiscussionPostFailureRemainsAmbiguous(t *testing.T) {
+	posts := 0
+	provider, closeServer := githubMutationProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/repos/owner/repo" {
+			w.Header().Set("X-OAuth-Scopes", "repo")
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"owner/repo","has_issues":true,"permissions":{"pull":true}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":9001,"number":42}`))
+	})
+	defer closeServer()
+	target := core.TrackerDiscussionTarget{ProviderID: ProviderID, ConnectionID: "connection-1", ScopeID: "owner/repo", ResourceType: "issue", ResourceID: "9001:42"}
+	receipt, err := provider.ReplyTrackerDiscussion(t.Context(), core.TrackerDiscussionReplyRequest{Target: target, Body: "approved", ActorID: "reviewer", IdempotencyKey: "effect", CorrelationID: "corr", CausationID: "decision"})
+	if err == nil || receipt.Status == "failed" || posts != 1 {
+		t.Fatalf("possibly posted reply was classified unsent: %+v, %v, posts=%d", receipt, err, posts)
 	}
 }

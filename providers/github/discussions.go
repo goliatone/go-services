@@ -273,19 +273,14 @@ func (p *Provider) ReplyTrackerDiscussionAtRevision(ctx context.Context, input c
 	}
 	credential, endpoint, identity, err := p.discussionReplyPreflight(ctx, input.Target, input.ParentID, expectedRevision)
 	if err != nil {
-		var providerErr *core.TrackerProviderError
-		if errors.As(err, &providerErr) && (providerErr.Code == core.TrackerErrorConflict || providerErr.Code == core.TrackerErrorNotFound) {
-			receipt := core.TrackerDiscussionReceipt{ProviderID: ProviderID, Target: input.Target, IdempotencyKey: input.IdempotencyKey, Status: "failed", ErrorCode: "source_revision_changed"}
-			return receipt, receipt.ValidateFor(core.TrackerDiscussionReceiptRequest{Target: input.Target, IdempotencyKey: input.IdempotencyKey})
-		}
-		return core.TrackerDiscussionReceipt{}, err
+		return unsentDiscussionReceipt(input, err)
 	}
 
 	requestURL := *endpoint
 	requestURL.Path += "/repos/" + escapePath(input.Target.ScopeID) + "/issues/" + strconv.Itoa(identity.Number) + "/comments"
 	request, err := jsonRequest(ctx, http.MethodPost, requestURL.String(), map[string]string{"body": input.Body})
 	if err != nil {
-		return core.TrackerDiscussionReceipt{}, err
+		return unsentDiscussionReceipt(input, err)
 	}
 	var comment discussionComment
 	metadata, err := p.runtime.DoJSONWithCredentialMetadata(ctx, credential, request, &comment)
@@ -300,6 +295,21 @@ func (p *Provider) ReplyTrackerDiscussionAtRevision(ctx context.Context, input c
 		return core.TrackerDiscussionReceipt{}, err
 	}
 	receipt := core.TrackerDiscussionReceipt{ProviderID: ProviderID, Target: input.Target, IdempotencyKey: input.IdempotencyKey, Status: "confirmed", MessageID: message.MessageID, Revision: message.Revision, CanonicalURL: message.CanonicalURL, RateLimit: core.TrackerRateLimit{Remaining: metadata.RateLimitRemaining, ResetAt: metadata.RateLimitReset}}
+	return receipt, receipt.ValidateFor(core.TrackerDiscussionReceiptRequest{Target: input.Target, IdempotencyKey: input.IdempotencyKey})
+}
+
+func unsentDiscussionReceipt(input core.TrackerDiscussionReplyRequest, err error) (core.TrackerDiscussionReceipt, error) {
+	receipt := core.TrackerDiscussionReceipt{ProviderID: ProviderID, Target: input.Target, IdempotencyKey: input.IdempotencyKey, Status: "failed", ErrorCode: "discussion_preflight_failed"}
+	var providerErr *core.TrackerProviderError
+	if errors.As(err, &providerErr) {
+		receipt.ErrorCode = providerErr.Code
+		if providerErr.Code == core.TrackerErrorConflict || providerErr.Code == core.TrackerErrorNotFound {
+			receipt.ErrorCode = "source_revision_changed"
+		}
+		if providerErr.RetryAfter > 0 {
+			receipt.RateLimit.ResetAt = time.Now().UTC().Add(providerErr.RetryAfter)
+		}
+	}
 	return receipt, receipt.ValidateFor(core.TrackerDiscussionReceiptRequest{Target: input.Target, IdempotencyKey: input.IdempotencyKey})
 }
 
