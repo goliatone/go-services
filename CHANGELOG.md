@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.10.1](https://github.com/goliatone/go-services/compare/v0.10.0...v0.10.1) - (2026-10-11)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.10.1 ([2e10f74](https://github.com/goliatone/go-services/commit/2e10f748835429335002f7d3d8e9d2442f293dc9))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Conditinal writing ([f831320](https://github.com/goliatone/go-services/commit/f8313208aeeeb786e9986599443b8d396a8a6de8))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.10.0 ([cf74d80](https://github.com/goliatone/go-services/commit/cf74d806edf0301089f51c6dc7a1531a591735d4))  - (goliatone)
+
 # [0.10.0](https://github.com/goliatone/go-services/compare/v0.9.1...v0.10.0) - (2026-10-11)
 
 ## <!-- 13 -->📦 Bumps
