@@ -15,6 +15,14 @@ func TestTrackerMutationContractsValidate(t *testing.T) {
 	if err := update.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	update.IssueNumber = 0
+	if err := update.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	update.IssueNumber = -1
+	if err := update.Validate(); err == nil {
+		t.Fatal("negative issue number accepted")
+	}
 	receipt := TrackerMutationReceipt{ProviderID: "github", RepositoryID: "owner/repo", ExternalID: "9001", DisplayID: "42", CanonicalURL: "https://github.com/owner/repo/issues/42", ProviderRevision: "r2", Status: "succeeded", RateLimit: TrackerRateLimit{Remaining: 10, ResetAt: time.Now().UTC()}}
 	if err := receipt.Validate(); err != nil {
 		t.Fatal(err)

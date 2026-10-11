@@ -99,6 +99,9 @@ func (p *Provider) UpdateTrackerIssue(ctx context.Context, input core.TrackerIss
 	if err := input.Validate(); err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
+	if input.IssueNumber < 1 {
+		return core.TrackerMutationReceipt{}, core.NewTrackerProviderError(core.TrackerErrorValidation, "GitHub issue number is required", false, 0, nil)
+	}
 	payload, err := githubUpdateIssuePayload(input.Field, input.Value)
 	if err != nil {
 		return core.TrackerMutationReceipt{}, err

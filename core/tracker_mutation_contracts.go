@@ -80,7 +80,7 @@ type TrackerIssueUpdateRequest struct {
 }
 
 func (r TrackerIssueUpdateRequest) Validate() error {
-	if strings.TrimSpace(r.ConnectionID) == "" || strings.TrimSpace(r.RepositoryID) == "" || strings.TrimSpace(r.IssueID) == "" || r.IssueNumber < 1 || strings.TrimSpace(r.Field) == "" || !json.Valid(r.Value) || strings.TrimSpace(r.ExpectedRevision) == "" || strings.TrimSpace(r.IdempotencyKey) == "" || strings.TrimSpace(r.ActorID) == "" || strings.TrimSpace(r.CorrelationID) == "" {
+	if strings.TrimSpace(r.ConnectionID) == "" || strings.TrimSpace(r.RepositoryID) == "" || strings.TrimSpace(r.IssueID) == "" || r.IssueNumber < 0 || strings.TrimSpace(r.Field) == "" || !json.Valid(r.Value) || strings.TrimSpace(r.ExpectedRevision) == "" || strings.TrimSpace(r.IdempotencyKey) == "" || strings.TrimSpace(r.ActorID) == "" || strings.TrimSpace(r.CorrelationID) == "" {
 		return errors.New("core: tracker issue update identity, typed value, revision, and execution identity are required")
 	}
 	return nil

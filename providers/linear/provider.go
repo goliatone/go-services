@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goliatone/go-services/core"
@@ -22,7 +23,9 @@ type Config struct {
 
 type Provider struct {
 	tracker.StaticProvider
-	runtime tracker.Runtime
+	runtime     tracker.Runtime
+	oauthMu     sync.Mutex
+	oauthTokens map[string]linearOAuthToken
 }
 
 func New(cfg Config) (core.Provider, error) {
@@ -30,7 +33,7 @@ func New(cfg Config) (core.Provider, error) {
 	if runtime.Authenticate == nil {
 		runtime.Authenticate = authenticate
 	}
-	return &Provider{StaticProvider: tracker.StaticProvider{ProviderID: ProviderID, Kind: core.AuthKindAPIKey, ScopeTypes: []string{"workspace"}, Grants: []core.CapabilityDescriptor{{Name: "issues.read", DeniedBehavior: core.CapabilityDeniedBehaviorBlock}, {Name: "webhooks.manage", DeniedBehavior: core.CapabilityDeniedBehaviorDegrade}}}, runtime: runtime}, nil
+	return &Provider{StaticProvider: tracker.StaticProvider{ProviderID: ProviderID, Kind: core.AuthKindAPIKey, ScopeTypes: []string{"workspace"}, Grants: []core.CapabilityDescriptor{{Name: "issues.read", DeniedBehavior: core.CapabilityDeniedBehaviorBlock}, {Name: "issues.write", RequiredGrants: []string{"write"}, DeniedBehavior: core.CapabilityDeniedBehaviorBlock}, {Name: "webhooks.manage", DeniedBehavior: core.CapabilityDeniedBehaviorDegrade}}}, runtime: runtime}, nil
 }
 
 type pageInfo struct {
@@ -44,6 +47,12 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 	}
 	if strings.TrimSpace(input.Search) != "" {
 		return core.TrackerNodePage{}, core.NewTrackerProviderError(core.TrackerErrorSearchUnsupported, "search is not supported for this discovery operation", false, 0, nil)
+	}
+	if input.ResourceType == "project" {
+		return p.discoverProjects(ctx, input)
+	}
+	if input.ResourceType != "" && input.ResourceType != "team" {
+		return core.TrackerNodePage{}, core.NewTrackerProviderError(core.TrackerErrorValidation, "unsupported Linear scope type", false, 0, nil)
 	}
 	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
 	if err != nil {
@@ -59,69 +68,26 @@ func (p *Provider) DiscoverTrackerScopes(ctx context.Context, input core.Tracker
 			PageInfo pageInfo `json:"pageInfo"`
 		} `json:"teams"`
 	}]
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, map[string]any{"first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
+	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
 		return core.TrackerNodePage{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
 		return core.TrackerNodePage{}, err
 	}
 	items := make([]core.TrackerNode, 0, len(response.Data.Teams.Nodes))
+	capabilities := []string{"issues.read", "schema.read", "webhook"}
+	if linearWriteGranted(credential) {
+		capabilities = append(capabilities, "issues.write")
+	}
 	for _, team := range response.Data.Teams.Nodes {
-		items = append(items, core.TrackerNode{ExternalID: team.ID, Type: "team", Name: team.Name, Capabilities: []string{"issues.read", "schema.read", "webhook"}, NativeRevision: team.UpdatedAt.UTC().Format(time.RFC3339Nano), Metadata: map[string]any{"key": team.Key}})
+		items = append(items, core.TrackerNode{ExternalID: team.ID, Type: "team", Name: team.Name, Capabilities: capabilities, NativeRevision: team.UpdatedAt.UTC().Format(time.RFC3339Nano), Metadata: map[string]any{"key": team.Key}})
 	}
 	page := response.Data.Teams.PageInfo
 	return core.TrackerNodePage{Items: items, NextCursor: page.EndCursor, HasMore: page.HasNextPage, Revision: tracker.Revision(items)}, nil
 }
 
 func (p *Provider) DiscoverTrackerSchema(ctx context.Context, input core.TrackerDiscoveryRequest) (core.TrackerSchemaPage, error) {
-	if err := input.Validate(); err != nil {
-		return core.TrackerSchemaPage{}, err
-	}
-	if strings.TrimSpace(input.Search) != "" {
-		return core.TrackerSchemaPage{}, core.NewTrackerProviderError(core.TrackerErrorSearchUnsupported, "search is not supported for this discovery operation", false, 0, nil)
-	}
-	if strings.TrimSpace(input.ResourceID) == "" {
-		return core.TrackerSchemaPage{}, core.NewTrackerProviderError(core.TrackerErrorSchemaChanged, "Linear team id is required for schema discovery", false, 0, nil)
-	}
-	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
-	if err != nil {
-		return core.TrackerSchemaPage{}, err
-	}
-	query := `query($id:String!){team(id:$id){updatedAt states{nodes{id name type color updatedAt}}labels{nodes{id name color updatedAt}}}}`
-	var response tracker.GraphQLResponse[struct {
-		Team struct {
-			UpdatedAt time.Time
-			States    struct {
-				Nodes []struct {
-					ID, Name, Type, Color string
-					UpdatedAt             time.Time
-				} `json:"nodes"`
-			}
-			Labels struct {
-				Nodes []struct {
-					ID, Name, Color string
-					UpdatedAt       time.Time
-				} `json:"nodes"`
-			}
-		} `json:"team"`
-	}]
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, map[string]any{"id": input.ResourceID}, &response); err != nil {
-		return core.TrackerSchemaPage{}, err
-	}
-	if err := graphqlErrors(response.Errors); err != nil {
-		return core.TrackerSchemaPage{}, err
-	}
-	revision := response.Data.Team.UpdatedAt.UTC().Format(time.RFC3339Nano)
-	stateOptions := make([]core.TrackerNode, 0, len(response.Data.Team.States.Nodes))
-	for _, state := range response.Data.Team.States.Nodes {
-		stateOptions = append(stateOptions, core.TrackerNode{ExternalID: state.ID, Type: "workflow_state", Name: state.Name, NativeRevision: state.UpdatedAt.UTC().Format(time.RFC3339Nano), Metadata: map[string]any{"category": state.Type, "color": state.Color}})
-	}
-	labelOptions := make([]core.TrackerNode, 0, len(response.Data.Team.Labels.Nodes))
-	for _, label := range response.Data.Team.Labels.Nodes {
-		labelOptions = append(labelOptions, core.TrackerNode{ExternalID: label.ID, Type: "label", Name: label.Name, NativeRevision: label.UpdatedAt.UTC().Format(time.RFC3339Nano), Metadata: map[string]any{"color": label.Color}})
-	}
-	fields := []core.TrackerField{{ID: "title", Name: "Title", Type: "string", Required: true, NativeRevision: revision}, {ID: "description", Name: "Description", Type: "markdown", NativeRevision: revision}, {ID: "state", Name: "State", Type: "workflow_state", Required: true, Options: stateOptions, NativeRevision: revision}, {ID: "labels", Name: "Labels", Type: "list", Options: labelOptions, NativeRevision: revision}, {ID: "priority", Name: "Priority", Type: "number", NativeRevision: revision}, {ID: "assignee", Name: "Assignee", Type: "user", NativeRevision: revision}}
-	return core.TrackerSchemaPage{Items: fields, Revision: tracker.Revision(fields)}, nil
+	return p.discoverSchema(ctx, input)
 }
 
 func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerChangesRequest) (core.TrackerChangePage, error) {
@@ -132,14 +98,14 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 	if err != nil {
 		return core.TrackerChangePage{}, err
 	}
-	query := `query($team:String!,$first:Int!,$after:String){issues(filter:{team:{id:{eq:$team}}},first:$first,after:$after,orderBy:updatedAt){nodes{id identifier title description priority url createdAt updatedAt archivedAt state{id name type}assignee{id name email}labels{nodes{id name color}}team{id key name}}pageInfo{hasNextPage endCursor}}}`
+	query := `query($team:String!,$first:Int!,$after:String){issues(filter:{team:{id:{eq:$team}}},first:$first,after:$after,orderBy:updatedAt){nodes{id identifier title description priority url createdAt updatedAt archivedAt state{id name type}assignee{id name email}labels{nodes{id name color}}team{id key name}project{id name}}pageInfo{hasNextPage endCursor}}}`
 	var response tracker.GraphQLResponse[struct {
 		Issues struct {
 			Nodes    []json.RawMessage `json:"nodes"`
 			PageInfo pageInfo          `json:"pageInfo"`
 		} `json:"issues"`
 	}]
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, map[string]any{"team": input.ResourceID, "first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
+	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"team": input.ResourceID, "first": tracker.Limit(input.Limit, 50, 100), "after": nullable(input.Cursor)}, &response); err != nil {
 		return core.TrackerChangePage{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -156,12 +122,13 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 			Assignee                                json.RawMessage
 			Labels                                  json.RawMessage
 			Team                                    json.RawMessage
+			Project                                 json.RawMessage
 			ArchivedAt                              *time.Time
 		}
 		if err := json.Unmarshal(raw, &issue); err != nil {
 			return core.TrackerChangePage{}, core.NewTrackerProviderError(core.TrackerErrorExternal, "Linear issue payload is invalid", false, 0, err)
 		}
-		normalized := map[string]any{"identifier": issue.Identifier, "title": issue.Title, "description": issue.Description, "priority": issue.Priority, "state": issue.State, "assignee": issue.Assignee, "labels": issue.Labels, "team": issue.Team, "archived_at": issue.ArchivedAt}
+		normalized := map[string]any{"identifier": issue.Identifier, "title": issue.Title, "description": issue.Description, "priority": issue.Priority, "state": issue.State, "assignee": issue.Assignee, "labels": issue.Labels, "team": issue.Team, "project": issue.Project, "archived_at": issue.ArchivedAt}
 		items = append(items, core.TrackerResource{ProviderID: ProviderID, ResourceType: "issue", ExternalID: issue.ID, ProviderRevision: issue.UpdatedAt.UTC().Format(time.RFC3339Nano), CanonicalURL: issue.URL, ObservedAt: observedAt, NormalizedFields: tracker.RawJSON(normalized), NativeExtension: raw, SchemaRevision: "linear.issue.v1"})
 	}
 	page := response.Data.Issues.PageInfo
@@ -184,7 +151,7 @@ func (p *Provider) Subscribe(ctx context.Context, input core.SubscribeRequest) (
 		} `json:"webhookCreate"`
 	}]
 	variables := map[string]any{"input": map[string]any{"teamId": input.ResourceID, "url": input.CallbackURL, "resourceTypes": []string{"Issue"}}}
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, variables, &response); err != nil {
+	if err := p.doGraphQL(ctx, credential, endpoint, query, variables, &response); err != nil {
 		return core.SubscriptionResult{}, err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -210,7 +177,7 @@ func (p *Provider) CancelSubscription(ctx context.Context, input core.CancelSubs
 	var response tracker.GraphQLResponse[struct {
 		WebhookDelete struct{ Success bool } `json:"webhookDelete"`
 	}]
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, map[string]any{"id": input.RemoteSubscriptionID}, &response); err != nil {
+	if err := p.doGraphQL(ctx, credential, endpoint, query, map[string]any{"id": input.RemoteSubscriptionID}, &response); err != nil {
 		return err
 	}
 	if err := graphqlErrors(response.Errors); err != nil {
@@ -226,6 +193,16 @@ func (p *Provider) resolve(ctx context.Context, connectionID string) (core.Activ
 	credential, err := p.runtime.ResolveCredential(ctx, connectionID)
 	if err != nil {
 		return core.ActiveCredential{}, "", err
+	}
+	if credential.Metadata["auth_type"] == "oauth_client" {
+		if configured, _ := credential.Metadata["graphql_url"].(string); configured != "" && configured != defaultGraphQLURL {
+			return core.ActiveCredential{}, "", core.NewTrackerProviderError(core.TrackerErrorValidation, "Linear OAuth requires the official GraphQL endpoint", false, 0, nil)
+		}
+		credential, err = p.oauthCredential(ctx, credential, false)
+		if err != nil {
+			return core.ActiveCredential{}, "", err
+		}
+		return credential, defaultGraphQLURL, nil
 	}
 	endpoint, err := tracker.Endpoint(credential, "graphql_url", defaultGraphQLURL)
 	if err != nil {
