@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.10.2](https://github.com/goliatone/go-services/compare/v0.10.1...v0.10.2) - (2026-10-11)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Discussion tracking ([c453fff](https://github.com/goliatone/go-services/commit/c453fff5720f1c585e094321772a36b0ffa5541c))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.10.2 ([689c8bf](https://github.com/goliatone/go-services/commit/689c8bf91a9967ae5e24b2ca5850af887dd0904d))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.10.1 ([b129976](https://github.com/goliatone/go-services/commit/b12997694eeb198d60f46c3ce09324de121acef6))  - (goliatone)
+
 # [0.10.1](https://github.com/goliatone/go-services/compare/v0.10.0...v0.10.1) - (2026-10-11)
 
 ## <!-- 13 -->📦 Bumps
