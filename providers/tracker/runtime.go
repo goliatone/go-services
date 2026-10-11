@@ -30,6 +30,8 @@ type Runtime struct {
 }
 
 type ResponseMetadata struct {
+	// RequestDispatched means HTTPClient.Do was invoked, not that delivery succeeded.
+	RequestDispatched  bool
 	StatusCode         int
 	RequestID          string
 	ETag               string
@@ -81,12 +83,16 @@ func (r Runtime) DoJSONWithCredentialMetadata(ctx context.Context, credential co
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	if err := ctx.Err(); err != nil {
+		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorUnavailable, "provider request cancelled before dispatch", true, 0, err)
+	}
 	response, err := client.Do(request.WithContext(ctx))
 	if err != nil {
-		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorUnavailable, "provider request failed", true, 0, err)
+		return ResponseMetadata{RequestDispatched: true}, core.NewTrackerProviderError(core.TrackerErrorUnavailable, "provider request failed", true, 0, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	metadata := responseMetadata(response)
+	metadata.RequestDispatched = true
 	limit := r.MaxResponseBodyBytes
 	if limit <= 0 {
 		limit = DefaultMaxResponseBodyBytes

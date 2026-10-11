@@ -2,6 +2,8 @@ package tracker
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,5 +128,47 @@ func TestEndpointRejectsUnsafeConnectionConfiguration(t *testing.T) {
 	endpoint, err := Endpoint(core.ActiveCredential{Metadata: map[string]any{"base_url": "https://jira.example/root/"}}, "base_url", "https://safe.example")
 	if err != nil || endpoint.String() != "https://jira.example/root" {
 		t.Fatalf("endpoint = %v, err = %v", endpoint, err)
+	}
+}
+
+type dispatchPhaseDoer func(*http.Request) (*http.Response, error)
+
+func (f dispatchPhaseDoer) Do(request *http.Request) (*http.Response, error) { return f(request) }
+
+func TestRuntimeReportsDispatchPhase(t *testing.T) {
+	for _, mode := range []string{"authentication", "cancelled", "transport", "decode", "confirmed"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			calls := 0
+			runtime := Runtime{Authenticate: func(context.Context, *http.Request, core.ActiveCredential) error {
+				if mode == "authentication" {
+					return errors.New("refused")
+				}
+				if mode == "cancelled" {
+					cancel()
+				}
+				return nil
+			}, HTTPClient: dispatchPhaseDoer(func(*http.Request) (*http.Response, error) {
+				calls++
+				if mode == "transport" {
+					return nil, errors.New("lost response")
+				}
+				body := `{}`
+				if mode == "decode" {
+					body = `{`
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			request, _ := http.NewRequest(http.MethodPost, "https://jira.example", nil)
+			var output map[string]any
+			metadata, err := runtime.DoJSONWithCredentialMetadata(ctx, core.ActiveCredential{}, request, &output)
+			if metadata.RequestDispatched != (calls == 1) || (err == nil) != (mode == "confirmed") {
+				t.Fatalf("metadata=%+v err=%v dispatches=%d", metadata, err, calls)
+			}
+			if (mode == "authentication" || mode == "cancelled") && calls != 0 {
+				t.Fatal("local failure dispatched")
+			}
+		})
 	}
 }
