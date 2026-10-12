@@ -41,7 +41,8 @@ func adfText(node adfNode, depth int) (string, error) {
 	}
 	switch node.Type {
 	case "text":
-		text := node.Text
+		var text strings.Builder
+		text.WriteString(node.Text)
 		for _, mark := range node.Marks {
 			switch mark.Type {
 			case "link":
@@ -50,14 +51,14 @@ func adfText(node adfNode, depth int) (string, error) {
 					return "", discussionError(core.TrackerErrorExternal, "Jira comment link omits its URL")
 				}
 				if href != node.Text {
-					text += " (" + href + ")"
+					text.WriteString(" (" + href + ")")
 				}
 			case "strong", "em", "strike", "underline", "code", "subsup", "textColor", "backgroundColor":
 			default:
 				return "", discussionError(core.TrackerErrorUnavailable, "Jira comment contains an unsupported text mark")
 			}
 		}
-		return text, nil
+		return text.String(), nil
 	case "hardBreak":
 		return "\n", nil
 	case "mention":

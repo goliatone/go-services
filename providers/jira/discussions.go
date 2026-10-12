@@ -444,8 +444,7 @@ func (p *Provider) replyDiscussion(ctx context.Context, input core.TrackerDiscus
 }
 
 func failedDiscussionReceipt(receipt core.TrackerDiscussionReceipt, err error) (core.TrackerDiscussionReceipt, error) {
-	var providerErr *core.TrackerProviderError
-	if errors.As(err, &providerErr) {
+	if providerErr, ok := errors.AsType[*core.TrackerProviderError](err); ok {
 		receipt.ErrorCode = providerErr.Code
 		if providerErr.Code == core.TrackerErrorNotFound || providerErr.Code == core.TrackerErrorConflict {
 			receipt.ErrorCode = "source_revision_changed"

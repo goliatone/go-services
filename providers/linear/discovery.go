@@ -72,7 +72,7 @@ func (p *Provider) discoverSchema(ctx context.Context, input core.TrackerDiscove
 	seenStates := map[string]bool{}
 	seenLabels := map[string]bool{}
 	schemaRevision := ""
-	for pageIndex := 0; pageIndex < 100; pageIndex++ {
+	for range 100 {
 		var response tracker.GraphQLResponse[struct {
 			Team struct {
 				ID        string    `json:"id"`
@@ -151,7 +151,7 @@ func (p *Provider) discoverProjectOptions(ctx context.Context, connectionID, tea
 	options := []core.TrackerNode{}
 	seen := map[string]bool{}
 	cursor := ""
-	for pageIndex := 0; pageIndex < 100; pageIndex++ {
+	for range 100 {
 		page, err := p.discoverProjects(ctx, core.TrackerDiscoveryRequest{ConnectionID: connectionID, ResourceType: "project", ResourceID: teamID, Cursor: cursor, Limit: 100})
 		if err != nil {
 			return nil, err

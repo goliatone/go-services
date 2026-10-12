@@ -37,7 +37,7 @@ func (c *discussionPageClient) Do(request *http.Request) (*http.Response, error)
 	if err != nil {
 		return response, err
 	}
-	for _, link := range strings.Split(response.Header.Get("Link"), ",") {
+	for link := range strings.SplitSeq(response.Header.Get("Link"), ",") {
 		for _, parameter := range strings.Split(link, ";")[1:] {
 			if strings.TrimSpace(parameter) == `rel="next"` || strings.TrimSpace(parameter) == "rel=next" {
 				c.next = true
@@ -300,8 +300,7 @@ func (p *Provider) ReplyTrackerDiscussionAtRevision(ctx context.Context, input c
 
 func unsentDiscussionReceipt(input core.TrackerDiscussionReplyRequest, err error) (core.TrackerDiscussionReceipt, error) {
 	receipt := core.TrackerDiscussionReceipt{ProviderID: ProviderID, Target: input.Target, IdempotencyKey: input.IdempotencyKey, Status: "failed", ErrorCode: "discussion_preflight_failed"}
-	var providerErr *core.TrackerProviderError
-	if errors.As(err, &providerErr) {
+	if providerErr, ok := errors.AsType[*core.TrackerProviderError](err); ok {
 		receipt.ErrorCode = providerErr.Code
 		if providerErr.Code == core.TrackerErrorConflict || providerErr.Code == core.TrackerErrorNotFound {
 			receipt.ErrorCode = "source_revision_changed"

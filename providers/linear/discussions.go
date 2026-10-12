@@ -234,8 +234,7 @@ func (p *Provider) replyDiscussion(ctx context.Context, input core.TrackerDiscus
 		err = core.NewTrackerProviderError(core.TrackerErrorPermission, "Linear comment write grant is unproven", false, 0, nil)
 	}
 	if err != nil {
-		var providerErr *core.TrackerProviderError
-		if errors.As(err, &providerErr) {
+		if providerErr, ok := errors.AsType[*core.TrackerProviderError](err); ok {
 			receipt.ErrorCode = providerErr.Code
 			if providerErr.RetryAfter > 0 {
 				receipt.RateLimit.ResetAt = time.Now().UTC().Add(providerErr.RetryAfter)

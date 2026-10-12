@@ -55,7 +55,7 @@ func (p *Provider) exchange(ctx context.Context, values url.Values) (core.Comple
 		return core.CompleteAuthResponse{}, ErrUnavailable
 	}
 	grants := []string{}
-	for _, grant := range strings.Split(token.Scope, ",") {
+	for grant := range strings.SplitSeq(token.Scope, ",") {
 		if grant = strings.TrimSpace(grant); grant != "" {
 			grants = append(grants, grant)
 		}

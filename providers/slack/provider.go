@@ -86,6 +86,20 @@ func (p *Provider) call(ctx context.Context, c core.ActiveCredential, method str
 	if err != nil {
 		return nil, nil, 0, false, ErrInvalid
 	}
+	if method == "auth.test" || method == "conversations.list" || method == "conversations.replies" {
+		values := map[string]any{}
+		if json.Unmarshal(body, &values) != nil {
+			return nil, nil, 0, false, ErrInvalid
+		}
+		query := req.URL.Query()
+		for name, value := range values {
+			query.Set(name, fmt.Sprint(value))
+		}
+		req.URL.RawQuery = query.Encode()
+		req.Method = http.MethodGet
+		req.Body = nil
+		req.ContentLength = 0
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.AccessToken)
 	if ctx.Err() != nil {
@@ -152,7 +166,7 @@ func (p *Provider) inspect(ctx context.Context, c core.ActiveCredential) (Instal
 	grants := append([]string(nil), c.GrantedScopes...)
 	if advertised := header.Get("X-OAuth-Scopes"); advertised != "" {
 		grants = nil
-		for _, grant := range strings.Split(advertised, ",") {
+		for grant := range strings.SplitSeq(advertised, ",") {
 			if grant = strings.TrimSpace(grant); grant != "" {
 				grants = append(grants, grant)
 			}
