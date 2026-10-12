@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.11.3](https://github.com/goliatone/go-services/compare/v0.11.2...v0.11.3) - (2026-10-12)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Slack provider ([2da87db](https://github.com/goliatone/go-services/commit/2da87dbee8c6db47ec43fc4a7b224fc4efb7de9f))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.11.3 ([7fc6a3e](https://github.com/goliatone/go-services/commit/7fc6a3e7898d768218fee2f86e920714ec212f85))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.11.2 ([eca3dd1](https://github.com/goliatone/go-services/commit/eca3dd11d1f92863ff7c5c2f4b7d4275992996c3))  - (goliatone)
+
 # [0.11.2](https://github.com/goliatone/go-services/compare/v0.11.1...v0.11.2) - (2026-10-12)
 
 ## <!-- 1 -->🐛 Bug Fixes
