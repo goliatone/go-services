@@ -86,7 +86,7 @@ func (p *Provider) call(ctx context.Context, c core.ActiveCredential, method str
 	if err != nil {
 		return nil, nil, 0, false, ErrInvalid
 	}
-	if method == "auth.test" || method == "conversations.list" || method == "conversations.replies" {
+	if method == "auth.test" || method == "conversations.list" || method == "conversations.replies" || method == "conversations.history" {
 		values := map[string]any{}
 		if json.Unmarshal(body, &values) != nil {
 			return nil, nil, 0, false, ErrInvalid
@@ -319,7 +319,13 @@ func (p *Provider) Reconcile(ctx context.Context, input MessageRequest) (Message
 	if err != nil || install.TeamID != input.TeamID {
 		return result, nil
 	}
-	data, _, status, _, err := p.call(ctx, c, "conversations.replies", map[string]any{"channel": input.ChannelID, "ts": input.ThreadID, "limit": 100})
+	method := "conversations.replies"
+	arguments := map[string]any{"channel": input.ChannelID, "ts": input.ThreadID, "limit": 100}
+	if input.ThreadID == "" {
+		method = "conversations.history"
+		delete(arguments, "ts")
+	}
+	data, _, status, _, err := p.call(ctx, c, method, arguments)
 	if err != nil || logical(data, status) != nil {
 		return result, nil
 	}
@@ -341,6 +347,9 @@ func (p *Provider) Reconcile(ctx context.Context, input MessageRequest) (Message
 			return MessageReceipt{OperationID: input.OperationID, State: Unknown, Reason: "multiple_receipts"}, nil
 		}
 		result.State, result.Reason = Sent, ""
+		if input.ThreadID == "" && message.Thread == "" {
+			message.Thread = message.TS
+		}
 		result.External = &MessageIdentity{TeamID: install.TeamID, ChannelID: input.ChannelID, ThreadID: message.Thread, MessageID: message.TS, URL: "https://app.slack.com/archives/" + url.PathEscape(input.ChannelID) + "/p" + strings.ReplaceAll(message.TS, ".", "")}
 	}
 	if result.State == Sent {

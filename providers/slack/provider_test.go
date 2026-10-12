@@ -78,3 +78,44 @@ func TestSignedEventsPreserveEditAndRefuseChangedBody(t *testing.T) {
 		t.Fatal("changed signed body accepted")
 	}
 }
+
+func TestRootUnknownDeliveryReconcilesChannelHistory(t *testing.T) {
+	posts := 0
+	histories := 0
+	request := MessageRequest{OperationID: "root-effect", ConnectionID: "stored", TeamID: "T", ChannelID: "C", Body: "Approved alert"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth.test":
+			w.Header().Set("X-OAuth-Scopes", "chat:write,channels:history")
+			fmt.Fprint(w, `{"ok":true,"team_id":"T","user_id":"UB","bot_id":"B"}`)
+		case "/chat.postMessage":
+			posts++
+			w.WriteHeader(502)
+		case "/conversations.history":
+			histories++
+			args := r.URL.Query()
+			if r.Method != http.MethodGet || args.Get("channel") != "C" || args.Has("ts") || args.Get("limit") != "100" {
+				t.Errorf("root history request: %s %+v", r.Method, args)
+			}
+			fmt.Fprintf(w, `{"ok":true,"messages":[{"ts":"2.000001","client_msg_id":%q}]}`, clientMessageID(request.OperationID))
+		default:
+			t.Errorf("unexpected method: %s", r.URL.Path)
+			w.WriteHeader(400)
+		}
+	}))
+	defer server.Close()
+	provider, err := New(Config{BaseURL: server.URL, Credentials: CredentialResolverFunc(func(context.Context, string) (core.ActiveCredential, error) {
+		return core.ActiveCredential{AccessToken: "fixture"}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, err := provider.Send(t.Context(), request)
+	if err != nil || sent.State != Unknown || posts != 1 {
+		t.Fatalf("send: %+v %v", sent, err)
+	}
+	confirmed, err := provider.Reconcile(t.Context(), request)
+	if err != nil || confirmed.State != Sent || confirmed.ValidateFor(request) != nil || histories != 1 || posts != 1 {
+		t.Fatalf("reconcile: %+v %v posts=%d histories=%d", confirmed, err, posts, histories)
+	}
+}
