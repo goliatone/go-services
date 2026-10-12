@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.11.2](https://github.com/goliatone/go-services/compare/v0.11.1...v0.11.2) - (2026-10-12)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Auth handling for providers ([f83b5e8](https://github.com/goliatone/go-services/commit/f83b5e8dab7fd38647fdfb35065e48d8a42f5d0d))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.11.2 ([d1016d0](https://github.com/goliatone/go-services/commit/d1016d0e29e1eecf52dc784808cb5c863c57a6b8))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.11.1 ([2e948a8](https://github.com/goliatone/go-services/commit/2e948a8771f6f124f0335fcf1331d07cc74c41fc))  - (goliatone)
+
 # [0.11.1](https://github.com/goliatone/go-services/compare/v0.11.0...v0.11.1) - (2026-10-12)
 
 ## <!-- 13 -->📦 Bumps
