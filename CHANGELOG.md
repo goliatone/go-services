@@ -1,5 +1,20 @@
 # Changelog
 
+# [0.12.0](https://github.com/goliatone/go-services/compare/v0.11.4...v0.12.0) - (2026-11-14)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.12.0 ([7238506](https://github.com/goliatone/go-services/commit/7238506875daaf5409ec074e631297db55ca7e6d))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Linear publication tracker ([5a14bd2](https://github.com/goliatone/go-services/commit/5a14bd2a94eae07d31cebd091534fedd55308ca2))  - (goliatone)
+- Publication tracker ([8801032](https://github.com/goliatone/go-services/commit/88010324d7a3c2bb68a119bb653b0d31e3d3bf16))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.11.4 ([08df1dc](https://github.com/goliatone/go-services/commit/08df1dc1deb576089a7aa82433d59e47569e864f))  - (goliatone)
+
 # [0.11.4](https://github.com/goliatone/go-services/compare/v0.11.3...v0.11.4) - (2026-10-28)
 
 ## <!-- 13 -->📦 Bumps
