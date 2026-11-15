@@ -1,5 +1,18 @@
 # Changelog
 
+# [0.13.0](https://github.com/goliatone/go-services/compare/v0.12.2...v0.13.0) - (2026-11-15)
+
+Add optional, read-only GitHub pull-request delivery evidence for explicitly linked work.
+
+- Return PR identity, head/merge commits and a head-bound check summary with a stable semantic revision.
+- Accept canonical repository URL casing and reject mismatched identities or PR numbers outside GraphQL Int.
+- Preserve GraphQL rate-limit retry timing without returning partial evidence or automatically retrying.
+- Expose Retry-After in tracker response metadata.
+
+The initial delivery API supports github.com. Evidence is an observation, not a live freshness guarantee or QA acceptance. This API does not create, merge or update pull requests. Existing v0.12.2 Project Status fixes are retained.
+
+Validation: focused delivery/runtime regressions and the CTX adapter journey against this release candidate, using synthetic credentials and local TLS servers only.
+
 # [0.12.2](https://github.com/goliatone/go-services/compare/v0.12.1...v0.12.2) - (2026-11-15)
 
 ## Bug Fixes
