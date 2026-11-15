@@ -1,5 +1,18 @@
 # Changelog
 
+# [0.15.0](https://github.com/goliatone/go-services/compare/v0.14.0...v0.15.0) - (2026-11-15)
+
+## Features
+
+- Add optional `TrackerIssuePatchProvider` v1 for explicit single-field updates to ordinary Linear issues: title, full description, or native state.
+- Add scoped read-only inspection, optimistic revision/value/schema checks, terminal auto-close safeguards, and one-dispatch mutation/read-back.
+- Distinguish acknowledged confirmation, desired-state observation, pre-dispatch conflict, failed delivery, and unknown outcomes. Keep strict updates refused and managed publication unchanged.
+
+## Limits
+
+- Updates are non-atomic and may trigger native workflow behavior. Unknown outcomes require read-only recovery; execution metadata does not provide provider-side deduplication.
+- Custom HTTP clients must not retry mutations or follow mutation redirects. Consumer activation remains explicit.
+
 # [0.14.0](https://github.com/goliatone/go-services/compare/v0.13.0...v0.14.0) - (2026-11-15)
 
 ## <!-- 13 -->📦 Bumps
