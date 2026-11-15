@@ -49,10 +49,10 @@ github.com/go-sourcemap/sourcemap v2.1.4+incompatible h1:a+iTbH5auLKxaNwQFg0B+TC
 github.com/go-sourcemap/sourcemap v2.1.4+incompatible/go.mod h1:F8jJfvm2KbVjc5NqelyYJmf/v5J0dwNLS2mL4sNA1Jg=
 github.com/go-viper/mapstructure/v2 v2.4.0 h1:EBsztssimR/CONLSZZ04E8qAkxNYq4Qp9LvH92wZUgs=
 github.com/go-viper/mapstructure/v2 v2.4.0/go.mod h1:oJDH3BJKyqBA2TXFhDsKDGDTlndYOZ6rGS0BRZIxGhM=
-github.com/goliatone/go-command v0.24.3 h1:CZvM6xg2J1+e96Wu8uPaKyQmKzwLCypknko5JQcC+qc=
-github.com/goliatone/go-command v0.24.3/go.mod h1:PGuCsS9jhVoWUaY+SZ9TAzvVnhzdwq1Tbs57PIv1myE=
-github.com/goliatone/go-config v0.15.0 h1:m3+2iFVZCIN0xPquyy9/Zd7dVGLbJR9VUW513YOrsR0=
-github.com/goliatone/go-config v0.15.0/go.mod h1:usSyDTEZyFKP//uJJmNmPCoH4XwhQZZmD3dJtgLrh9c=
+github.com/goliatone/go-command v0.27.1 h1:AHVfzZ1LbmPBD8ZG8wf5VaAi9N0Zx9dOwoLpPJ1S3rk=
+github.com/goliatone/go-command v0.27.1/go.mod h1:1WDiYzrubIDklIEvRXlwZhUn2rLyIdswxe4zS+RgHEg=
+github.com/goliatone/go-config v0.15.1 h1:jFgpsvEctaAtcrGdJjKIRSwJJbllFJ3lQClygvjmovg=
+github.com/goliatone/go-config v0.15.1/go.mod h1:e6Ih6utzZGN5lKhNpLjqcqVpdV5pK1UO8zZpPf/hfgA=
 github.com/goliatone/go-errors v0.12.0 h1:FI3FHJe+sogfD+MZJqx8OVGDJqav5PNq1xi1UAXjBwk=
 github.com/goliatone/go-errors v0.12.0/go.mod h1:LvR8nteHvrUTbS6N7Gm/2of9yRyyLoxIB4VFPk+wkVU=
 github.com/goliatone/go-job v0.20.0 h1:F16mOp+Gc84Xb/b+RxFPUK/HJuoTCHWcY0YfG4fLr4U=

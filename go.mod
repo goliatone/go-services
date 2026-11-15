@@ -3,8 +3,8 @@ module github.com/goliatone/go-services
 go 1.26.0
 
 require (
-	github.com/goliatone/go-command v0.24.3
-	github.com/goliatone/go-config v0.15.0
+	github.com/goliatone/go-command v0.27.1
+	github.com/goliatone/go-config v0.15.1
 	github.com/goliatone/go-errors v0.12.0
 	github.com/goliatone/go-job v0.20.0
 	github.com/goliatone/go-logger v0.10.1
