@@ -43,3 +43,19 @@ func TestTrackerMutationContractsRejectIncompleteInputs(t *testing.T) {
 		t.Fatal("empty receipt accepted")
 	}
 }
+
+func TestTrackerMutationUnknownReceiptNeedsIdentityButNotCommittedRevision(t *testing.T) {
+	receipt := TrackerMutationReceipt{ProviderID: "github_projects_v2", RepositoryID: "project", ExternalID: "item", DisplayID: "item", CanonicalURL: "https://github.com/acme/test/issues/1", Status: "unknown"}
+	if err := receipt.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	receipt.Status = "succeeded"
+	if receipt.Validate() == nil {
+		t.Fatal("confirmed receipt without committed revision accepted")
+	}
+	receipt.Status = "unknown"
+	receipt.ExternalID = ""
+	if receipt.Validate() == nil {
+		t.Fatal("unknown receipt without identity accepted")
+	}
+}

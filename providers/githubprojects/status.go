@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -25,6 +27,10 @@ func (p *Provider) DiscoverTrackerProjectStatus(ctx context.Context, input core.
 	if err != nil {
 		return core.TrackerSchemaPage{}, err
 	}
+	return p.discoverProjectStatus(ctx, input, credential, endpoint)
+}
+
+func (p *Provider) discoverProjectStatus(ctx context.Context, input core.TrackerDiscoveryRequest, credential core.ActiveCredential, endpoint string) (core.TrackerSchemaPage, error) {
 	var response tracker.GraphQLResponse[struct {
 		Node struct {
 			ID              string
@@ -75,14 +81,19 @@ type statusItem struct {
 }
 
 func (v statusItem) revision() string {
-	revision := v.UpdatedAt
-	if v.Content.UpdatedAt.After(revision) {
-		revision = v.Content.UpdatedAt
-	}
-	if revision.IsZero() {
+	if v.Content.ID == "" || v.Content.UpdatedAt.IsZero() {
 		return ""
 	}
-	return revision.UTC().Format(time.RFC3339Nano)
+	return projectItemRevision(v.ID, v.UpdatedAt, v.Content.ID, v.Content.UpdatedAt)
+}
+
+func projectItemRevision(itemID string, itemUpdated time.Time, contentID string, contentUpdated time.Time) string {
+	if itemID == "" || itemUpdated.IsZero() {
+		return ""
+	}
+	raw, _ := json.Marshal([]string{itemID, itemUpdated.UTC().Format(time.RFC3339Nano), contentID, contentUpdated.UTC().Format(time.RFC3339Nano)})
+	digest := sha256.Sum256(raw)
+	return "github-project-item:" + hex.EncodeToString(digest[:])
 }
 
 const statusItemFields = `id type updatedAt project{id} content{... on Issue{id url updatedAt}} fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{optionId field{... on ProjectV2FieldCommon{id}}}}`
@@ -96,7 +107,11 @@ func (p *Provider) UpdateTrackerProjectStatus(ctx context.Context, input core.Tr
 	if json.Unmarshal(input.Value, &optionID) != nil || strings.TrimSpace(optionID) == "" || schemaRevision == "" || input.IssueNumber != 0 {
 		return core.TrackerMutationReceipt{}, statusError(core.TrackerErrorValidation)
 	}
-	schema, err := p.DiscoverTrackerProjectStatus(ctx, core.TrackerDiscoveryRequest{ConnectionID: input.ConnectionID, ResourceID: input.RepositoryID})
+	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
+	if err != nil {
+		return core.TrackerMutationReceipt{}, err
+	}
+	schema, err := p.discoverProjectStatus(ctx, core.TrackerDiscoveryRequest{ConnectionID: input.ConnectionID, ResourceID: input.RepositoryID}, credential, endpoint)
 	if err != nil {
 		return core.TrackerMutationReceipt{}, err
 	}
@@ -113,10 +128,6 @@ func (p *Provider) UpdateTrackerProjectStatus(ctx context.Context, input core.Tr
 	if !valid {
 		return core.TrackerMutationReceipt{}, statusError(core.TrackerErrorValidation)
 	}
-	credential, endpoint, err := p.resolve(ctx, input.ConnectionID)
-	if err != nil {
-		return core.TrackerMutationReceipt{}, err
-	}
 	var before tracker.GraphQLResponse[struct{ Node statusItem }]
 	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, `query($id:ID!){node(id:$id){... on ProjectV2Item{`+statusItemFields+`}}}`, map[string]any{"id": input.IssueID}, &before); err != nil {
 		return core.TrackerMutationReceipt{}, err
@@ -125,10 +136,10 @@ func (p *Provider) UpdateTrackerProjectStatus(ctx context.Context, input core.Tr
 		return core.TrackerMutationReceipt{}, statusError(core.TrackerErrorExternal)
 	}
 	item := before.Data.Node
-	if item.ID != input.IssueID || item.Project.ID != input.RepositoryID || item.Type != "ISSUE" || item.Content.ID == "" || !strings.HasPrefix(item.Content.URL, "https://") {
+	if item.ID != input.IssueID || item.Project.ID != input.RepositoryID || item.Type != "ISSUE" || item.Content.ID == "" || !validStatusURL(item.Content.URL) {
 		return core.TrackerMutationReceipt{}, statusError(core.TrackerErrorValidation)
 	}
-	if item.revision() != input.ExpectedRevision {
+	if item.revision() == "" || item.revision() != input.ExpectedRevision {
 		return core.TrackerMutationReceipt{}, statusError(core.TrackerErrorConflict)
 	}
 	receipt := core.TrackerMutationReceipt{ProviderID: ProviderID, RepositoryID: input.RepositoryID, ExternalID: input.IssueID, DisplayID: input.IssueID, CanonicalURL: item.Content.URL, Status: "unknown", CorrelationID: input.CorrelationID, CausationID: input.CausationID}
@@ -138,11 +149,17 @@ func (p *Provider) UpdateTrackerProjectStatus(ctx context.Context, input core.Tr
 	query := `mutation($input:UpdateProjectV2ItemFieldValueInput!){updateProjectV2ItemFieldValue(input:$input){projectV2Item{` + statusItemFields + `}}}`
 	variables := map[string]any{"input": map[string]any{"projectId": input.RepositoryID, "itemId": input.IssueID, "fieldId": input.Field, "value": map[string]any{"singleSelectOptionId": optionID}, "clientMutationId": input.IdempotencyKey}}
 	// After dispatch, ambiguous failures require reconciliation rather than replay.
-	if err := p.runtime.DoGraphQL(ctx, credential, endpoint, query, variables, &result); err != nil || len(result.Errors) != 0 {
+	metadata, err := p.runtime.DoGraphQLWithMetadata(ctx, credential, endpoint, query, variables, &result)
+	if err != nil && (!metadata.RequestDispatched || metadata.StatusCode == http.StatusUnauthorized || metadata.StatusCode == http.StatusForbidden || metadata.StatusCode == http.StatusTooManyRequests) {
+		return core.TrackerMutationReceipt{}, err
+	}
+	receipt.RequestID = metadata.RequestID
+	receipt.RateLimit = core.TrackerRateLimit{Remaining: metadata.RateLimitRemaining, ResetAt: metadata.RateLimitReset}
+	if err != nil || len(result.Errors) != 0 {
 		return receipt, nil
 	}
 	after := result.Data.UpdateProjectV2ItemFieldValue.ProjectV2Item
-	if after.ID != item.ID || after.Project.ID != item.Project.ID || after.Type != "ISSUE" || after.Content.ID != item.Content.ID || after.revision() == "" || after.FieldValueByName.Field.ID != input.Field || after.FieldValueByName.OptionID != optionID {
+	if after.ID != item.ID || after.Project.ID != item.Project.ID || after.Type != "ISSUE" || after.Content.ID != item.Content.ID || after.Content.URL != item.Content.URL || after.UpdatedAt.Before(item.UpdatedAt) || after.Content.UpdatedAt.Before(item.Content.UpdatedAt) || after.revision() == "" || after.FieldValueByName.Field.ID != input.Field || after.FieldValueByName.OptionID != optionID {
 		return receipt, nil
 	}
 	receipt.Status, receipt.ProviderRevision = "succeeded", after.revision()
@@ -150,4 +167,9 @@ func (p *Provider) UpdateTrackerProjectStatus(ctx context.Context, input core.Tr
 }
 func statusError(code string) error {
 	return core.NewTrackerProviderError(code, "GitHub Project Status operation refused: "+code, false, 0, nil)
+}
+
+func validStatusURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil
 }

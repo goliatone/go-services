@@ -145,13 +145,10 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 			UpdatedAt                   time.Time
 		}
 		_ = json.Unmarshal(item.Content, &content)
-		revision := item.UpdatedAt
-		if content.UpdatedAt.After(revision) {
-			revision = content.UpdatedAt
-		}
+		revision := projectItemRevision(item.ID, item.UpdatedAt, content.ID, content.UpdatedAt)
 		normalized := map[string]any{"title": content.Title, "body": content.Body, "state": content.State, "number": content.Number, "content_id": content.ID, "field_values": item.FieldValues}
 		native := tracker.RawJSON(map[string]any{"id": item.ID, "type": item.Type, "content": item.Content, "field_values": item.FieldValues})
-		items = append(items, core.TrackerResource{ProviderID: ProviderID, ResourceType: "project_item", ExternalID: item.ID, ProviderRevision: revision.UTC().Format(time.RFC3339Nano), CanonicalURL: canonicalURL(content.URL, item.ID), ObservedAt: observedAt, NormalizedFields: tracker.RawJSON(normalized), NativeExtension: native, SchemaRevision: "github.project-v2.v1"})
+		items = append(items, core.TrackerResource{ProviderID: ProviderID, ResourceType: "project_item", ExternalID: item.ID, ProviderRevision: revision, CanonicalURL: canonicalURL(content.URL, item.ID), ObservedAt: observedAt, NormalizedFields: tracker.RawJSON(normalized), NativeExtension: native, SchemaRevision: "github.project-v2.v1"})
 	}
 	page := response.Data.Node.Items.PageInfo
 	return core.TrackerChangePage{Items: items, NextCursor: page.EndCursor, HasMore: page.HasNextPage}, nil

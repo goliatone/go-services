@@ -17,16 +17,21 @@ type GraphQLResponse[T any] struct {
 }
 
 func (r Runtime) DoGraphQL(ctx context.Context, credential core.ActiveCredential, endpoint, query string, variables map[string]any, output any) error {
+	_, err := r.DoGraphQLWithMetadata(ctx, credential, endpoint, query, variables, output)
+	return err
+}
+
+func (r Runtime) DoGraphQLWithMetadata(ctx context.Context, credential core.ActiveCredential, endpoint, query string, variables map[string]any, output any) (ResponseMetadata, error) {
 	payload, err := json.Marshal(map[string]any{"query": query, "variables": variables})
 	if err != nil {
-		return core.NewTrackerProviderError(core.TrackerErrorExternal, "GraphQL request cannot be encoded", false, 0, err)
+		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorExternal, "GraphQL request cannot be encoded", false, 0, err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(payload)))
 	if err != nil {
-		return core.NewTrackerProviderError(core.TrackerErrorExternal, "GraphQL request cannot be created", false, 0, err)
+		return ResponseMetadata{}, core.NewTrackerProviderError(core.TrackerErrorExternal, "GraphQL request cannot be created", false, 0, err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	return r.DoJSONWithCredential(ctx, credential, request, output)
+	return r.DoJSONWithCredentialMetadata(ctx, credential, request, output)
 }
 
 func GraphQLError(messages []string) error {

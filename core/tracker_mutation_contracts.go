@@ -107,7 +107,7 @@ type TrackerMutationReceipt struct {
 }
 
 func (r TrackerMutationReceipt) Validate() error {
-	if strings.TrimSpace(r.ProviderID) == "" || strings.TrimSpace(r.RepositoryID) == "" || strings.TrimSpace(r.ExternalID) == "" || strings.TrimSpace(r.DisplayID) == "" || strings.TrimSpace(r.ProviderRevision) == "" || strings.TrimSpace(r.Status) == "" {
+	if strings.TrimSpace(r.ProviderID) == "" || strings.TrimSpace(r.RepositoryID) == "" || strings.TrimSpace(r.ExternalID) == "" || strings.TrimSpace(r.DisplayID) == "" || (r.Status != "unknown" && strings.TrimSpace(r.ProviderRevision) == "") || strings.TrimSpace(r.Status) == "" {
 		return errors.New("core: tracker mutation receipt identity, revision, and status are required")
 	}
 	parsed, err := url.Parse(strings.TrimSpace(r.CanonicalURL))

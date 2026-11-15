@@ -1,5 +1,22 @@
 # Changelog
 
+# [0.12.2](https://github.com/goliatone/go-services/compare/v0.12.1...v0.12.2) - (2026-11-15)
+
+## Bug Fixes
+
+Fix GitHub Project Status publication guards and recovery:
+
+- Preserve both Project-item and issue timestamps in shared polling/write revisions.
+- Use one credential and endpoint snapshot throughout a write.
+- Distinguish proven refusals from uncertain dispatch; preserve rate-limit handling and valid unknown receipts.
+- Validate issue URLs and returned identity/timestamps before confirming success.
+
+Existing Project bindings need a poll and a fresh preview after upgrading. Timestamp-only previews are deliberately refused.
+
+Writes remain limited to explicitly configured Status options on Issue-backed Project items with verified project grants. GitHub offers preflight revision checks, not atomic conditional mutations; uncertain outcomes require review before retry.
+
+Validation: focused Status, receipt and transport-dispatch regressions, plus the GitHub Projects observation conformance subtest.
+
 # [0.12.1](https://github.com/goliatone/go-services/compare/v0.12.0...v0.12.1) - (2026-11-15)
 
 ## <!-- 13 -->📦 Bumps
