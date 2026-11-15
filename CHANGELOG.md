@@ -1,34 +1,30 @@
 # Changelog
 
+# [0.14.0](https://github.com/goliatone/go-services/compare/v0.13.0...v0.14.0) - (2026-11-15)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.14.0 ([8177adb](https://github.com/goliatone/go-services/commit/8177adb7ab93596cd904b6c7586aa15ce8c03dde))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Udpate deps ([7aa579f](https://github.com/goliatone/go-services/commit/7aa579fa033861e58e6983331344a05d98b0755d))  - (goliatone)
+
 # [0.13.0](https://github.com/goliatone/go-services/compare/v0.12.2...v0.13.0) - (2026-11-15)
 
-Add optional, read-only GitHub pull-request delivery evidence for explicitly linked work.
+## <!-- 0 -->🚀 Features
 
-- Return PR identity, head/merge commits and a head-bound check summary with a stable semantic revision.
-- Accept canonical repository URL casing and reject mismatched identities or PR numbers outside GraphQL Int.
-- Preserve GraphQL rate-limit retry timing without returning partial evidence or automatically retrying.
-- Expose Retry-After in tracker response metadata.
-
-The initial delivery API supports github.com. Evidence is an observation, not a live freshness guarantee or QA acceptance. This API does not create, merge or update pull requests. Existing v0.12.2 Project Status fixes are retained.
-
-Validation: focused delivery/runtime regressions and the CTX adapter journey against this release candidate, using synthetic credentials and local TLS servers only.
+- Add reviewed GitHub delivery evidence API and release v0.13.0 ([31fc29a](https://github.com/goliatone/go-services/commit/31fc29abbe064973866966b44da4d4fdd98888a2))  - (goliatone)
 
 # [0.12.2](https://github.com/goliatone/go-services/compare/v0.12.1...v0.12.2) - (2026-11-15)
 
-## Bug Fixes
+## <!-- 1 -->🐛 Bug Fixes
 
-Fix GitHub Project Status publication guards and recovery:
+- Harden Project Status writes and release v0.12.2 ([4366862](https://github.com/goliatone/go-services/commit/4366862b1673542b7bf094d16d7f5d6112e9df4f))  - (goliatone)
 
-- Preserve both Project-item and issue timestamps in shared polling/write revisions.
-- Use one credential and endpoint snapshot throughout a write.
-- Distinguish proven refusals from uncertain dispatch; preserve rate-limit handling and valid unknown receipts.
-- Validate issue URLs and returned identity/timestamps before confirming success.
+## <!-- 3 -->📚 Documentation
 
-Existing Project bindings need a poll and a fresh preview after upgrading. Timestamp-only previews are deliberately refused.
-
-Writes remain limited to explicitly configured Status options on Issue-backed Project items with verified project grants. GitHub offers preflight revision checks, not atomic conditional mutations; uncertain outcomes require review before retry.
-
-Validation: focused Status, receipt and transport-dispatch regressions, plus the GitHub Projects observation conformance subtest.
+- Update changelog for v0.12.1 ([ac50cfb](https://github.com/goliatone/go-services/commit/ac50cfb724f9e6c73f0344121cd9539dd302cdb7))  - (goliatone)
 
 # [0.12.1](https://github.com/goliatone/go-services/compare/v0.12.0...v0.12.1) - (2026-11-15)
 
