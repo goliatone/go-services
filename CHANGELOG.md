@@ -1,5 +1,16 @@
 # Changelog
 
+# [0.15.2](https://github.com/goliatone/go-services/compare/v0.15.1...v0.15.2) - (2026-11-15)
+
+## Fixes
+
+- Clear the Linear issue continuation cursor when the final page is reached, so the next scan starts at the newest issues.
+- Preserve opaque cursors for unfinished pages and cover repeated scans with a focused synthetic regression.
+
+## Upgrade notes
+
+- Consumers must discard previously stored terminal cursors. CTX handles ambiguous legacy checkpoints by restarting the scan once through its existing mirror deduplication.
+
 # [0.15.1](https://github.com/goliatone/go-services/compare/v0.15.0...v0.15.1) - (2026-11-15)
 
 ## Fixes

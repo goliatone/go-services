@@ -67,10 +67,16 @@ func TestLinearIssueFilterUsesIDAndPreservesCursor(t *testing.T) {
 			}
 			return `{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"opaque-next"}}}}`
 		}
+		if calls == 3 {
+			if variables["after"] != nil {
+				t.Errorf("new scan resumed terminal cursor: %#v", variables["after"])
+			}
+			return `{"data":{"issues":{"nodes":[{"id":"new-issue","identifier":"TEAM-2","title":"New before old tail","updatedAt":"2026-11-15T22:00:00Z"},{"id":"updated-issue","identifier":"TEAM-1","title":"Updated before old tail","updatedAt":"2026-11-15T21:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":"new-tail"}}}}`
+		}
 		if variables["after"] != "opaque-next" {
 			t.Errorf("next cursor = %#v", variables["after"])
 		}
-		return `{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`
+		return `{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":"terminal-cursor"}}}}`
 	})
 	defer closeServer()
 	request := core.TrackerChangesRequest{ConnectionID: "connection-1", ResourceType: "issue", ResourceID: "team-1", Limit: 10}
@@ -80,7 +86,12 @@ func TestLinearIssueFilterUsesIDAndPreservesCursor(t *testing.T) {
 	}
 	request.Cursor = first.NextCursor
 	second, err := provider.ListTrackerChanges(context.Background(), request)
-	if err != nil || second.HasMore || calls != 2 {
+	if err != nil || second.HasMore || second.NextCursor != "" || calls != 2 {
 		t.Fatalf("second = %#v, calls = %d, err = %v", second, calls, err)
+	}
+	request.Cursor = second.NextCursor
+	third, err := provider.ListTrackerChanges(context.Background(), request)
+	if err != nil || third.HasMore || third.NextCursor != "" || len(third.Items) != 2 || calls != 3 {
+		t.Fatalf("new scan = %#v, calls = %d, err = %v", third, calls, err)
 	}
 }

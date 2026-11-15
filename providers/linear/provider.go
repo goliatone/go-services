@@ -132,6 +132,9 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 		items = append(items, core.TrackerResource{ProviderID: ProviderID, ResourceType: "issue", ExternalID: issue.ID, ProviderRevision: issue.UpdatedAt.UTC().Format(time.RFC3339Nano), CanonicalURL: issue.URL, ObservedAt: observedAt, NormalizedFields: tracker.RawJSON(normalized), NativeExtension: raw, SchemaRevision: "linear.issue.v1"})
 	}
 	page := response.Data.Issues.PageInfo
+	if !page.HasNextPage {
+		page.EndCursor = ""
+	}
 	return core.TrackerChangePage{Items: items, NextCursor: page.EndCursor, HasMore: page.HasNextPage}, nil
 }
 
