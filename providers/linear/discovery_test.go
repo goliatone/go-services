@@ -52,3 +52,35 @@ func TestLinearProjectAndSchemaPagination(t *testing.T) {
 		t.Fatalf("pagination: project=%d schema=%d fields=%#v", projectPages, schemaPages, schema.Items)
 	}
 }
+
+func TestLinearIssueFilterUsesIDAndPreservesCursor(t *testing.T) {
+	calls := 0
+	provider, closeServer := linearMutationTestProvider(t, false, func(query string, variables map[string]any) string {
+		calls++
+		if !strings.Contains(query, "query($team:ID!") || !strings.Contains(query, "issues(filter:{team:{id:{eq:$team}}}") || variables["team"] != "team-1" || variables["first"] != float64(10) {
+			t.Errorf("invalid issue filter: %s %#v", query, variables)
+			return `{"errors":[{"message":"team filter requires ID"}]}`
+		}
+		if calls == 1 {
+			if variables["after"] != nil {
+				t.Errorf("first cursor = %#v", variables["after"])
+			}
+			return `{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"opaque-next"}}}}`
+		}
+		if variables["after"] != "opaque-next" {
+			t.Errorf("next cursor = %#v", variables["after"])
+		}
+		return `{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`
+	})
+	defer closeServer()
+	request := core.TrackerChangesRequest{ConnectionID: "connection-1", ResourceType: "issue", ResourceID: "team-1", Limit: 10}
+	first, err := provider.ListTrackerChanges(context.Background(), request)
+	if err != nil || !first.HasMore || first.NextCursor != "opaque-next" {
+		t.Fatalf("first = %#v, err = %v", first, err)
+	}
+	request.Cursor = first.NextCursor
+	second, err := provider.ListTrackerChanges(context.Background(), request)
+	if err != nil || second.HasMore || calls != 2 {
+		t.Fatalf("second = %#v, calls = %d, err = %v", second, calls, err)
+	}
+}

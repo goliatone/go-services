@@ -1,5 +1,12 @@
 # Changelog
 
+# [0.15.1](https://github.com/goliatone/go-services/compare/v0.15.0...v0.15.1) - (2026-11-15)
+
+## Fixes
+
+- Use the GraphQL ID type for the Linear issue-filter team variable so ordinary issue imports pass schema validation.
+- Cover the filter type, selected team, page limit and opaque cursor with a focused synthetic regression. Direct team lookups and mutation contracts are unchanged.
+
 # [0.15.0](https://github.com/goliatone/go-services/compare/v0.14.0...v0.15.0) - (2026-11-15)
 
 ## Features

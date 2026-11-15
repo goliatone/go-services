@@ -98,7 +98,7 @@ func (p *Provider) ListTrackerChanges(ctx context.Context, input core.TrackerCha
 	if err != nil {
 		return core.TrackerChangePage{}, err
 	}
-	query := `query($team:String!,$first:Int!,$after:String){issues(filter:{team:{id:{eq:$team}}},first:$first,after:$after,orderBy:updatedAt){nodes{id identifier title description priority url createdAt updatedAt archivedAt state{id name type}assignee{id name email}labels{nodes{id name color}}team{id key name}project{id name}}pageInfo{hasNextPage endCursor}}}`
+	query := `query($team:ID!,$first:Int!,$after:String){issues(filter:{team:{id:{eq:$team}}},first:$first,after:$after,orderBy:updatedAt){nodes{id identifier title description priority url createdAt updatedAt archivedAt state{id name type}assignee{id name email}labels{nodes{id name color}}team{id key name}project{id name}}pageInfo{hasNextPage endCursor}}}`
 	var response tracker.GraphQLResponse[struct {
 		Issues struct {
 			Nodes    []json.RawMessage `json:"nodes"`
