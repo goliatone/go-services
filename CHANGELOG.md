@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.12.1](https://github.com/goliatone/go-services/compare/v0.12.0...v0.12.1) - (2026-11-15)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.12.1 ([c56fe22](https://github.com/goliatone/go-services/commit/c56fe22e81a7967ed4fb5a8f1afeac25f1dc8f41))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Providers setup ([95af401](https://github.com/goliatone/go-services/commit/95af401df38eee2ec895d9bc80998424d7112743))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.12.0 ([37ca62f](https://github.com/goliatone/go-services/commit/37ca62fbebc6c22c0c35bfaf9c74af2e2430294e))  - (goliatone)
+
 # [0.12.0](https://github.com/goliatone/go-services/compare/v0.11.4...v0.12.0) - (2026-11-14)
 
 ## <!-- 13 -->📦 Bumps
